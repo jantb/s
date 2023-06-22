@@ -1,6 +1,8 @@
 package app
 
+import JsonMapper
 import com.fasterxml.jackson.annotation.JsonProperty
+import deserializeJsonToObject
 import java.time.OffsetDateTime
 
 sealed class Domain {
@@ -14,11 +16,11 @@ sealed class Domain {
 }
 
 data class LogJson(
-    @JsonProperty("@timestamp") val timestamp: String,
-    @JsonProperty("message") val message: String,
-    @JsonProperty("level") val level: String,
-    @JsonProperty("application") val application: String,
-    @JsonProperty("stacktrace") val stacktrace: String,
+    @JsonProperty("@timestamp") val timestamp: String= "",
+    @JsonProperty("message") val message: String= "",
+    @JsonProperty("level") val level: String= "",
+    @JsonProperty("application") val application: String= "",
+    @JsonProperty("stacktrace") val stacktrace: String = "",
 ) : Domain() {
     override fun searchableString(): String {
         return listOf(timestamp, application, level, message, stacktrace).joinToString(" ")
