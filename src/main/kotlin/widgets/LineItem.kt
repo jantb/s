@@ -47,6 +47,16 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.clear()
         this.text.addText(logJson.timestamp, color = SlideColors.green)
         this.text.addText(" ", color = SlideColors.defaultText)
+        this.text.addText(logJson.application, color = SlideColors.defaultText)
+        this.text.addText(logJson.level, color = when (logJson.level) {
+            "INFO" -> {SlideColors.green}
+            "WARN" -> {SlideColors.orange}
+            "DEBUG" -> {SlideColors.defaultText}
+            "ERROR" -> {SlideColors.red}
+            else -> {SlideColors.defaultText}
+        } )
+        this.text.addText(logJson.message, color = SlideColors.defaultText)
+        this.text.addText(logJson.stacktrace, color = SlideColors.defaultText)
         this.text.addText(logJson.searchableString(), color = SlideColors.defaultText)
         if (this.text.highlight) {
             this.text.highlightRange =  getWordRangeAtIndex(this.text.text, getCharIndexFromMouse(this.text.text, mouseposX))

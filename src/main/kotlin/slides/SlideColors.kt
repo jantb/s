@@ -9,6 +9,8 @@ object SlideColors {
     val magenta = Color(199, 125 ,187)
     val defaultText = Color(188, 190 ,196)
     val green = Color(139, 179 ,61)
+    val red = Color(247, 84 ,100)
+    val orange = Color(207, 142 ,109)
     val defaultCursor = Color(206, 214 ,208)
     val selection = Color(41 ,65 ,127)
     val selectionLine = Color(48 ,50 ,55, 200)

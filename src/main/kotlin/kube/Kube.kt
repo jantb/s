@@ -53,7 +53,10 @@ class Kube {
     }
 
     fun getLogSequence( pod: String): LogWatch {
-        return client.pods().inNamespace(client.pods().list().items.filter { it.metadata.name == pod }.map { it.metadata.namespace }.first()).withName(pod).usingTimestamps().watchLog()
+        val podResource = client.pods().inNamespace(client.pods().list().items.filter { it.metadata.name == pod }
+            .map { it.metadata.namespace }.first()).withName(pod)
+
+        return podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" }.name).usingTimestamps().watchLog()
     }
 
     @OptIn(DelicateCoroutinesApi::class)
