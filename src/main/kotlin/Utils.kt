@@ -1,4 +1,5 @@
 import JsonMapper.objectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.KotlinFeature
@@ -141,7 +142,9 @@ fun mergeSequences(vararg sequences: Sequence<Int>): Sequence<Int> {
 }
 
 object JsonMapper {
-    val objectMapper: ObjectMapper = ObjectMapper().registerModule(
+    val objectMapper: ObjectMapper = ObjectMapper()
+        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,false)
+        .registerModule(
         KotlinModule.Builder()
             .withReflectionCacheSize(512)
             .configure(KotlinFeature.NullToEmptyCollection, false)
