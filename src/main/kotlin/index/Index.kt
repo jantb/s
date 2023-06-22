@@ -55,7 +55,7 @@ class Index(
 
     fun searchMustInclude(valueList: List<String>): List<Int> {
         if (valueList.isEmpty()) {
-            return emptyList()
+            return searchNoSort("").toList()
         }
         val res = mutableSetOf<Int>()
         res += searchNoSort(valueList.first())

@@ -2,6 +2,7 @@ package widgets
 
 import ComponentOwn
 import SlidePanel
+import State
 import app.Channels
 import app.QueryChanged
 import round
@@ -90,7 +91,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         g2d.color = SlideColors.defaultCursor
         if (System.currentTimeMillis().mod(1000) > 500 || (System.currentTimeMillis() - lastKeyTimeStamp) < 500) {
             g2d.fillRect(
-                (g2d.fontMetrics.stringWidth(text.substring(0,cursorIndex))) - 1,
+                (g2d.fontMetrics.stringWidth(text.substring(0, cursorIndex))) - 1,
                 0 + g2d.fontMetrics.maxDescent,
                 2,
                 maxCharBounds.height.toInt()
@@ -130,8 +131,46 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     override fun keyPressed(e: KeyEvent) {
 
         when (e.keyCode) {
-            KeyEvent.VK_RIGHT -> cursorIndex(1)
-            KeyEvent.VK_LEFT -> cursorIndex(-1)
+            KeyEvent.VK_RIGHT -> {
+                if (e.isShiftDown) {
+                    cursorIndex(1)
+                    if (selectedTextRange != null) {
+                        selectedText += text[cursorIndex.coerceIn(text.indices)]
+                        selectedTextRange = selectedTextRange!!.first..cursorIndex
+                    } else {
+                        selectedText += text[cursorIndex.coerceIn(text.indices)]
+                        selectedTextRange = cursorIndex - 1..cursorIndex
+                    }
+                } else {
+                    cursorIndex(1)
+                    if (selectedTextRange != null) {
+                        cursorIndex = selectedTextRange!!.last + 1
+                        selectedText = ""
+                        selectedTextRange = null
+                    }
+                }
+            }
+
+            KeyEvent.VK_LEFT -> {
+                if (e.isShiftDown) {
+                    cursorIndex(-1)
+                    if (selectedTextRange != null) {
+                        selectedText = text[cursorIndex.coerceIn(text.indices)] + text
+                        selectedTextRange = cursorIndex..selectedTextRange!!.last
+                    } else {
+                        selectedText = text[cursorIndex.coerceIn(text.indices)] + text
+                        selectedTextRange = cursorIndex-1 until cursorIndex
+                    }
+                } else {
+                    cursorIndex(-1)
+                    if (selectedTextRange != null) {
+                        cursorIndex = selectedTextRange!!.first
+                        selectedText = ""
+                        selectedTextRange = null
+                    }
+                }
+            }
+
             KeyEvent.VK_BACK_SPACE -> {
                 if (selectedText.isNotBlank()) {
                     text = text.substring(0, selectedTextRange!!.first) + text.substring(selectedTextRange!!.last + 1)
@@ -235,7 +274,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     override fun mouseClicked(e: MouseEvent) {
         if (e.clickCount == 1) {
             val indexFromMouse = getCharIndexFromMouse(text, mouseposX)
-            cursorIndex =  indexFromMouse
+            cursorIndex = indexFromMouse
             cursorIndex(0)
         }
 

@@ -4,7 +4,6 @@ import slides.SlideColors.magenta
 import widgets.InputTextLine
 import widgets.PodSelect
 import widgets.ScrollableList
-import java.awt.Desktop
 import java.awt.Graphics
 import java.awt.event.*
 import java.util.concurrent.atomic.AtomicInteger
@@ -34,7 +33,10 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
         when (State.mode) {
             Mode.viewer -> viewer(g)
-            Mode.podSelect -> {podSelect(g)}
+            Mode.podSelect -> {
+                podSelect(g)
+            }
+
             Mode.kafkaSelect -> {}
         }
     }
@@ -165,14 +167,14 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
 fun main() {
     if (State.onMac) {
-        System.setProperty( "apple.awt.application.appearance", "dark" )
+        System.setProperty("apple.awt.application.appearance", "dark")
     }
 
     App().start()
     Kube()
     SwingUtilities.invokeLater {
         val frame = JFrame("Search")
-        frame.rootPane.putClientProperty( "apple.awt.windowTitleVisible", false );
+        frame.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
         val icon = ImageIcon("logo.png").image
 
         frame.iconImage = icon
@@ -200,6 +202,7 @@ private fun buildViewer(panel: SlidePanel) {
     )
     panel.componentMap[Mode.viewer]!! += inputTextLine
 }
+
 private fun buildPodSelect(panel: SlidePanel) {
     panel.componentMap.getOrPut(Mode.podSelect) { mutableListOf() } += PodSelect(panel, 0, 0, panel.width, panel.height)
 }

@@ -47,8 +47,6 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.clear()
         this.text.addText(logJson.timestamp.toString(), color = SlideColors.green)
         this.text.addText(" ", color = SlideColors.defaultText)
-        this.text.addText(logJson.application, color = SlideColors.defaultText)
-        this.text.addText(" ", color = SlideColors.defaultText)
         this.text.addText(logJson.level, color = when (logJson.level) {
             "INFO" -> {SlideColors.green}
             "WARN" -> {SlideColors.orange}
@@ -56,6 +54,8 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
             "ERROR" -> {SlideColors.red}
             else -> {SlideColors.defaultText}
         } )
+        this.text.addText(logJson.application, color = SlideColors.teal)
+        this.text.addText(" ", color = SlideColors.defaultText)
         this.text.addText(" ", color = SlideColors.defaultText)
         this.text.addText(logJson.message, color = SlideColors.defaultText)
         this.text.addText(" ", color = SlideColors.defaultText)
