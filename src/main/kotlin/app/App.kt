@@ -4,6 +4,9 @@ import State.changedAt
 import State.indexedLines
 import app.Channels.cmdChannel
 import app.Channels.cmdGuiChannel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
@@ -19,6 +22,7 @@ class App {
             var lastQueryTime = 0L
             var length = 0
             var offset = 0
+            val myScope = CoroutineScope(Dispatchers.Default)
             while (true) {
                 try {
                     when (val msg = cmdChannel.take()) {
@@ -26,24 +30,28 @@ class App {
                             query = msg.query
                             val timeSinceLast = System.currentTimeMillis() - time
                             if (timeSinceLast > 16 && timeSinceLast > lastQueryTime) {
-                                cmdGuiChannel.offer(ResultChanged(result =
+                                lastQueryTime = measureTimeMillis {
+                                    if (msg.offset != -1) {
+                                        offset = msg.offset
+                                    }
+                                    if (msg.length != -1) {
+                                        length = msg.length
+                                    }
+                                    cmdGuiChannel.offer(ResultChanged(result =
                                     valueStores.map { it.value.search(query, length + offset) }
                                         .flatten().sortedBy { it.timestamp() }.takeLast(length + offset)
-                                        .dropLast(offset),query =query))
-                                time = System.currentTimeMillis()
+                                        .dropLast(offset), query = query
+                                    )
+                                    )
+                                    time = System.currentTimeMillis()
+                                }
                             }
                         }
 
                         is UpdateResult -> {
-                            lastQueryTime = measureTimeMillis {
-                                length = msg.length
-                                offset = msg.offset
+                            myScope.launch {
+                                cmdChannel.put(QueryChanged(query = query, length = msg.length, offset = msg.offset))
                             }
-                            cmdGuiChannel.offer(ResultChanged(result =
-                            valueStores.map { it.value.search(query, length + offset) }
-                                .flatten().sortedBy { it.timestamp() }.takeLast(length + offset)
-                                .dropLast(offset),query =query))
-                            time = System.currentTimeMillis()
                         }
 
                         is AddToIndex -> {
@@ -57,7 +65,8 @@ class App {
                         }
 
                         is ClearNamedIndex -> {
-                            indexedLines.addAndGet( -valueStores.remove(msg.name)!!.size)}
+                            indexedLines.addAndGet(-valueStores.remove(msg.name)!!.size)
+                        }
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -77,11 +86,11 @@ object Channels {
 
 sealed class PodsMessage
 class ListPods(val result: CompletableFuture<List<String>> = CompletableFuture()) : PodsMessage()
-class ListenToPod( val podName: String) : PodsMessage()
+class ListenToPod(val podName: String) : PodsMessage()
 class UnListenToPod(val podName: String) : PodsMessage()
 object UnListenToPods : PodsMessage()
 sealed class CmdMessage
-class QueryChanged(val query: String) : CmdMessage()
+class QueryChanged(val query: String, val length: Int = -1, val offset: Int = -1) : CmdMessage()
 object ClearIndex : CmdMessage()
 
 class ClearNamedIndex(val name: String) : CmdMessage()
@@ -97,4 +106,4 @@ class UpdateResult(
     CmdMessage()
 
 sealed class CmdGuiMessage
-class ResultChanged(val result: List<Domain>, val query: String ) : CmdGuiMessage()
+class ResultChanged(val result: List<Domain>, val query: String) : CmdGuiMessage()
