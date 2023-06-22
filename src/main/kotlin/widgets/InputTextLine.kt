@@ -90,7 +90,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         g2d.color = SlideColors.defaultCursor
         if (System.currentTimeMillis().mod(1000) > 500 || (System.currentTimeMillis() - lastKeyTimeStamp) < 500) {
             g2d.fillRect(
-                (maxCharBounds.width.toInt() * cursorIndex) - 1,
+                (g2d.fontMetrics.stringWidth(text.substring(0,cursorIndex))) - 1,
                 0 + g2d.fontMetrics.maxDescent,
                 2,
                 maxCharBounds.height.toInt()
