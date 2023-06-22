@@ -30,13 +30,13 @@ class ValueStore : Serializable {
     private val capacityLimitedList = CapacityLimitedList<Domain>(cap)
     fun put(key: Int, v: String) {
         val domain = try {
-            v.substringAfter(" ").deserializeJsonToObject<LogJson>()
+            val logJson = v.substringAfter(" ").deserializeJsonToObject<LogJson>()
+            logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" "))
+            logJson
         } catch (e: Exception) {
-            try {
-                LogEntry(OffsetDateTime.parse(v.substringBefore(" ")), "", v.substringAfter(" "))
-            } catch (e: Exception) {
-                LogEntry(OffsetDateTime.MIN, "", v)
-            }
+            val logJson = LogJson(message = v.substringAfter(" "))
+            logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" "))
+            logJson
         }
         val value = domain.searchableString()
 
@@ -78,7 +78,7 @@ class ValueStore : Serializable {
         }
     }
 
-    fun search(query: String,length: Int): List<Domain> {
+    fun search(query: String, length: Int): List<Domain> {
 
         if (lruContains == null) {
             lruContains = Lru(cap)
@@ -127,14 +127,15 @@ class ValueStore : Serializable {
         val v = if (key < values.size) {
             val value = values[key]
             try {
-                Zstd.decompress(value.bytes, dictionaries[value.dictionary], value.length)
-                    .toString(Charsets.UTF_8).deserializeJsonToObject<LogEntry>()
+                val string = Zstd.decompress(value.bytes, dictionaries[value.dictionary], value.length)
+                    .toString(Charsets.UTF_8)
+                string.deserializeJsonToObject<LogJson>()
             } catch (e: Exception) {
                 Zstd.decompress(value.bytes, dictionaries[value.dictionary], value.length * 10)
-                    .toString(Charsets.UTF_8).deserializeJsonToObject<LogEntry>()
+                    .toString(Charsets.UTF_8).deserializeJsonToObject<LogJson>()
             }
         } else {
-            capacityLimitedList.get(key - values.size)?:LogEntry(OffsetDateTime.now(), "", "")
+            capacityLimitedList.get(key - values.size) ?: LogJson()
         }
         lru!![key] = v
         return v

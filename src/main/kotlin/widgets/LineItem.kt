@@ -45,7 +45,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
 
     fun setLogJson(logJson: LogJson) {
         this.text.clear()
-        this.text.addText(logJson.timestamp, color = SlideColors.green)
+        this.text.addText(logJson.timestamp.toString(), color = SlideColors.green)
         this.text.addText(" ", color = SlideColors.defaultText)
         this.text.addText(logJson.application, color = SlideColors.defaultText)
         this.text.addText(" ", color = SlideColors.defaultText)

@@ -324,7 +324,6 @@ class ScrollableList(
             result.forEachIndexed { i, it ->
                 when (it) {
                     is LogJson -> lineList[i.coerceIn(lineList.indices)].setLogJson(it)
-                    is LogEntry -> lineList[i.coerceIn(lineList.indices)].setText(it.message)
                 }
             }
 
