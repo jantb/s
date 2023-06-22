@@ -17,7 +17,7 @@ data class LogJson(
     @JsonProperty("message") val message: String = "",
     @JsonProperty("level") val level: String = "",
     @JsonProperty("application") val application: String = "",
-    @JsonProperty("stacktrace") val stacktrace: String = "",
+    @JsonProperty("stack_trace") val stacktrace: String = "",
 ) : Domain() {
     var timestamp = OffsetDateTime.MIN
     override fun searchableString(): String {
