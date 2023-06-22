@@ -25,12 +25,12 @@ class Kube {
                     }
 
                     is UnListenToPod -> {
-                        listenedPods.remove(msg.podName)!!.set(true)
+                        listenedPods.remove(msg.podName)!!.set(false)
                         Channels.cmdChannel.put(ClearNamedIndex(msg.podName))
                     }
 
                     is UnListenToPods -> {
-                        listenedPods.forEach { it.value.set(true) }
+                        listenedPods.forEach { it.value.set(false) }
                         listenedPods.clear()
                     }
                 }

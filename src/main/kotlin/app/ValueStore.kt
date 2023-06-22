@@ -30,7 +30,7 @@ class ValueStore : Serializable {
     private val capacityLimitedList = CapacityLimitedList<Domain>(cap)
     fun put(key: Int, v: String) {
         val domain = try {
-            v.deserializeJsonToObject<LogJson>()
+            v.substringAfter(" ").deserializeJsonToObject<LogJson>()
         } catch (e: Exception) {
             try {
                 LogEntry(OffsetDateTime.parse(v.substringBefore(" ")), "", v.substringAfter(" "))
