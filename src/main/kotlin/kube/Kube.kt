@@ -53,7 +53,7 @@ class Kube {
     }
 
     fun getLogSequence( pod: String): LogWatch {
-        return client.pods().inNamespace("default").withName(pod).usingTimestamps().watchLog()
+        return client.pods().inNamespace(client.namespace ?: "default").withName(pod).usingTimestamps().watchLog()
     }
 
     @OptIn(DelicateCoroutinesApi::class)
