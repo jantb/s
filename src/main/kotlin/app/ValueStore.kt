@@ -91,7 +91,7 @@ class ValueStore : Serializable {
         val queryList = query.split(" ").filter { !it.startsWith("!") }
         val queryListNot = query.split(" ").filter { it.startsWith("!") }.map { it.substring(1) }
 
-        val nanoTime = System.nanoTime()
+
 
         val res = mutableListOf<Pair<Int, Domain>>()
         val time = System.currentTimeMillis()
@@ -113,7 +113,7 @@ class ValueStore : Serializable {
             .take(length)
             .forEach { res.add(it) }
         res.reverse()
-        searchTime.set(System.nanoTime() - nanoTime)
+
 
         return res.map { it.second }
     }

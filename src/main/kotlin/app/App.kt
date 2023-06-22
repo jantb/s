@@ -2,6 +2,7 @@ package app
 
 import State.changedAt
 import State.indexedLines
+import State.searchTime
 import app.Channels.cmdChannel
 import app.Channels.cmdGuiChannel
 import kotlinx.coroutines.CoroutineScope
@@ -37,12 +38,14 @@ class App {
                                     if (msg.length != -1) {
                                         length = msg.length
                                     }
+                                    val nanoTime = System.nanoTime()
                                     cmdGuiChannel.offer(ResultChanged(result =
                                     valueStores.map { it.value.search(query, length + offset) }
                                         .flatten().sortedBy { it.timestamp() }.takeLast(length + offset)
                                         .dropLast(offset), query = query
                                     )
                                     )
+                                    searchTime.set(System.nanoTime() - nanoTime)
                                     time = System.currentTimeMillis()
                                 }
                             }
