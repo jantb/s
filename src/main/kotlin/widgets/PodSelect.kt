@@ -19,17 +19,13 @@ class PodSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, heigh
     MouseListener, MouseWheelListener,
     MouseMotionListener {
     private val items: MutableList<Item> = mutableListOf()
-    private var state = PodSelectState.nameSpace
 
     init {
         this.x = x
         this.y = y
         this.height = height
         this.width = width
-        val listNamespaces = ListNamespaces()
-        Channels.podsChannel.put(listNamespaces)
         this.items.clear()
-        this.items.addAll(listNamespaces.result.get().map { Item(it, false) })
     }
 
     private var selectedLineIndex = 0
@@ -96,25 +92,24 @@ class PodSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, heigh
 
     var namespace = ""
     override fun keyPressed(e: KeyEvent) {
-        if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_A && state == PodSelectState.podName) {
+        if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_A) {
             items.forEach { item ->
                 item.selected = !item.selected
                 if (item.selected) {
-                    Channels.podsChannel.put(ListenToPod(nameSpace = namespace, podName = item.name))
+                    Channels.podsChannel.put(ListenToPod( podName = item.name))
                 } else {
-                    Channels.podsChannel.put(UnListenToPod(nameSpace = namespace, podName = item.name))
+                    Channels.podsChannel.put(UnListenToPod( podName = item.name))
                 }
             }
             panel.repaint()
         } else if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_P) {
             Channels.podsChannel.put(UnListenToPods)
             Channels.cmdChannel.put(ClearIndex)
-
-            val listNamespaces = ListNamespaces()
-            Channels.podsChannel.put(listNamespaces)
-            state = PodSelectState.nameSpace
-            this.items.clear()
-            this.items.addAll(listNamespaces.result.get().map { Item(it, false) })
+            val listPods = ListPods()
+            Channels.podsChannel.put(listPods)
+            items.clear()
+            items.addAll(listPods.result.get().map { Item(it, false) })
+            selectedLineIndex = 0
             panel.repaint()
         } else if (e.keyCode == KeyEvent.VK_DOWN) {
             selectedLineIndex++
@@ -125,26 +120,15 @@ class PodSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, heigh
             selectedLineIndex = selectedLineIndex.coerceIn(0 until items.size)
             panel.repaint()
         } else if (e.keyCode == KeyEvent.VK_ENTER) {
-            if (state == PodSelectState.nameSpace) {
-                state = PodSelectState.podName
-                namespace = items[selectedLineIndex].name
-                val listPods = ListPods(namespace)
-                Channels.podsChannel.put(listPods)
-                items.clear()
-                items.addAll(listPods.result.get().map { Item(it, false) })
-                selectedLineIndex = 0
-            } else if (state == PodSelectState.podName) {
-                val item = items[selectedLineIndex]
-                item.selected = !item.selected
-                if (item.selected) {
-                    Channels.podsChannel.put(ListenToPod(nameSpace = namespace, podName = item.name))
-                } else {
-                    Channels.podsChannel.put(UnListenToPod(nameSpace = namespace, podName = item.name))
-                }
+            val item = items[selectedLineIndex]
+            item.selected = !item.selected
+            if (item.selected) {
+                Channels.podsChannel.put(ListenToPod( podName = item.name))
+            } else {
+                Channels.podsChannel.put(UnListenToPod( podName = item.name))
             }
             panel.repaint()
         } else if (e.keyCode == KeyEvent.VK_P && State.onMac && e.isMetaDown) {
-            state = PodSelectState.nameSpace
             panel.repaint()
         }
 

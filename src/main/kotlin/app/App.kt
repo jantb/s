@@ -76,10 +76,9 @@ object Channels {
 }
 
 sealed class PodsMessage
-class ListNamespaces(val result: CompletableFuture<List<String>> = CompletableFuture()) : PodsMessage()
-class ListPods(val nameSpace: String, val result: CompletableFuture<List<String>> = CompletableFuture()) : PodsMessage()
-class ListenToPod(val nameSpace: String, val podName: String) : PodsMessage()
-class UnListenToPod(val nameSpace: String, val podName: String) : PodsMessage()
+class ListPods(val result: CompletableFuture<List<String>> = CompletableFuture()) : PodsMessage()
+class ListenToPod( val podName: String) : PodsMessage()
+class UnListenToPod(val podName: String) : PodsMessage()
 object UnListenToPods : PodsMessage()
 sealed class CmdMessage
 class QueryChanged(val query: String) : CmdMessage()

@@ -18,13 +18,10 @@ class Kube {
         val thread = Thread {
             while (true) {
                 when (val msg = Channels.podsChannel.take()) {
-                    is ListNamespaces -> {
-                        msg.result.complete(listNamespaces())
-                    }
 
-                    is ListPods -> msg.result.complete(listPodsInNamespace(msg.nameSpace))
+                    is ListPods -> msg.result.complete(listPodsInNamespace())
                     is ListenToPod -> {
-                        listenedPods[msg.podName] = addLogsToIndex(msg.nameSpace, msg.podName)
+                        listenedPods[msg.podName] = addLogsToIndex(msg.podName)
                     }
 
                     is UnListenToPod -> {
@@ -45,12 +42,9 @@ class Kube {
 
     val readers = mutableListOf<LogWatch>()
     val client = KubernetesClientBuilder().build()
-    fun listNamespaces(): List<String> {
-        return client.namespaces().list().items.map { it.metadata.name }
-    }
 
-    fun listPodsInNamespace(namespace: String): List<String> {
-        return client.pods().inNamespace(namespace).list().items.map { it.metadata.name }
+    fun listPodsInNamespace(): List<String> {
+        return client.pods().list().items.map { it.metadata.name }
     }
 
     fun clearReaders() {
@@ -58,18 +52,18 @@ class Kube {
         readers.clear()
     }
 
-    fun getLogSequence(namespace: String, pod: String): LogWatch {
-        return client.pods().inNamespace(namespace).withName(pod).usingTimestamps().watchLog()
+    fun getLogSequence( pod: String): LogWatch {
+        return client.pods().inNamespace("default").withName(pod).usingTimestamps().watchLog()
     }
 
     @OptIn(DelicateCoroutinesApi::class)
-    private fun addLogsToIndex(nameSpace: String, pod: String): AtomicBoolean {
+    private fun addLogsToIndex( pod: String): AtomicBoolean {
         val threadDispatcher = newSingleThreadContext("CoroutineThread")
         val scope = CoroutineScope(threadDispatcher)
 
         val notStopping = AtomicBoolean(true)
         scope.launch {
-            val logSequence = getLogSequence(nameSpace, pod)
+            val logSequence = getLogSequence( pod)
             BufferedReader(InputStreamReader(logSequence.output)).use { reader ->
                 var docNr = 0
                 while (notStopping.get()) {
