@@ -23,24 +23,9 @@ jobs:
       - name: Build Fat JAR
         run: ./gradlew shadowJar
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+      - name: Release with Notes
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/libs/*all.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-      - name: Upload Fat JAR
-        id: upload_asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/libs/*.jar
-          asset_name: fat-jar-${{ github.sha }}.jar
-          asset_content_type: application/java-archive
