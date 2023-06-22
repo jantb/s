@@ -1,0 +1,29 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up JDK
+        uses: actions/setup-java@v2
+        with:
+          java-version: '17'
+
+      - name: Build Fat JAR
+        run: ./gradlew shadowJar
+
+      - name: Upload Fat JAR
+        uses: actions/upload-artifact@v2
+        with:
+          name: fat-jar
+          path: build/libs/*.jar
