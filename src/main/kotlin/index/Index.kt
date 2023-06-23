@@ -200,6 +200,9 @@ fun calculateRequiredHashes(currentSNR: Double, targetSNR: Double): Int {
 
 fun String.grams(): List<String> {
     val lowercase = lowercase()
+    if (lowercase.isEmpty()) {
+        return listOf()
+    }
     if (lowercase.length < 3) {
         return listOf(lowercase)
     }
