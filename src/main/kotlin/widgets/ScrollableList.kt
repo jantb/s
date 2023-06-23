@@ -71,6 +71,7 @@ class ScrollableList(
             while (true) {
                 when (val msg = Channels.cmdGuiChannel.take()) {
                     is ResultChanged -> updateResults(msg.result, msg.query)
+                    else -> {}
                 }
             }
         }
@@ -324,6 +325,7 @@ class ScrollableList(
             result.forEachIndexed { i, it ->
                 when (it) {
                     is LogJson -> lineList[i.coerceIn(lineList.indices)].setLogJson(it)
+                    else -> {}
                 }
             }
 

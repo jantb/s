@@ -20,9 +20,15 @@ data class LogJson(
     @JsonProperty("stack_trace") val stacktrace: String = "",
 ) : Domain() {
     var timestamp = OffsetDateTime.MIN
+    private var cachedSearchableString: String? = null
+
     override fun searchableString(): String {
-        return listOf(timestamp, application, level, message, stacktrace).joinToString(" ")
+        if (cachedSearchableString == null) {
+            cachedSearchableString = listOf(timestamp, application, level, message, stacktrace).joinToString(" ")
+        }
+        return cachedSearchableString!!
     }
+
 
     override fun timestamp(): Long {
         return try {

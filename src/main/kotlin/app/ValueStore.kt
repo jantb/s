@@ -95,7 +95,7 @@ class ValueStore : Serializable {
 
         val res = mutableListOf<Pair<Int, Domain>>()
         val time = System.currentTimeMillis()
-        indexes.reversed().asSequence().takeWhile { System.currentTimeMillis() - time <= 50 }
+        indexes.reversed().asSequence().takeWhile { System.currentTimeMillis() - time <= 10 }
             .map { index -> index.searchMustInclude(queryList) }.flatten()
             .map { it to get(it) }
             .filter { pair ->

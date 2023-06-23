@@ -104,7 +104,7 @@ class Shard(
 
     fun search(grams: List<String>): List<Int> {
         if (grams.isEmpty()) {
-            return valueList.subList((valueList.lastIndex - 10_000).coerceIn(valueList.indices), valueList.size)
+            return valueList.subList((valueList.lastIndex - 2_000).coerceIn(valueList.indices), valueList.size)
         }
 
         bf.bitSet.clear()
