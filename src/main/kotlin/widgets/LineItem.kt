@@ -55,7 +55,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
             else -> {SlideColors.defaultText}
         } )
         this.text.addText(" ", color = SlideColors.defaultText)
-        this.text.addText(logJson.application, color = SlideColors.teal)
+        this.text.addText(logJson.application, color = SlideColors.magenta)
         this.text.addText(" ", color = SlideColors.defaultText)
         this.text.addText(logJson.message, color = SlideColors.defaultText)
         this.text.addText(" ", color = SlideColors.defaultText)
