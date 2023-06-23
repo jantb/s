@@ -20,6 +20,8 @@ data class LogJson(
     @JsonProperty("stack_trace") val stacktrace: String = "",
 ) : Domain() {
     var timestamp = OffsetDateTime.MIN
+
+    @Transient
     private var cachedSearchableString: String? = null
 
     override fun searchableString(): String {

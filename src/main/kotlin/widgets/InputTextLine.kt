@@ -159,7 +159,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                         selectedTextRange = cursorIndex..selectedTextRange!!.last
                     } else {
                         selectedText = text[cursorIndex.coerceIn(text.indices)] + text
-                        selectedTextRange = cursorIndex-1 until cursorIndex
+                        selectedTextRange = cursorIndex - 1 until cursorIndex
                     }
                 } else {
                     cursorIndex(-1)
