@@ -5,6 +5,7 @@ package kube
 import app.*
 import io.fabric8.kubernetes.client.KubernetesClientBuilder
 import io.fabric8.kubernetes.client.dsl.LogWatch
+import io.fabric8.kubernetes.client.utils.internal.PodOperationUtil.watchLog
 import kotlinx.coroutines.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -52,14 +53,14 @@ class Kube {
         readers.clear()
     }
 
-    fun getLogSequence( pod: String): LogWatch {
+    private fun getLogSequence(pod: String): LogWatch {
         val podResource = client.pods().inNamespace(client.pods().list().items.filter { it.metadata.name == pod }
             .map { it.metadata.namespace }.first()).withName(pod)
 
         return podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" }.name).usingTimestamps().watchLog()
     }
 
-    fun getLogSequencePrev( pod: String): List<String> {
+    private fun getLogSequencePrev(pod: String): List<String> {
         val podResource = client.pods().inNamespace(client.pods().list().items.filter { it.metadata.name == pod }
             .map { it.metadata.namespace }.first()).withName(pod)
 
