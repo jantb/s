@@ -59,6 +59,18 @@ class Kube {
         return podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" }.name).usingTimestamps().watchLog()
     }
 
+    fun getLogSequencePrev( pod: String): List<String> {
+        val podResource = client.pods().inNamespace(client.pods().list().items.filter { it.metadata.name == pod }
+            .map { it.metadata.namespace }.first()).withName(pod)
+
+        return try {
+            podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" }.name)
+                .usingTimestamps().terminated().log.split("\n")
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     private fun addLogsToIndex( pod: String): AtomicBoolean {
         val threadDispatcher = newSingleThreadContext("CoroutineThread")
@@ -66,15 +78,18 @@ class Kube {
 
         val notStopping = AtomicBoolean(true)
         scope.launch {
+            getLogSequencePrev(pod).forEach {
+                Channels.cmdChannel.put(AddToIndex(it, pod))
+            }
+
             val logSequence = getLogSequence( pod)
             BufferedReader(InputStreamReader(logSequence.output)).use { reader ->
-                var docNr = 0
                 while (notStopping.get()) {
                     withTimeoutOrNull(100) {
                         try {
                             val line = reader.readLine()
                             if (line != null) {
-                                Channels.cmdChannel.put(AddToIndex(docNr++, line, pod))
+                                Channels.cmdChannel.put(AddToIndex(line, pod))
                             }
 
                         } catch (e: Exception) {

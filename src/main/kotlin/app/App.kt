@@ -58,7 +58,7 @@ class App {
                         }
 
                         is AddToIndex -> {
-                            valueStores.computeIfAbsent(msg.indexIdentifier) { ValueStore() }.put(msg.key, msg.value)
+                            valueStores.computeIfAbsent(msg.indexIdentifier) { ValueStore() }.put(msg.value)
                             changedAt.set(System.nanoTime())
                         }
 
@@ -99,7 +99,7 @@ object ClearIndex : CmdMessage()
 class ClearNamedIndex(val name: String) : CmdMessage()
 
 
-class AddToIndex(val key: Int, val value: String, val indexIdentifier: String = UUID.randomUUID().toString()) :
+class AddToIndex(val value: String, val indexIdentifier: String = UUID.randomUUID().toString()) :
     CmdMessage()
 
 class UpdateResult(

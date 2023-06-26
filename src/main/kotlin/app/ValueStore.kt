@@ -1,12 +1,10 @@
 package app
 
 import State
-import com.github.luben.zstd.Zstd
 import deserializeJsonToObject
 import index.Index
 import java.io.Serializable
 import java.time.OffsetDateTime
-import java.util.*
 
 
 val cap = 10_000
@@ -17,14 +15,18 @@ class ValueStore : Serializable {
 
     @Transient
     private var prevQuery = ""
-    fun put(key: Int, v: String) {
+    fun put(v: String) {
         val domain = try {
             val logJson = v.substringAfter(" ").deserializeJsonToObject<LogJson>()
             logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" "))
             logJson
         } catch (e: Exception) {
             val logJson = LogJson(message = v.substringAfter(" "))
-            logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" "))
+            try {
+                logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" "))
+            } catch (e: Exception) {
+                return
+            }
             logJson
         }
         val value = domain.searchableString()
