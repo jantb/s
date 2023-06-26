@@ -1,5 +1,6 @@
 package index
 
+import app.Domain
 import index.Bf.Companion.estimate
 import net.openhft.hashing.LongHashFunction
 import java.io.Serializable
@@ -24,7 +25,7 @@ class Index(
         )
     },
 ) : Serializable {
-    fun add(key: Int, value: String) {
+    fun add(key: Domain, value: String) {
         if (value.isBlank()) {
             return
         }
@@ -38,14 +39,14 @@ class Index(
         size++
     }
 
-    fun search(value: String): Sequence<Int> {
+    fun search(value: String): Sequence<Domain> {
         val grams = value.grams()
         return shards.values.asSequence().map {
             it.search(grams)
-        }.flatten().sortedByDescending { it }
+        }.flatten().sortedByDescending { it.timestamp() }
     }
 
-    fun searchNoSort(value: String): Set<Int> {
+    fun searchNoSort(value: String): Set<Domain> {
         val grams = value.grams()
         return shards.values.map {
             it.search(grams)
@@ -53,16 +54,16 @@ class Index(
     }
 
 
-    fun searchMustInclude(valueList: List<String>): List<Int> {
+    fun searchMustInclude(valueList: List<String>): List<Domain> {
         if (valueList.isEmpty()) {
             return searchNoSort("").toList()
         }
-        val res = mutableSetOf<Int>()
+        val res = mutableSetOf<Domain>()
         res += searchNoSort(valueList.first())
         (1 until valueList.size).forEach {
             res.retainAll(searchNoSort(valueList[it]))
         }
-        return res.sortedByDescending { it }
+        return res.sortedByDescending { it.timestamp() }
     }
 
     fun convertToHigherRank(goalCardinality: Double = 0.36) {
@@ -72,14 +73,14 @@ class Index(
 
 class Shard(
     m: Int,
-    private val valueList: MutableList<Int> = mutableListOf(),
+    private val valueList: MutableList<Domain> = mutableListOf(),
     private val bitSets: Array<Row> = Array(m) { Row() },
     private val bf: Bf = Bf(m),
     private val hashesMap: Map<String, Int>,
     private var isHigherRow: Boolean = false
 ) : Serializable {
 
-    fun add(gramList: List<String>, key: Int) {
+    fun add(gramList: List<String>, key: Domain) {
         gramList.forEach { g ->
             bf.bitSet.clear()
             bf.add(g, hashesMap.getOrDefault(g, 1))
@@ -102,7 +103,7 @@ class Shard(
         }
     }
 
-    fun search(grams: List<String>): List<Int> {
+    fun search(grams: List<String>): List<Domain> {
         if (grams.isEmpty()) {
             return valueList.subList((valueList.lastIndex - 2_000).coerceIn(valueList.indices), valueList.size)
         }

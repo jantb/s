@@ -3,7 +3,7 @@ package app
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.OffsetDateTime
 
-sealed class Domain {
+sealed class Domain: Comparable<Long> {
     open fun searchableString(): String {
         return ""
     }
@@ -38,5 +38,9 @@ data class LogJson(
         } catch (e: Exception) {
             0
         }
+    }
+
+    override fun compareTo(other: Long): Int {
+       return timestamp().compareTo(other)
     }
 }
