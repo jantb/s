@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "1.8.0"
+    kotlin("jvm") version "1.9.21"
     id("com.github.johnrengelman.shadow") version "7.1.2"
     application
 }
@@ -13,12 +13,10 @@ repositories {
 
 dependencies {
     implementation("net.openhft:zero-allocation-hashing:0.16")
-    implementation("com.github.luben:zstd-jni:1.5.5-3")
-    implementation("io.fabric8:kubernetes-client:6.6.2")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.1")
+    implementation("io.fabric8:kubernetes-client:6.9.2")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.16.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     testImplementation(kotlin("test"))
-    testImplementation("org.junit.jupiter:junit-jupiter:5.8.1")
 }
 
 tasks.test {
@@ -26,7 +24,7 @@ tasks.test {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
 }
 
 application {
