@@ -24,6 +24,19 @@ class RowTest {
         row.setBit(7)
         assertFalse(row.isEmpty())
     }
+    @Test
+    fun `get bits from ranked row`() {
+        val row = Row(LongArray(1))
+        row.rank = 3
+        row.setBit(0)
+        val allSetBitPositions = row.getAllSetBitPositions()
+        for (i in 0 until (1 shl row.rank )) {
+            allSetBitPositions.forEach {
+                val index = it + (row.words.size * 64 * i)
+                println(index)
+            }
+        }
+    }
 
     @Test
     fun `should correctly calculate all set bit positions`() {
@@ -58,7 +71,7 @@ class RowTest {
         row.wordsInUse = row.words.size
 
         // call the function to test
-        row.doubleWords()
+        row.reduceRank()
 
         // assert the size of `words` is doubled
         assertEquals(3 * 2, row.words.size)
@@ -74,7 +87,7 @@ class RowTest {
     fun testDoubleWords() {
         val words = longArrayOf(1, 2, 3, 4, 5)
         val row = Row(words)
-        row.doubleWords()
+        row.reduceRank()
         assertArrayEquals(
             longArrayOf(1, 2, 3, 4, 5, 1, 2, 3, 4, 5),
             row.words
@@ -88,7 +101,7 @@ class RowTest {
         row.wordsInUse = row.words.size
 
         // Call the function to test
-        row.doubleWords()
+        row.reduceRank()
 
         // Assert that the size of `words` is 0 as the initial array was empty
         assertEquals(0, row.words.size)
@@ -105,7 +118,7 @@ class RowTest {
         row.wordsInUse = row.words.size
 
         // Call the function to test
-        row.doubleWords()
+        row.reduceRank()
 
         // Assert that the size of `words` is 2
         assertEquals(2, row.words.size)
@@ -127,7 +140,7 @@ class RowTest {
         row.wordsInUse = row.words.size
 
         // Call the function to test
-        row.doubleWords()
+        row.reduceRank()
 
         // Assert the size of `words` is 2000
         assertEquals(2000, row.words.size)
@@ -148,7 +161,7 @@ class RowTest {
         row.wordsInUse = row.words.size
 
         // Call the function to test
-        row.doubleWords()
+        row.reduceRank()
 
         // Assert the size of `words` is doubled
         assertEquals(20, row.words.size)

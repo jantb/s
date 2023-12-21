@@ -11,10 +11,7 @@ import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.floor
-import kotlin.math.roundToInt
+import kotlin.math.*
 
 fun Double.roundUp(value: Int): Int {
     return value * (ceil(abs(this / value))).toInt()
@@ -86,6 +83,24 @@ fun Serializable.serializeToFile(filename: String) {
             objectOutputStream.writeObject(this)
         }
     }
+}
+fun Serializable.serializeToBytes(): ByteArray {
+    ByteArrayOutputStream().use { byteArrayOutputStream ->
+        ObjectOutputStream(byteArrayOutputStream).use { objectOutputStream ->
+            objectOutputStream.writeObject(this)
+        }
+        return byteArrayOutputStream.toByteArray()
+    }
+}
+fun Int.printBytesAsAppropriateUnit(): String {
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    if (this < 1024) {
+        println("${this}B")
+    } else {
+        val digitGroups = (log10(this.toDouble()) / log10(1024.0)).toInt()
+       return "${String.format("%.2f", this / 1024.0.pow(digitGroups.toDouble()))} ${units[digitGroups]}"
+    }
+    return ""
 }
 
 inline fun <reified T> deserializeFromFile(filename: String): T {

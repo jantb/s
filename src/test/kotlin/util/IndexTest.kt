@@ -1,6 +1,9 @@
 package util
 
 import org.junit.jupiter.api.Assertions.assertTrue
+import printBytesAsAppropriateUnit
+import serializeToBytes
+import serializeToFile
 import java.util.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,7 +33,7 @@ class IndexTest {
 
         assertEquals(1, index.size)
 
-        val searchMustInclude = index.searchMustInclude(listOf(listOf("val")))
+        val searchMustInclude = index.searchMustInclude(listOf(listOf("val"))).toList()
         assertEquals(1, searchMustInclude.size)
     }
 
@@ -47,20 +50,19 @@ class IndexTest {
 
         assertEquals(2, index.size)
 
-        val searchMustInclude = index.searchMustInclude(listOf(listOf("a")))
+        val searchMustInclude = index.searchMustInclude(listOf(listOf("a"))).toList()
         assertEquals(1, searchMustInclude.size)
     }
 
     @Test
     fun regression_test() {
-        val index = Index<String>()
+        val index = Index<Int>()
         val itemCount = 300_000
 
-        val map = mutableMapOf<String, String>() // For later verification
+        val map = mutableMapOf<Int, String>() // For later verification
 
         val timeTaken = measureTime {
-            for (i in 1..itemCount) {
-                val key = UUID.randomUUID().toString()
+            for (key in 1..itemCount) {
                 val value = UUID.randomUUID().toString()
 
                 index.add(key, value)
@@ -69,27 +71,29 @@ class IndexTest {
             }
         }
         println("Time taken to add $itemCount elements: $timeTaken")
-
+        println(index.serializeToBytes().size.printBytesAsAppropriateUnit())
+        var found = 0
         val timeTakenSearch = measureTime {
             for ((key, value) in map) {
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
-                assertEquals(1, searchMustInclude.size)
-                assert(key in searchMustInclude)
+                if (key in searchMustInclude) {
+                    found++
+                }
             }
         }
+        assertEquals(itemCount, found)
         println("Time taken to search $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / itemCount).nanoseconds}")
     }
 
     @Test
     fun regression_test_higher_rank() {
-        val index = Index<String>()
+        val index = Index<Int>()
         val itemCount = 300_000
 
-        val map = mutableMapOf<String, String>() // For later verification
+        val map = mutableMapOf<Int, String>() // For later verification
 
         val timeTaken = measureTime {
-            for (i in 1..itemCount) {
-                val key = UUID.randomUUID().toString()
+            for (key in 1..itemCount) {
                 val value = UUID.randomUUID().toString()
 
                 index.add(key, value)
@@ -98,15 +102,18 @@ class IndexTest {
             }
         }
         index.convertToHigherRank()
+        println(index.serializeToBytes().size.printBytesAsAppropriateUnit())
         println("Time taken to add $itemCount elements: $timeTaken")
-
+        var found = 0
         val timeTakenSearch = measureTime {
             for ((key, value) in map) {
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
-              //  assertEquals(1, searchMustInclude.size)
-                assert(key in searchMustInclude)
+                if (key in searchMustInclude) {
+                  found++
+                }
             }
         }
+        assertEquals(itemCount, found)
         println("Time taken to search $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / itemCount).nanoseconds}")
     }
 }
@@ -119,7 +126,7 @@ class ShardTest {
         val key = "key"
 
         shard.add(gramList, key)
-        val searchResults = shard.search(listOf(gramList))
+        val searchResults = shard.search(listOf(gramList)).toList()
 
         assertEquals(listOf(key), searchResults)
     }

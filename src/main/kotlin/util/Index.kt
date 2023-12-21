@@ -8,13 +8,12 @@ import java.util.BitSet
 import kotlin.math.*
 
 class Index<T>(
-    private val probability: Double = 0.000000001,
-    private val goalCardinality: Double = 0.50,
+    private val probability: Double = 0.1,
+    private val goalCardinality: Double = 0.5,
 ) : Serializable {
     private var shardArray: Array<Shard<T>?> = Array(32) { null }
     private var isHigherRank: Boolean = false
     var size: Int = 0
-
 
     fun add(key: T, value: String) {
         require(!isHigherRank) {
@@ -37,11 +36,11 @@ class Index<T>(
         size++
     }
 
-    fun searchMustInclude(valueListList: List<List<String>>): List<T> {
+    fun searchMustInclude(valueListList: List<List<String>>): Sequence<T> {
         // Must include all the strings in each of the lists
         val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
-        return shardArray.mapNotNull { it?.search(gramsList) }.flatten()
+        return shardArray.mapNotNull { it?.search(gramsList) }.asSequence().flatten()
     }
 
     fun convertToHigherRank() {
@@ -75,16 +74,16 @@ class Shard<T>(
             "Can not convert an already converted higher rank"
         }
         isHigherRank = true
-        val maxRank = rows.maxOf {
+        rows.forEach {
             it.expandToFitBit(valueList.size.nextPowerOf2() + 1)
             it.convertToTargetDensity(goalCardinality)
             it.rank
         }
     }
 
-    fun search(gramsList: List<List<Long>>): List<T> {
+    fun search(gramsList: List<List<Long>>): Sequence<T> {
         if (gramsList.flatten().isEmpty()) {
-            return valueList
+            return valueList.asSequence()
         }
 
         val rowList = gramsList.filter { it.isNotEmpty() }.map { getRows(it) }.flatten()
@@ -109,9 +108,15 @@ class Shard<T>(
         return bf.getSetPositions().map { rows[it] }
     }
 
-    private fun getSetValues(bitPositions: List<Row>): List<T> {
+    private fun getSetValues(bitPositions: List<Row>): Sequence<T> {
         return if (isHigherRank) {
-            andRowsOfNotEqualLength(bitPositions).getAllSetBitPositions().map { valueList[it] }
+            val row = andRowsOfNotEqualLength(bitPositions)
+            return row.getAllSetBitPositionsRanked().mapNotNull {
+                if (it < valueList.size)
+                    valueList[it]
+                else
+                    null
+            }
         } else {
             andRowsOfEqualLength(bitPositions).getAllSetBitPositions().map { valueList[it] }
         }
@@ -121,15 +126,13 @@ class Shard<T>(
         rowsArray: List<Row>,
     ): Row {
         val res = Row()
-        res.or( rowsArray[0])
+        res.or(rowsArray[0])
         res.rank = rowsArray[0].rank
-        var currentRank = res.rank
 
         for (i in 1..<rowsArray.size) {
             val row = rowsArray[i]
-            while (currentRank != row.rank) {
-                res.doubleWords()
-                currentRank--
+            while (res.rank != row.rank) {
+                res.reduceRank()
             }
             res.and(row)
             if (res.isEmpty()) {
@@ -144,7 +147,7 @@ class Shard<T>(
         rowsArray: List<Row>,
     ): Row {
         val res = Row()
-        res.or( rowsArray[0])
+        res.or(rowsArray[0])
 
         for (i in 1..<rowsArray.size) {
             res.and(rowsArray[i])
@@ -162,29 +165,6 @@ class Bf(m: Int) : Serializable {
     private val modMask = longM - 1
     private val bitSet = BitSet(m)
     private var cardinality = 0
-    fun add(s: String, hashes: Int) {
-        if (hashes == 0) {
-            return
-        }
-
-        val number = LongHashFunction.xx3().hashChars(s)
-        if (hashes == 1) {
-            val pos = (number and modMask).toInt()
-            if (!bitSet.get(pos))
-                cardinality++
-            bitSet.set(pos)
-            return
-        }
-        val lower32 = number.and(0xFFFFFFFF)
-        val upper32 = number.shr(32)
-        (1..hashes).forEach {
-            val pos = ((lower32 + upper32 * it) and modMask).toInt()
-            if (!bitSet.get(pos))
-                cardinality++
-            bitSet.set(pos)
-        }
-    }
-
     fun addHash(l: Long) {
         val pos = (l and modMask).toInt()
         if (!bitSet.get(pos))
@@ -201,18 +181,11 @@ class Bf(m: Int) : Serializable {
         return setBitPositions
     }
 
-    fun clear() {
-        bitSet.clear()
-        cardinality = 0
-    }
-
     companion object {
         fun estimate(n: Int, p: Double): Int {
             return (ceil((n * ln(p)) / ln(1.0 / 2.0.pow(ln(2.0)))).toInt() + 1).nextPowerOf2()
         }
     }
-
-
 }
 
 fun Int.nextPowerOf2(): Int {
@@ -277,12 +250,13 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
         }
     }
 
-    fun doubleWords() {
+    fun reduceRank() {
         val newArray = LongArray(words.size * 2)
         System.arraycopy(words, 0, newArray, 0, words.size)
         System.arraycopy(words, 0, newArray, words.size, words.size)
         wordsInUse += words.size
         words = newArray
+        rank--
     }
 
     fun isEmpty(): Boolean {
@@ -315,6 +289,7 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
             wordsInUse - wordsInCommon
         )
     }
+
     private fun ensureCapacity(wordsRequired: Int) {
         if (words.size < wordsRequired) {
             // Allocate larger of doubled size or required size
@@ -331,14 +306,24 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
         recalculateWordsInUseFrom(min)
     }
 
-    fun getAllSetBitPositions(): List<Int> {
-        val setBitPositions = mutableListOf<Int>()
+    fun getAllSetBitPositions(): Sequence<Int> = sequence {
         var i = nextSetBit(0)
         while (i != -1) {
-            setBitPositions.add(i)
+            yield(i) // Emits the value 'i' to the sequence and suspends until the next value is requested
             i = nextSetBit(i + 1)
         }
-        return setBitPositions
+    }
+
+    fun getAllSetBitPositionsRanked(): Sequence<Int> {
+        val allSetBitPositions = getAllSetBitPositions()
+
+        return sequence {
+            for (i in 0 until (1 shl rank)) {
+                allSetBitPositions.forEach {
+                    yield(it + (words.size * 64 * i))
+                }
+            }
+        }
     }
 
     fun nextSetBit(fromIndex: Int): Int {
