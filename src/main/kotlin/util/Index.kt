@@ -1,0 +1,430 @@
+package util
+
+
+import net.openhft.hashing.LongHashFunction
+import util.Bf.Companion.estimate
+import java.io.Serializable
+import java.util.BitSet
+import kotlin.math.*
+
+class Index<T>(
+    private val probability: Double = 0.000000001,
+    private val goalCardinality: Double = 0.50,
+) : Serializable {
+    private var shardArray: Array<Shard<T>?> = Array(32) { null }
+    private var isHigherRank: Boolean = false
+    var size: Int = 0
+
+
+    fun add(key: T, value: String) {
+        require(!isHigherRank) {
+            "Can not add values to a higher rank index"
+        }
+        if (value.isBlank()) {
+            return
+        }
+
+        val grams = value.grams()
+        val estimate = estimate(grams.size, probability)
+
+        val numberOfTrailingZeros = Integer.numberOfTrailingZeros(estimate)
+        shardArray[numberOfTrailingZeros]?.add(grams, key) ?: run {
+            shardArray[numberOfTrailingZeros] =
+                Shard<T>(1 shl numberOfTrailingZeros).apply {
+                    add(grams, key)
+                }
+        }
+        size++
+    }
+
+    fun searchMustInclude(valueListList: List<List<String>>): List<T> {
+        // Must include all the strings in each of the lists
+        val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
+
+        return shardArray.mapNotNull { it?.search(gramsList) }.flatten()
+    }
+
+    fun convertToHigherRank() {
+        require(!isHigherRank) {
+            "Can not convert an already converted higher rank"
+        }
+        isHigherRank = true
+        shardArray.forEach { it?.convertToHigherRankRows(goalCardinality) }
+    }
+}
+
+class Shard<T>(
+    val m: Int,
+) : Serializable {
+    private val valueList: MutableList<T> = mutableListOf()
+    private val rows: Array<Row> = Array(m) { Row() }
+    private var isHigherRank: Boolean = false
+    fun add(gramList: List<Long>, key: T) {
+        val bf = Bf(m)
+        gramList.forEach { g ->
+            bf.addHash(g)
+        }
+        bf.getSetPositions().forEach {
+            rows[it].setBit(valueList.size)
+        }
+        valueList.add(key)
+    }
+
+    fun convertToHigherRankRows(goalCardinality: Double) {
+        require(!isHigherRank) {
+            "Can not convert an already converted higher rank"
+        }
+        isHigherRank = true
+        val maxRank = rows.maxOf {
+            it.expandToFitBit(valueList.size.nextPowerOf2() + 1)
+            it.convertToTargetDensity(goalCardinality)
+            it.rank
+        }
+    }
+
+    fun search(gramsList: List<List<Long>>): List<T> {
+        if (gramsList.flatten().isEmpty()) {
+            return valueList
+        }
+
+        val rowList = gramsList.filter { it.isNotEmpty() }.map { getRows(it) }.flatten()
+
+        val bitPositions = if (isHigherRank) {
+            rowList.sortedByDescending { it.rank }
+        } else {
+            rowList
+        }
+
+        return getSetValues(bitPositions)
+    }
+
+    private fun getRows(
+        grams: List<Long>,
+    ): List<Row> {
+        val bf = Bf(m)
+        grams.forEach {
+            bf.addHash(it)
+        }
+
+        return bf.getSetPositions().map { rows[it] }
+    }
+
+    private fun getSetValues(bitPositions: List<Row>): List<T> {
+        return if (isHigherRank) {
+            andRowsOfNotEqualLength(bitPositions).getAllSetBitPositions().map { valueList[it] }
+        } else {
+            andRowsOfEqualLength(bitPositions).getAllSetBitPositions().map { valueList[it] }
+        }
+    }
+
+    private fun andRowsOfNotEqualLength(
+        rowsArray: List<Row>,
+    ): Row {
+        val res = Row()
+        res.or( rowsArray[0])
+        res.rank = rowsArray[0].rank
+        var currentRank = res.rank
+
+        for (i in 1..<rowsArray.size) {
+            val row = rowsArray[i]
+            while (currentRank != row.rank) {
+                res.doubleWords()
+                currentRank--
+            }
+            res.and(row)
+            if (res.isEmpty()) {
+                return res
+            }
+        }
+
+        return res
+    }
+
+    private fun andRowsOfEqualLength(
+        rowsArray: List<Row>,
+    ): Row {
+        val res = Row()
+        res.or( rowsArray[0])
+
+        for (i in 1..<rowsArray.size) {
+            res.and(rowsArray[i])
+            if (res.isEmpty()) {
+                return res
+            }
+        }
+
+        return res
+    }
+}
+
+class Bf(m: Int) : Serializable {
+    private val longM = m.toLong()
+    private val modMask = longM - 1
+    private val bitSet = BitSet(m)
+    private var cardinality = 0
+    fun add(s: String, hashes: Int) {
+        if (hashes == 0) {
+            return
+        }
+
+        val number = LongHashFunction.xx3().hashChars(s)
+        if (hashes == 1) {
+            val pos = (number and modMask).toInt()
+            if (!bitSet.get(pos))
+                cardinality++
+            bitSet.set(pos)
+            return
+        }
+        val lower32 = number.and(0xFFFFFFFF)
+        val upper32 = number.shr(32)
+        (1..hashes).forEach {
+            val pos = ((lower32 + upper32 * it) and modMask).toInt()
+            if (!bitSet.get(pos))
+                cardinality++
+            bitSet.set(pos)
+        }
+    }
+
+    fun addHash(l: Long) {
+        val pos = (l and modMask).toInt()
+        if (!bitSet.get(pos))
+            cardinality++
+        bitSet.set(pos)
+    }
+
+    fun getSetPositions(): IntArray {
+        val setBitPositions = IntArray(cardinality)
+
+        setBitPositions.indices.forEach {
+            setBitPositions[it] = if (it == 0) bitSet.nextSetBit(0) else bitSet.nextSetBit(setBitPositions[it - 1] + 1)
+        }
+        return setBitPositions
+    }
+
+    fun clear() {
+        bitSet.clear()
+        cardinality = 0
+    }
+
+    companion object {
+        fun estimate(n: Int, p: Double): Int {
+            return (ceil((n * ln(p)) / ln(1.0 / 2.0.pow(ln(2.0)))).toInt() + 1).nextPowerOf2()
+        }
+    }
+
+
+}
+
+fun Int.nextPowerOf2(): Int {
+    var n = this
+    n--
+
+    n = n or (n shr 1)
+    n = n or (n shr 2)
+    n = n or (n shr 4)
+    n = n or (n shr 8)
+    n = n or (n shr 16)
+
+    return ++n
+}
+
+class Row(var words: LongArray = LongArray(0)) : Serializable {
+    var size = words.size
+    var wordsInUse = 0
+    var rank = 0
+
+    fun convertToTargetDensity(targetDensity: Double) {
+        if (targetDensity < 0.0 || targetDensity > 1.0) {
+            throw IllegalArgumentException("Target density should be between 0.0 and 1.0.")
+        }
+
+        while (words.size > 1) {
+            val length = words.size
+            val partSize = length / 2
+
+            val newArray = LongArray(partSize) {
+                words[it] or words[it + partSize]
+            }
+
+
+            words = newArray
+            size = words.size
+            recalculateWordsInUseFrom(words.size)
+            rank++
+            if (newArray.calculateDensity() >= targetDensity) {
+                break
+            }
+        }
+    }
+
+    fun setBit(bitToSet: Int) {
+        expandToFitBit(bitToSet)
+
+        val originalIndex = bitToSet shr 6
+        words[originalIndex] = words[originalIndex] or (1L shl (bitToSet and (java.lang.Long.SIZE - 1)))
+        recalculateWordsInUseFrom(max(((bitToSet shr 6) + 1), wordsInUse))
+    }
+
+    fun expandToFitBit(bitToSet: Int) {
+        require(bitToSet >= 0) { "bitToSet must be non-negative" }
+
+        val neededSize = (bitToSet shr 6) + 1
+        if (words.size < neededSize) {
+            val newSize = maxOf(words.size * 2, neededSize)
+            val powerOfTwoSize = newSize.nextPowerOf2()
+
+            words = words.copyOf(powerOfTwoSize)
+        }
+    }
+
+    fun doubleWords() {
+        val newArray = LongArray(words.size * 2)
+        System.arraycopy(words, 0, newArray, 0, words.size)
+        System.arraycopy(words, 0, newArray, words.size, words.size)
+        wordsInUse += words.size
+        words = newArray
+    }
+
+    fun isEmpty(): Boolean {
+        return wordsInUse == 0
+    }
+
+    private fun recalculateWordsInUseFrom(index: Int) {
+        // Traverse the bitset until a used word is found
+        wordsInUse = index
+        while (wordsInUse > 0) {
+            if (words[wordsInUse - 1] != 0L) break
+            wordsInUse--
+        }
+    }
+
+    fun or(row: Row) {
+        val wordsInCommon = min(wordsInUse, row.wordsInUse)
+        if (wordsInUse < row.wordsInUse) {
+            ensureCapacity(row.wordsInUse)
+            wordsInUse = row.wordsInUse
+        }
+
+        // Perform logical OR on words in common
+        for (i in 0..<wordsInCommon) words[i] = words[i] or row.words[i]
+
+        // Copy any remaining words
+        if (wordsInCommon < row.wordsInUse) System.arraycopy(
+            row.words, wordsInCommon,
+            words, wordsInCommon,
+            wordsInUse - wordsInCommon
+        )
+    }
+    private fun ensureCapacity(wordsRequired: Int) {
+        if (words.size < wordsRequired) {
+            // Allocate larger of doubled size or required size
+            val request = (2 * words.size).coerceAtLeast(wordsRequired)
+            words = words.copyOf(request)
+        }
+    }
+
+    fun and(row: Row) {
+        val min = min(wordsInUse, row.wordsInUse)
+
+        for (i in 0..<min) words[i] = words[i] and row.words[i]
+
+        recalculateWordsInUseFrom(min)
+    }
+
+    fun getAllSetBitPositions(): List<Int> {
+        val setBitPositions = mutableListOf<Int>()
+        var i = nextSetBit(0)
+        while (i != -1) {
+            setBitPositions.add(i)
+            i = nextSetBit(i + 1)
+        }
+        return setBitPositions
+    }
+
+    fun nextSetBit(fromIndex: Int): Int {
+        var u = fromIndex shr 6
+        if (u >= wordsInUse) return -1
+        var word = words[u] and (-0x1L shl fromIndex)
+        while (true) {
+            if (word != 0L) return (u shl 6) + java.lang.Long.numberOfTrailingZeros(word)
+            if (++u == wordsInUse) return -1
+            word = words[u]
+        }
+    }
+}
+
+fun LongArray.calculateDensity() = sumOf { java.lang.Long.bitCount(it) }.toDouble() / (size * java.lang.Long.SIZE)
+
+
+fun String.grams(): List<Long> {
+    val lowercase = lowercase().filter { it.isLetterOrDigit() }
+    if (lowercase.length < 3) {
+        return listOf(LongHashFunction.xx3().hashChars(lowercase))
+    }
+    return lowercase.windowed(3).map { LongHashFunction.xx3().hashChars(it) }
+}
+
+class CountMin(epsOfTotalCount: Double = 0.0001, confidence: Double = 0.99) {
+    val width: Int
+    val depth: Int
+    var docCount = 0
+    private var count = 0
+
+    init {
+        val calculateWidthAndDepth = calculateWidthAndDepth(epsOfTotalCount, confidence)
+        width = calculateWidthAndDepth.first
+        depth = calculateWidthAndDepth.second
+    }
+
+    private val sketch = Array(depth) { IntArray(width) }
+    val size = width * depth
+
+    fun add(item: String) {
+        count++
+        val hashes = hash(item)
+        for (i in 0 until depth) {
+            sketch[i][(hashes[i] mod width)]++
+        }
+    }
+
+    fun count(item: String): Int {
+        val hashes = hash(item)
+        var countMin = Int.MAX_VALUE
+        for (i in 0 until depth) {
+            countMin = minOf(countMin, sketch[i][(hashes[i] mod width)])
+        }
+        return countMin
+    }
+
+
+    fun topKSetAbove(item: String, threshold: Double = 0.1): Boolean {
+        return (count * threshold) < count(item)
+    }
+
+
+    private fun calculateWidthAndDepth(
+        epsOfTotalCount: Double, confidence: Double
+    ): Pair<Int, Int> {
+
+        val width = ceil(2 / epsOfTotalCount).toInt()
+        val depth = ceil(-ln(1 - confidence) / ln(2.0)).toInt()
+
+        return width to depth
+    }
+
+    private fun hash(item: String): LongArray {
+        val number = LongHashFunction.xx3().hashChars(item)
+        val lower32 = number.and(0xFFFFFFFF)
+        val upper32 = number.shr(32)
+        val hashes = LongArray(depth)
+        (0 until depth).forEach {
+            hashes[it] = ((lower32 to upper32).first + (lower32 to upper32).second * it)
+        }
+
+        return hashes
+    }
+
+    private infix fun Long.mod(m: Int): Int {
+        return Math.floorMod(this, m)
+    }
+}

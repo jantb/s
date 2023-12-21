@@ -1,4 +1,4 @@
-import slides.SlideColors
+import util.UiColors
 import java.awt.Color
 import java.awt.Graphics2D
 
@@ -39,13 +39,13 @@ class ColoredText() {
                 highlightRange!!.first.coerceIn(0..text.length),
                 (highlightRange!!.last + 1).coerceIn(0..text.length)
             )
-            graphics.color = SlideColors.highlightRect
+            graphics.color = UiColors.highlightRect
             graphics.drawString(
                 high,
                 graphics.fontMetrics.stringWidth(first),
                 y
             )
-            graphics.color = SlideColors.defaultText
+            graphics.color = UiColors.defaultText
 
         }
 

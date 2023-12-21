@@ -1,10 +1,8 @@
 package widgets
 
-import com.sun.java.accessibility.util.AWTEventMonitor.addWindowListener
-import slides.SlideColors
-import slides.Styles
+import util.UiColors
+import util.Styles
 import java.awt.Font
-import java.awt.Frame
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.JFrame
@@ -21,8 +19,8 @@ class TextViewer(title: String = "", text: String) : JFrame() {
         textArea.isEditable = false
         textArea.lineWrap = true
         textArea.font = Font(Styles.normalFont, Font.PLAIN, 12)
-        textArea.foreground = SlideColors.defaultText
-        textArea.background = SlideColors.background
+        textArea.foreground = UiColors.defaultText
+        textArea.background = UiColors.background
 
         val scrollPane = JScrollPane(textArea)
         scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER

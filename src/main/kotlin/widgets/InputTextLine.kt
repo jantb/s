@@ -3,11 +3,9 @@ package widgets
 import ComponentOwn
 import SlidePanel
 import State
-import app.Channels
-import app.QueryChanged
 import round
-import slides.SlideColors
-import slides.Styles
+import util.Styles
+import util.UiColors
 import java.awt.EventQueue
 import java.awt.Font
 import java.awt.Graphics2D
@@ -18,11 +16,20 @@ import java.awt.datatransfer.StringSelection
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
+import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import javax.swing.SwingUtilities
 import kotlin.math.abs
 
-class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int) : ComponentOwn(),
+class InputTextLine(
+    private val panel: SlidePanel,
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    val updateText: (text: String) -> Unit
+) : ComponentOwn(),
     KeyListener,
     MouseListener, MouseWheelListener,
     MouseMotionListener {
@@ -50,6 +57,8 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     private var lastKeyTimeStamp = System.currentTimeMillis()
     private var selectedText = ""
     var text = ""
+    var textStack = LinkedList<String>()
+    var textStackIndex = -1
     var cursorIndex = 0
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
         if (this.width != width || this.height != height || this.x != x || this.y != y) {
@@ -65,12 +74,12 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             this.y = y
         }
         //Clear
-        g2d.color = SlideColors.background
+        g2d.color = UiColors.background
         g2d.fillRect(0, 0, width, height)
         g2d.font = Font(Styles.normalFont, Font.PLAIN, rowHeight)
         maxCharBounds = g2d.fontMetrics.getMaxCharBounds(g2d)
 
-        g2d.color = SlideColors.magenta
+        g2d.color = UiColors.magenta
 
         paintSelectedText()
         paintText()
@@ -83,15 +92,15 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     }
 
     private fun paintText() {
-        g2d.color = SlideColors.defaultText
+        g2d.color = UiColors.defaultText
         g2d.drawString(text, 0, maxCharBounds.height.toInt())
     }
 
     private fun paintCursor() {
-        g2d.color = SlideColors.defaultCursor
+        g2d.color = UiColors.defaultCursor
         if (System.currentTimeMillis().mod(1000) > 500 || (System.currentTimeMillis() - lastKeyTimeStamp) < 500) {
             g2d.fillRect(
-                (g2d.fontMetrics.stringWidth(text.substring(0, cursorIndex))) - 1,
+                ((g2d.fontMetrics.stringWidth(text.substring(0, cursorIndex.coerceIn(0..text.length)))) - 1).coerceIn(0..Int.MAX_VALUE),
                 0 + g2d.fontMetrics.maxDescent,
                 2,
                 maxCharBounds.height.toInt()
@@ -103,7 +112,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         if (text.isEmpty() || selectedTextRange == null || selectedText.isBlank()) {
             return
         }
-        g2d.color = SlideColors.selectionText
+        g2d.color = UiColors.selectionText
 
         g2d.fillRect(
             g2d.fontMetrics.stringWidth(text.substring(0, selectedTextRange!!.first)),
@@ -121,7 +130,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             cursorIndex(1)
             lastKeyTimeStamp = System.currentTimeMillis()
             EventQueue.invokeLater {
-                Channels.cmdChannel.put(QueryChanged(text))
+                this.updateText(text)
             }
             selectedText = ""
             panel.repaint()
@@ -132,7 +141,15 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
 
         when (e.keyCode) {
             KeyEvent.VK_RIGHT -> {
-                if (e.isShiftDown) {
+                if (e.isMetaDown && State.onMac || e.isAltDown && !State.onMac) {
+                    if (textStack.isNotEmpty()) {
+                        textStackIndex = (textStackIndex + 1).coerceIn(textStack.indices)
+                        text = textStack[textStackIndex]
+                        SwingUtilities.invokeLater {
+                            updateText(text)
+                        }
+                    }
+                } else if (e.isShiftDown) {
                     cursorIndex(1)
                     if (selectedTextRange != null) {
                         selectedText += text[cursorIndex.coerceIn(text.indices)]
@@ -152,7 +169,15 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             }
 
             KeyEvent.VK_LEFT -> {
-                if (e.isShiftDown) {
+                if (e.isMetaDown && State.onMac || e.isAltDown && !State.onMac) {
+                    if (textStack.isNotEmpty()) {
+                        textStackIndex = (textStackIndex - 1).coerceIn(textStack.indices)
+                        text = textStack.get(textStackIndex)
+                        SwingUtilities.invokeLater {
+                            updateText(text)
+                        }
+                    }
+                } else if (e.isShiftDown) {
                     cursorIndex(-1)
                     if (selectedTextRange != null) {
                         selectedText = text[cursorIndex.coerceIn(text.indices)] + text
@@ -171,6 +196,21 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                 }
             }
 
+            KeyEvent.VK_ENTER -> {
+                while (textStack.size > textStackIndex &&  textStack.isNotEmpty()) {
+                    textStack.removeLast()
+                }
+                if (textStack.isNotEmpty()) {
+                    if (textStack.last != text) {
+                        textStack.addLast(text)
+                        textStackIndex++
+                    }
+                } else {
+                    textStack.addLast(text)
+                    textStackIndex++
+                }
+            }
+
             KeyEvent.VK_BACK_SPACE -> {
                 if (selectedText.isNotBlank()) {
                     text = text.substring(0, selectedTextRange!!.first) + text.substring(selectedTextRange!!.last + 1)
@@ -178,12 +218,12 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                     selectedText = ""
                     cursorIndex(0)
                     EventQueue.invokeLater {
-                        Channels.cmdChannel.put(QueryChanged(text))
+                        this.updateText(text)
                     }
                 } else if (cursorIndex(-1)) {
                     deleteCharAtCursorIndex()
                     EventQueue.invokeLater {
-                        Channels.cmdChannel.put(QueryChanged(text))
+                        this.updateText(text)
                     }
                 }
             }
@@ -200,7 +240,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             }
 
             KeyEvent.VK_A -> {
-                if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {
+                if (e.isMetaDown && State.onMac && e.isAltDown || e.isControlDown && !State.onMac) {
                     selectedText = text
                     selectedTextRange = text.indices
                     cursorIndex = selectedTextRange!!.last + 1
@@ -225,7 +265,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                                 selectedText = ""
                                 cursorIndex(0)
                                 EventQueue.invokeLater {
-                                    Channels.cmdChannel.put(QueryChanged(text))
+                                    this.updateText(text)
                                 }
                             } else {
                                 textFromClipboard.forEach {
@@ -234,7 +274,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                                 }
                             }
                             EventQueue.invokeLater {
-                                Channels.cmdChannel.put(QueryChanged(text))
+                                this.updateText(text)
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
@@ -247,6 +287,7 @@ class InputTextLine(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         lastKeyTimeStamp = System.currentTimeMillis()
         panel.repaint()
     }
+
 
     override fun keyReleased(e: KeyEvent) {
 

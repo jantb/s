@@ -1,9 +1,8 @@
-package slides
+package util
 
 import java.awt.Color
-import javax.swing.UIManager
 
-object SlideColors {
+object UiColors {
     // intellij default editor colors
 
     val magenta = Color(199, 125 ,187)

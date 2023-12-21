@@ -1,112 +1,102 @@
+@file:OptIn(ExperimentalTime::class)
+
 package app
 
 import State.changedAt
 import State.indexedLines
 import State.searchTime
-import app.Channels.cmdChannel
 import app.Channels.cmdGuiChannel
+import app.Channels.popChannel
+import app.Channels.searchChannel
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.Channel.Factory.BUFFERED
+import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
+import kotlinx.coroutines.channels.Channel.Factory.RENDEZVOUS
 import kotlinx.coroutines.launch
-import java.util.*
+import kotlinx.coroutines.selects.select
+import kube.PodUnit
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
-import kotlin.system.measureTimeMillis
+import kotlin.coroutines.CoroutineContext
+import kotlin.time.ExperimentalTime
+import kotlin.time.measureTimedValue
 
-class App {
+class App : CoroutineScope {
+  fun start() {
+    launch(CoroutineName("indexUpdaterScheduler")) {
+      val valueStores = mutableMapOf<String, ValueStore>()
 
-    fun start() {
-        val thread = Thread {
-            val valueStores = mutableMapOf<String, ValueStore>()
-            var query = ""
-            var time = System.currentTimeMillis()
-            var lastQueryTime = 0L
-            var length = 0
-            var offset = 0
-            val myScope = CoroutineScope(Dispatchers.Default)
-            while (true) {
-                try {
-                    when (val msg = cmdChannel.take()) {
-                        is QueryChanged -> {
-                            query = msg.query
-                            val timeSinceLast = System.currentTimeMillis() - time
-                            if (timeSinceLast > 16 && timeSinceLast > lastQueryTime) {
-                                lastQueryTime = measureTimeMillis {
-                                    if (msg.offset != -1) {
-                                        offset = msg.offset
-                                    }
-                                    if (msg.length != -1) {
-                                        length = msg.length
-                                    }
-                                    val nanoTime = System.nanoTime()
-                                    cmdGuiChannel.offer(ResultChanged(result =
-                                    valueStores.map { it.value.search(query, length + offset) }
-                                        .flatten().sortedBy { it.timestamp() }.takeLast(length + offset)
-                                        .dropLast(offset), query = query
-                                    )
-                                    )
-                                    searchTime.set(System.nanoTime() - nanoTime)
-                                    time = System.currentTimeMillis()
-                                }
-                            }
-                        }
-
-                        is UpdateResult -> {
-                            myScope.launch {
-                                cmdChannel.put(QueryChanged(query = query, length = msg.length, offset = msg.offset))
-                            }
-                        }
-
-                        is AddToIndex -> {
-                            valueStores.computeIfAbsent(msg.indexIdentifier) { ValueStore() }.put(msg.value)
-                            changedAt.set(System.nanoTime())
-                        }
-
-                        is ClearIndex -> {
-                            valueStores.clear()
-                            indexedLines.set(0)
-                        }
-
-                        is ClearNamedIndex -> {
-                            indexedLines.addAndGet(-valueStores.remove(msg.name)!!.size)
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+      while (true) {
+        when (val msg = select {
+          searchChannel.onReceive { it }
+          popChannel.onReceive { it }
+        }) {
+          is AddToIndex -> {
+            valueStores.computeIfAbsent(msg.indexIdentifier) { ValueStore() }.put(msg.value)
+            changedAt.set(System.nanoTime())
+          }
+          is ClearIndex -> {
+            valueStores.clear()
+          }
+          is ClearNamedIndex -> {
+            val remove = valueStores.remove(msg.name)
+            if (remove != null) {
+              indexedLines.addAndGet(-remove.size)
             }
+          }
+
+          is QueryChanged -> {
+            val results = measureTimedValue {
+              valueStores.map { it.value.search(msg.query, msg.length + msg.offset) }
+                .flatten().sortedBy { it.timestamp() }
+                .dropLast(msg.offset)
+            }
+            searchTime.set(results.duration.inWholeNanoseconds)
+            cmdGuiChannel.put(ResultChanged(results.value))
+          }
         }
-        thread.isDaemon = true
-        thread.start()
+      }
     }
+  }
+
+
+  override val coroutineContext: CoroutineContext = Dispatchers.IO
 }
 
 object Channels {
-    val cmdChannel = LinkedBlockingDeque<CmdMessage>(1)
-    val cmdGuiChannel = LinkedBlockingDeque<CmdGuiMessage>(1)
-    val podsChannel = LinkedBlockingDeque<PodsMessage>(1)
+  val cmdGuiChannel = LinkedBlockingDeque<CmdGuiMessage>(1)
+  val podsChannel = LinkedBlockingDeque<PodsMessage>(1)
+  val kafkaChannel = LinkedBlockingDeque<KafkaMessage>(1)
+  val kafkaSelectChannel = LinkedBlockingDeque<KafkaSelectMessage>(1)
+  val popChannel = Channel<CmdMessage>(capacity = BUFFERED)
+  val searchChannel = Channel<QueryChanged>(capacity = CONFLATED)
 }
 
 sealed class PodsMessage
-class ListPods(val result: CompletableFuture<List<String>> = CompletableFuture()) : PodsMessage()
+sealed class KafkaMessage
+sealed class KafkaSelectMessage
+class ListPods(val result: CompletableFuture<List<PodUnit>> = CompletableFuture()) : PodsMessage()
+class ListTopics(val result: CompletableFuture<List<String>> = CompletableFuture()) : KafkaMessage()
 class ListenToPod(val podName: String) : PodsMessage()
+class PublishToTopic(val topic: String, val key: String, val value: String) : KafkaMessage()
+class ListenToTopic(val name: List<String>) : KafkaMessage()
 class UnListenToPod(val podName: String) : PodsMessage()
 object UnListenToPods : PodsMessage()
+class KafkaSelectChangedText(val text: String) : KafkaSelectMessage()
+object UnListenToTopics : KafkaMessage()
 sealed class CmdMessage
-class QueryChanged(val query: String, val length: Int = -1, val offset: Int = -1) : CmdMessage()
+class QueryChanged(val query: String, val length: Int, val offset: Int) : CmdMessage()
 object ClearIndex : CmdMessage()
 
 class ClearNamedIndex(val name: String) : CmdMessage()
 
-
 class AddToIndex(val value: String, val indexIdentifier: String = UUID.randomUUID().toString()) :
-    CmdMessage()
-
-class UpdateResult(
-    val offset: Int,
-    val length: Int
-) :
-    CmdMessage()
+  CmdMessage()
 
 sealed class CmdGuiMessage
-class ResultChanged(val result: List<Domain>, val query: String) : CmdGuiMessage()
+class ResultChanged(val result: List<Domain>) : CmdGuiMessage()

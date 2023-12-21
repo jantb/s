@@ -106,6 +106,9 @@ inline fun <reified T> String.deserializeJsonToObject(): T {
 inline fun <reified T> T.serializeToJson(): String {
     return objectMapper.writeValueAsString(this)
 }
+inline fun <reified T> T.serializeToJsonPP(): String {
+    return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(this)
+}
 fun mergeSequences(vararg sequences: Sequence<Int>): Sequence<Int> {
     fun mergeTwoSequences(sequence1: Sequence<Int>, sequence2: Sequence<Int>): Sequence<Int> {
         val iterator1 = sequence1.iterator()
@@ -139,6 +142,12 @@ fun mergeSequences(vararg sequences: Sequence<Int>): Sequence<Int> {
     val mergedRight = mergeSequences(*rightSequences)
 
     return mergeTwoSequences(mergedLeft, mergedRight)
+}
+
+class LRUCache<T, V>(private val capacity: Int) : LinkedHashMap<T, V>(capacity, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<T, V>?): Boolean {
+        return size > capacity
+    }
 }
 
 object JsonMapper {
