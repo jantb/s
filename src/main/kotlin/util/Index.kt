@@ -83,7 +83,6 @@ class Shard<T>(
             while (it.words.calculateDensity() < goalCardinality && it.words.size > 1) {
                 it.increaseRank()
             }
-            it.higherRankCardinality = it.getAllSetBitPositions().toList().size
         }
     }
 
@@ -132,9 +131,9 @@ class Shard<T>(
     private fun andRowsOfNotEqualLength(
         rowsArray: List<Row>,
     ): Row {
-        val res = Row()
-        res.or(rowsArray[0])
+        val res = Row(rowsArray[0].words.clone())
         res.rank = rowsArray[0].rank
+        res.wordsInUse = rowsArray[0].wordsInUse
 
         for (i in 1..<rowsArray.size) {
             val row = rowsArray[i]
@@ -153,8 +152,9 @@ class Shard<T>(
     private fun andRowsOfEqualLength(
         rowsArray: List<Row>,
     ): Row {
-        val res = Row()
-        res.or(rowsArray[0])
+        val res = Row(rowsArray[0].words.clone())
+        res.rank = rowsArray[0].rank
+        res.wordsInUse = rowsArray[0].wordsInUse
 
         for (i in 1..<rowsArray.size) {
             res.and(rowsArray[i])
@@ -209,7 +209,6 @@ fun Int.nextPowerOf2(): Int {
 }
 
 class Row(var words: LongArray = LongArray(0)) : Serializable {
-    var higherRankCardinality: Int = 0
     var wordsInUse = 0
     var rank = 0
 
@@ -289,32 +288,6 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
         while (wordsInUse > 0) {
             if (words[wordsInUse - 1] != 0L) break
             wordsInUse--
-        }
-    }
-
-    fun or(row: Row) {
-        val wordsInCommon = min(wordsInUse, row.wordsInUse)
-        if (wordsInUse < row.wordsInUse) {
-            ensureCapacity(row.wordsInUse)
-            wordsInUse = row.wordsInUse
-        }
-
-        // Perform logical OR on words in common
-        for (i in 0..<wordsInCommon) words[i] = words[i] or row.words[i]
-
-        // Copy any remaining words
-        if (wordsInCommon < row.wordsInUse) System.arraycopy(
-            row.words, wordsInCommon,
-            words, wordsInCommon,
-            wordsInUse - wordsInCommon
-        )
-    }
-
-    private fun ensureCapacity(wordsRequired: Int) {
-        if (words.size < wordsRequired) {
-            // Allocate larger of doubled size or required size
-            val request = (2 * words.size).coerceAtLeast(wordsRequired)
-            words = words.copyOf(request)
         }
     }
 
