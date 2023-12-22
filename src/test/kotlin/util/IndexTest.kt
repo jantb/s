@@ -1,10 +1,9 @@
 package util
 
-import org.junit.jupiter.api.Assertions.assertTrue
 import printBytesAsAppropriateUnit
 import serializeToBytes
-import serializeToFile
 import java.util.*
+import kotlin.collections.ArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.nanoseconds
@@ -90,10 +89,10 @@ class IndexTest {
         val index = Index<Int>()
         val itemCount = 300_000
 
-        val map = mutableMapOf<Int, String>() // For later verification
+        val map = Array(itemCount) { "" } // For later verification
 
         val timeTaken = measureTime {
-            for (key in 1..itemCount) {
+            for (key in 0..<itemCount) {
                 val value = UUID.randomUUID().toString()
 
                 index.add(key, value)
@@ -101,20 +100,33 @@ class IndexTest {
                 map[key] = value // Save information for verification
             }
         }
-        index.convertToHigherRank()
-        println(index.serializeToBytes().size.printBytesAsAppropriateUnit())
         println("Time taken to add $itemCount elements: $timeTaken")
         var found = 0
-        val timeTakenSearch = measureTime {
-            for ((key, value) in map) {
+        var timeTakenSearch = measureTime {
+            map.forEachIndexed { key, value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
                 if (key in searchMustInclude) {
-                  found++
+                    found++
                 }
             }
         }
         assertEquals(itemCount, found)
         println("Time taken to search $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / itemCount).nanoseconds}")
+        println("not hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
+        index.convertToHigherRank()
+        println("hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
+        found = 0
+        timeTakenSearch = measureTime {
+            map.forEachIndexed { key, value ->
+                val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
+                if (key in searchMustInclude) {
+                    found++
+                }
+            }
+        }
+        assertEquals(itemCount, found)
+        println("Time taken to search higher rang $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / itemCount).nanoseconds}")
+
     }
 }
 
@@ -135,6 +147,7 @@ class ShardTest {
 class BitSetTest {
 
     private val row = Row()
+
     @Test
     fun `expandToFitBit does nothing when words size is sufficient`() {
         row.words = LongArray(10)
@@ -156,6 +169,7 @@ class BitSetTest {
         row.expandToFitBit(0)
         assertEquals(1, row.words.size)
     }
+
     @Test
     fun `expandToFitBit expands words size when insufficient, set 1`() {
         row.words = LongArray(0)
@@ -169,12 +183,14 @@ class BitSetTest {
         row.expandToFitBit(63)
         assertEquals(1, row.words.size)
     }
+
     @Test
     fun `expandToFitBit expands words size when insufficient, set 64`() {
         row.words = LongArray(0)
         row.expandToFitBit(64)
         assertEquals(2, row.words.size)
     }
+
     @Test
     fun `expandToFitBit expands words size when insufficient, set 65`() {
         row.words = LongArray(0)

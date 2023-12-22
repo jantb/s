@@ -83,7 +83,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
     }
   }
 
-  @OptIn(ExperimentalTime::class)
   private fun viewer(g: Graphics) {
     val componentOwns = componentMap[State.mode]!!
 
@@ -113,7 +112,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
     g.drawString(timeString, width - stringBounds.width.toInt() - 10, height - 10)
   }
 
-  @OptIn(ExperimentalTime::class)
   private fun select(g: Graphics) {
     val componentOwns = componentMap[State.mode]!!
 

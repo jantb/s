@@ -24,12 +24,11 @@ class Index<T>(
         }
 
         val grams = value.grams()
-        val estimate = estimate(grams.size, probability)
 
-        val numberOfTrailingZeros = Integer.numberOfTrailingZeros(estimate)
-        shardArray[numberOfTrailingZeros]?.add(grams, key) ?: run {
-            shardArray[numberOfTrailingZeros] =
-                Shard<T>(1 shl numberOfTrailingZeros).apply {
+        val shardSize = Integer.numberOfTrailingZeros(estimate(grams.size, probability))
+        shardArray[shardSize]?.add(grams, key) ?: run {
+            shardArray[shardSize] =
+                Shard<T>(1 shl shardSize).apply {
                     add(grams, key)
                 }
         }
@@ -75,9 +74,16 @@ class Shard<T>(
         }
         isHigherRank = true
         rows.forEach {
-            it.expandToFitBit(valueList.size.nextPowerOf2() + 1)
-            it.convertToTargetDensity(goalCardinality)
-            it.rank
+
+            if (it.words.calculateDensity() > 0.8) {
+                while (it.words.size > 1) {
+                    it.increaseRank()
+                }
+            }
+            while (it.words.calculateDensity() < goalCardinality && it.words.size > 1) {
+                it.increaseRank()
+            }
+            it.higherRankCardinality = it.getAllSetBitPositions().toList().size
         }
     }
 
@@ -89,7 +95,8 @@ class Shard<T>(
         val rowList = gramsList.filter { it.isNotEmpty() }.map { getRows(it) }.flatten()
 
         val bitPositions = if (isHigherRank) {
-            rowList.sortedByDescending { it.rank }
+            rowList
+                .sortedByDescending { it.rank }
         } else {
             rowList
         }
@@ -202,7 +209,7 @@ fun Int.nextPowerOf2(): Int {
 }
 
 class Row(var words: LongArray = LongArray(0)) : Serializable {
-    var size = words.size
+    var higherRankCardinality: Int = 0
     var wordsInUse = 0
     var rank = 0
 
@@ -219,15 +226,28 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
                 words[it] or words[it + partSize]
             }
 
-
             words = newArray
-            size = words.size
             recalculateWordsInUseFrom(words.size)
             rank++
             if (newArray.calculateDensity() >= targetDensity) {
                 break
             }
         }
+    }
+
+    fun increaseRank() {
+        val newSize = words.size shr 1
+        val firstPart = LongArray(newSize)
+        val lastPart = LongArray(newSize)
+        System.arraycopy(words, 0, firstPart, 0, newSize)
+        System.arraycopy(words, newSize, lastPart, 0, newSize)
+
+        for (i in 0 until newSize) {
+            firstPart[i] = firstPart[i] or lastPart[i]
+        }
+        words = firstPart
+        recalculateWordsInUseFrom(words.size)
+        rank++
     }
 
     fun setBit(bitToSet: Int) {

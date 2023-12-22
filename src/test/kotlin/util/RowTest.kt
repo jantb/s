@@ -24,13 +24,14 @@ class RowTest {
         row.setBit(7)
         assertFalse(row.isEmpty())
     }
+
     @Test
     fun `get bits from ranked row`() {
         val row = Row(LongArray(1))
         row.rank = 3
         row.setBit(0)
         val allSetBitPositions = row.getAllSetBitPositions()
-        for (i in 0 until (1 shl row.rank )) {
+        for (i in 0 until (1 shl row.rank)) {
             allSetBitPositions.forEach {
                 val index = it + (row.words.size * 64 * i)
                 println(index)
@@ -45,7 +46,7 @@ class RowTest {
         row.setBit(12)
         row.setBit(14)
         val setBitPositions = row.getAllSetBitPositions()
-        assertEquals(listOf(10, 12, 14), setBitPositions)
+        assertEquals(listOf(10, 12, 14), setBitPositions.toList())
     }
 
     @Test
@@ -83,6 +84,7 @@ class RowTest {
         // assert the `wordsInUse` is updated
         assertEquals(3 * 2, row.wordsInUse)
     }
+
     @Test
     fun testDoubleWords() {
         val words = longArrayOf(1, 2, 3, 4, 5)
@@ -93,6 +95,7 @@ class RowTest {
             row.words
         )
     }
+
     @Test
     fun `double words when words is empty`() {
         // Create an instance of Row and initialize words as an empty array
@@ -172,5 +175,56 @@ class RowTest {
 
         // Assert the `wordsInUse` is updated
         assertEquals(20, row.wordsInUse)
+    }
+
+    @Test
+    fun `test if exception is thrown for negative target density values`() {
+        val row = Row(longArrayOf(1, 2, 3))
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            row.convertToTargetDensity(-0.5)
+        }
+        assertEquals("Target density should be between 0.0 and 1.0.", exception.message)
+    }
+
+    @Test
+    fun `test if exception is thrown for target density values greater than 1`() {
+        val row = Row(longArrayOf(1, 2, 3))
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            row.convertToTargetDensity(1.5)
+        }
+        assertEquals("Target density should be between 0.0 and 1.0.", exception.message)
+    }
+
+    @Test
+    fun `test if words size is correctly reduced`() {
+        val row = Row(longArrayOf(8, 2, 3, 4, 5, 6, 7, 8))
+        row.convertToTargetDensity(1.0)
+        assertEquals(1, row.words.size)
+    }
+
+    @Test
+    fun `test if conversion stops when target density is reached`() {
+        val row = Row(longArrayOf(0, 0, 0, 0, 0, 0, 0, 0))
+        row.convertToTargetDensity(0.2)
+        assertTrue(row.words.calculateDensity() >= 0.2)
+    }
+
+    @Test
+    fun testIncreaseRank() {
+        val row = Row()
+        row.words = longArrayOf(0b110011, 0b101101)
+        row.increaseRank()
+        val expectedWords = longArrayOf(0b111111)
+
+        assertArrayEquals(expectedWords, row.words)
+    }
+    @Test
+    fun testIncreaseRank2() {
+        val row = Row()
+        row.words = longArrayOf(0b100001, 0b001100)
+        row.increaseRank()
+        val expectedWords = longArrayOf(0b101101)
+
+        assertArrayEquals(expectedWords, row.words)
     }
 }
