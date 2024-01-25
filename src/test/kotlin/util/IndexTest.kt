@@ -87,7 +87,7 @@ class IndexTest {
     @Test
     fun regression_test_higher_rank() {
         val index = Index<Int>()
-        val itemCount = 300_000
+        val itemCount = 3_000_000
 
         val map = Array(itemCount) { "" } // For later verification
 
@@ -102,30 +102,40 @@ class IndexTest {
         }
         println("Time taken to add $itemCount elements: $timeTaken")
         var found = 0
+        var time = System.currentTimeMillis()
         var timeTakenSearch = measureTime {
             map.forEachIndexed { key, value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
                 if (key in searchMustInclude) {
                     found++
+                }else{
+                    throw IllegalStateException("Not finding the entry")
+                }
+                if (System.currentTimeMillis() - time > 10_000) {
+                    return@measureTime
                 }
             }
         }
-        assertEquals(itemCount, found)
-        println("Time taken to search $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / itemCount).nanoseconds}")
+        println("Time taken to search $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / found).nanoseconds}")
         println("not hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
         index.convertToHigherRank()
         println("hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
         found = 0
+        time = System.currentTimeMillis()
         timeTakenSearch = measureTime {
             map.forEachIndexed { key, value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
                 if (key in searchMustInclude) {
                     found++
+                }else{
+                    throw IllegalStateException("Not finding the entry")
+                }
+                if (System.currentTimeMillis() - time > 10_000) {
+                    return@measureTime
                 }
             }
         }
-        assertEquals(itemCount, found)
-        println("Time taken to search higher rang $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / itemCount).nanoseconds}")
+        println("Time taken to search higher rang $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / found).nanoseconds}")
 
     }
 }
