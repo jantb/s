@@ -4,7 +4,7 @@ package util
 import net.openhft.hashing.LongHashFunction
 import util.Bf.Companion.estimate
 import java.io.Serializable
-import java.util.BitSet
+import java.util.*
 import kotlin.math.*
 
 class Index<T>(
@@ -52,13 +52,14 @@ class Index<T>(
 }
 
 class Shard<T>(
-    val m: Int,
+    m: Int,
 ) : Serializable {
+    private val bf = Bf(m)
     private val valueList: MutableList<T> = mutableListOf()
     private val rows: Array<Row> = Array(m) { Row() }
     private var isHigherRank: Boolean = false
     fun add(gramList: List<Long>, key: T) {
-        val bf = Bf(m)
+        bf.clear()
         gramList.forEach { g ->
             bf.addHash(g)
         }
@@ -94,8 +95,7 @@ class Shard<T>(
         val rowList = gramsList.filter { it.isNotEmpty() }.map { getRows(it) }.flatten()
 
         val bitPositions = if (isHigherRank) {
-            rowList
-                .sortedByDescending { it.rank }
+            rowList.sortedByDescending { it.rank }
         } else {
             rowList
         }
@@ -106,11 +106,10 @@ class Shard<T>(
     private fun getRows(
         grams: List<Long>,
     ): List<Row> {
-        val bf = Bf(m)
+        bf.clear()
         grams.forEach {
             bf.addHash(it)
         }
-
         return bf.getSetPositions().map { rows[it] }
     }
 
@@ -168,8 +167,7 @@ class Shard<T>(
 }
 
 class Bf(m: Int) : Serializable {
-    private val longM = m.toLong()
-    private val modMask = longM - 1
+    private val modMask = m.toLong() - 1
     private val bitSet = BitSet(m)
     private var cardinality = 0
     fun addHash(l: Long) {
@@ -186,6 +184,11 @@ class Bf(m: Int) : Serializable {
             setBitPositions[it] = if (it == 0) bitSet.nextSetBit(0) else bitSet.nextSetBit(setBitPositions[it - 1] + 1)
         }
         return setBitPositions
+    }
+
+    fun clear() {
+        cardinality = 0
+        bitSet.clear()
     }
 
     companion object {
