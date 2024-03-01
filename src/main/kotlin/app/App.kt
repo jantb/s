@@ -53,8 +53,7 @@ class App : CoroutineScope {
           is QueryChanged -> {
             val results = measureTimedValue {
               valueStores.map { it.value.search(msg.query, msg.length + msg.offset) }
-                .flatten().sortedBy { it.timestamp() }
-                .dropLast(msg.offset)
+                .flatten().sortedBy { it.timestamp() }.dropLast(msg.offset).takeLast(msg.length)
             }
             searchTime.set(results.duration.inWholeNanoseconds)
             cmdGuiChannel.put(ResultChanged(results.value))

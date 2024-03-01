@@ -70,7 +70,7 @@ class ValueStore : Serializable {
 
 
     return indexes.reversed().asSequence()
-      .map { index -> index.searchMustInclude(listOf(queryList))}.flatten().sortedByDescending { it.timestamp }
+      .map { index -> index.searchMustInclude(listOf(queryList))}.flatten()
       .filter { domain ->
         val contains =
           if (State.heavyHitters.get() && heavyHitters.topKSetAbove(domain.getPunct())) {
@@ -96,8 +96,8 @@ class ValueStore : Serializable {
           }
 
         contains
-      }
-      .take(length).toList().reversed()
+      }.sortedByDescending { it.timestamp }.take(length)
+      .toList().reversed()
   }
 
 }
