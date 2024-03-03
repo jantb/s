@@ -37,7 +37,7 @@ class App : CoroutineScope {
           popChannel.onReceive { it }
         }) {
           is AddToIndex -> {
-            valueStores.computeIfAbsent(msg.indexIdentifier) { ValueStore() }.put(msg.value)
+            valueStores.computeIfAbsent(msg.indexIdentifier) { ValueStore() }.put(msg.value, msg.indexIdentifier)
             changedAt.set(System.nanoTime())
           }
           is ClearIndex -> {
