@@ -70,7 +70,7 @@ class ValueStore : Serializable {
 
 
     return indexes.reversed().asSequence()
-      .map { index -> index.searchMustInclude(listOf(queryList))}.flatten()
+      .map { index -> index.searchMustInclude(listOf(queryList.filter { it.isNotBlank() }) )}.flatten()
       .filter { domain ->
         val contains =
           if (State.heavyHitters.get() && heavyHitters.topKSetAbove(domain.getPunct())) {
