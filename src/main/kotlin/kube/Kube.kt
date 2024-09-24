@@ -11,7 +11,6 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
 
-
 class Kube {
   private val listenedPods: MutableMap<String, AtomicBoolean> = mutableMapOf()
 
@@ -19,17 +18,14 @@ class Kube {
     val thread = Thread {
       while (true) {
         when (val msg = Channels.podsChannel.take()) {
-
-          is ListPods -> msg.result.complete(listPodsInNamespace())
+          is ListPods -> msg.result.complete(listPodsInAllNamespaces())
           is ListenToPod -> {
             listenedPods[msg.podName] = addLogsToIndex(msg.podName)
           }
-
           is UnListenToPod -> {
             listenedPods.remove(msg.podName)!!.set(false)
             // Channels.cmdChannel.put(ClearNamedIndex(msg.podName))
           }
-
           is UnListenToPods -> {
             listenedPods.forEach { it.value.set(false) }
             listenedPods.clear()
@@ -43,31 +39,24 @@ class Kube {
 
   val client = KubernetesClientBuilder().build()
 
-  fun listPodsInNamespace(): List<PodUnit> {
-    return client.pods().list().items.map {
+  fun listPodsInAllNamespaces(): List<PodUnit> {
+    return client.pods().inAnyNamespace().list().items.map {
       PodUnit(
         name = it.metadata.name,
-        version = it.status.containerStatuses.firstOrNull { it.name != "istio-proxy" }?.image?.substringAfterLast(
-          ":"
-        ) ?: "",
+        version = it.status.containerStatuses.firstOrNull { it.name != "istio-proxy" }?.image?.substringAfterLast(":") ?: "",
         creationTimestamp = it.metadata.creationTimestamp
       )
     }
   }
 
-
-  private fun getLogSequence(pod: String): LogWatch {
-    val podResource = client.pods().inNamespace(client.pods().list().items.filter { it.metadata.name == pod }
-      .firstNotNullOfOrNull { it.metadata.namespace }).withName(pod)
-
+  private fun getLogSequence(pod: String, namespace: String): LogWatch {
+    val podResource = client.pods().inNamespace(namespace).withName(pod)
     return podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" }.name)
       .usingTimestamps().watchLog()
   }
 
-  private fun getLogSequencePrev(pod: String): List<String> {
-    val podResource = client.pods().inNamespace(client.pods().list().items.filter { it.metadata.name == pod }
-      .map { it.metadata.namespace }.firstOrNull()).withName(pod)
-
+  private fun getLogSequencePrev(pod: String, namespace: String): List<String> {
+    val podResource = client.pods().inNamespace(namespace).withName(pod)
     return try {
       podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" }.name)
         .usingTimestamps().terminated().log.split("\n")
@@ -83,11 +72,14 @@ class Kube {
 
     val notStopping = AtomicBoolean(true)
     scope.launch {
-      getLogSequencePrev(pod).forEach {
+      val podNamespacePair = client.pods().inAnyNamespace().list().items
+        .firstOrNull { it.metadata.name == pod }?.metadata?.namespace ?: return@launch
+
+      getLogSequencePrev(pod, podNamespacePair).forEach {
         Channels.popChannel.send(AddToIndex(it, pod))
       }
 
-      val logSequence = getLogSequence(pod)
+      val logSequence = getLogSequence(pod, podNamespacePair)
       BufferedReader(InputStreamReader(logSequence.output)).use { reader ->
         while (notStopping.get()) {
           val line = reader.readLine()

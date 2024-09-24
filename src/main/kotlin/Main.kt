@@ -147,34 +147,31 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
   override fun keyPressed(e: KeyEvent) {
     timer = System.nanoTime()
 
-    if (e.keyCode == KeyEvent.VK_Q && State.onMac && e.isMetaDown) {
-      exitProcess(0)
-    }
+    when {
+      e.keyCode == KeyEvent.VK_Q && State.onMac && e.isMetaDown -> exitProcess(0)
 
-    if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_H) {
-      State.heavyHitters.set(!State.heavyHitters.get())
-    }
-
-    if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_P) {
-      if (State.mode != Mode.podSelect) {
-        State.mode = Mode.podSelect
-
-      } else if (State.mode == Mode.podSelect) {
-        State.mode = Mode.viewer
+      (e.isControlDown && e.keyCode == KeyEvent.VK_H) -> {
+        State.heavyHitters.set(!State.heavyHitters.get())
       }
-      repaint()
+
+      (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) -> when (e.keyCode) {
+        KeyEvent.VK_P -> {
+          State.mode = if (State.mode != Mode.podSelect) Mode.podSelect else Mode.viewer
+          repaint()
+        }
+        KeyEvent.VK_K -> {
+          if (State.mode != Mode.kafkaSelect) {
+            State.mode = Mode.kafkaSelect
+          } else {
+            componentMap[State.mode]?.forEach { it.keyPressed(e) }
+            State.mode = Mode.viewer
+          }
+          repaint()
+        }
+      }
     }
 
-    if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_K) {
-      if (State.mode != Mode.kafkaSelect) {
-        State.mode = Mode.kafkaSelect
-      } else if (State.mode == Mode.kafkaSelect) {
-        componentMap[State.mode]!!.forEach { it.keyPressed(e) }
-        State.mode = Mode.viewer
-      }
-      repaint()
-    }
-    componentMap[State.mode]!!.forEach { it.keyPressed(e) }
+    componentMap[State.mode]?.forEach { it.keyPressed(e) }
   }
 
   override fun keyTyped(e: KeyEvent) {

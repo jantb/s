@@ -15,13 +15,15 @@ import java.awt.event.*
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
 import kotlin.math.abs
+import kotlin.text.get
 
 class PodSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int) : ComponentOwn(),
   KeyListener,
   MouseListener, MouseWheelListener,
   MouseMotionListener {
   private val items: MutableList<Item> = mutableListOf()
-
+  private val filteredItems: MutableList<Item> = mutableListOf()
+  private var filterText = ""
   init {
     this.x = x
     this.y = y
@@ -76,7 +78,7 @@ class PodSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, heigh
 
   private fun paint() {
     g2d.color = UiColors.defaultText
-    items.mapIndexed { index, it ->
+    filteredItems.mapIndexed { index, it ->
       g2d.color = if (it.selected) UiColors.green else UiColors.defaultText
       g2d.drawString(it.name + " " + it.version, 0, maxCharBounds.height.toInt() * (index + 1))
     }
@@ -93,55 +95,69 @@ class PodSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, heigh
   }
 
   override fun keyPressed(e: KeyEvent) {
-    if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_A) {
-      items.forEach { item ->
+    when {
+      ((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_A -> {
+        filteredItems.forEach { item ->
+          item.selected = !item.selected
+          Channels.podsChannel.put(if (item.selected) ListenToPod(podName = item.name) else UnListenToPod(podName = item.name))
+        }
+        panel.repaint()
+      }
+      ((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_P -> {
+        Channels.podsChannel.put(UnListenToPods)
+        runBlocking {
+          Channels.popChannel.send(ClearIndex)
+        }
+        val listPods = ListPods()
+        Channels.podsChannel.put(listPods)
+        items.clear()
+        items.addAll(listPods.result.get().map {
+          Item(name = it.name, version = it.version, creationDate = it.creationTimestamp, selected = false)
+        })
+        applyFilter()
+        panel.repaint()
+      }
+      e.keyCode == KeyEvent.VK_DOWN -> {
+        selectedLineIndex = (selectedLineIndex + 1).coerceIn(0 until filteredItems.size)
+        panel.repaint()
+      }
+      e.keyCode == KeyEvent.VK_UP -> {
+        selectedLineIndex = (selectedLineIndex - 1).coerceIn(0 until filteredItems.size)
+        panel.repaint()
+      }
+      e.keyCode == KeyEvent.VK_ENTER -> {
+        val item = filteredItems[selectedLineIndex]
         item.selected = !item.selected
-        if (item.selected) {
-          Channels.podsChannel.put(ListenToPod(podName = item.name))
-        } else {
-          Channels.podsChannel.put(UnListenToPod(podName = item.name))
+        Channels.podsChannel.put(if (item.selected) ListenToPod(podName = item.name) else UnListenToPod(podName = item.name))
+        panel.repaint()
+      }
+      e.keyCode in 'A'.code..'Z'.code || e.keyCode in 'a'.code..'z'.code || e.keyCode in '0'.code..'9'.code -> {
+        filterText += e.keyChar
+        applyFilter()
+        panel.repaint()
+      }
+      e.keyCode == KeyEvent.VK_BACK_SPACE -> {
+        if (filterText.isNotEmpty()) {
+          filterText = filterText.dropLast(1)
+          applyFilter()
+          panel.repaint()
         }
       }
-      panel.repaint()
-    } else if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_P) {
-      Channels.podsChannel.put(UnListenToPods)
-      runBlocking {
-        Channels.popChannel.send(ClearIndex)
+      e.keyCode == KeyEvent.VK_P && State.onMac && e.isMetaDown -> {
+        panel.repaint()
       }
-      val listPods = ListPods()
-      Channels.podsChannel.put(listPods)
-      items.clear()
-      items.addAll(listPods.result.get().map {
-        Item(
-          name = it.name,
-          version = it.version,
-          creationDate = it.creationTimestamp,
-          selected = false
-        )
-      })
-      selectedLineIndex = 0
-      panel.repaint()
-    } else if (e.keyCode == KeyEvent.VK_DOWN) {
-      selectedLineIndex++
-      selectedLineIndex = selectedLineIndex.coerceIn(0 until items.size)
-      panel.repaint()
-    } else if (e.keyCode == KeyEvent.VK_UP) {
-      selectedLineIndex--
-      selectedLineIndex = selectedLineIndex.coerceIn(0 until items.size)
-      panel.repaint()
-    } else if (e.keyCode == KeyEvent.VK_ENTER) {
-      val item = items[selectedLineIndex]
-      item.selected = !item.selected
-      if (item.selected) {
-        Channels.podsChannel.put(ListenToPod(podName = item.name))
-      } else {
-        Channels.podsChannel.put(UnListenToPod(podName = item.name))
-      }
-      panel.repaint()
-    } else if (e.keyCode == KeyEvent.VK_P && State.onMac && e.isMetaDown) {
-      panel.repaint()
     }
+  }
 
+  private fun applyFilter() {
+    filteredItems.clear()
+    if (filterText.isEmpty()) {
+      filteredItems.addAll(items)
+    } else {
+      filteredItems.addAll(items.filter { it.name.contains(filterText, ignoreCase = true) })
+    }
+    // You might want to reset the selected index if needed
+    selectedLineIndex = 0
   }
 
   override fun keyReleased(e: KeyEvent) {
