@@ -1,6 +1,7 @@
 package app
 
 import LRUCache
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.databind.annotation.JsonSerialize
@@ -30,9 +31,10 @@ sealed class Domain {
 
 data class LogJson(
     val id :UUID = UUID.randomUUID(),
+    @JsonProperty("@timestamp") val timestampString: String = "",
     @JsonProperty("message") val message: String = "",
-    @JsonProperty("level") val level: String = "",
-    @JsonProperty("application") val application: String = "",
+    @JsonAlias("log.level", "level") val level: String = "",
+    @JsonAlias("application","service.name") val application: String = "",
     @JsonProperty("stack_trace") val stacktrace: String = "",
     @JsonProperty("topic") val topic: String = "",
     @JsonProperty("key") val key: String = "",
@@ -41,10 +43,19 @@ data class LogJson(
     @JsonDeserialize(using = RawJsonDeserializer::class) @JsonSerialize(using = RawJsonSerializer::class) @JsonProperty("z") val data: String = "",
 
 
-) : Domain() {
+    ) : Domain() {
     var timestamp: Instant = Instant.MIN
     private var punkt = ""
     private var searchableString = ""
+
+    init {
+        try {
+            this.timestamp = Instant.parse(timestampString)
+        } catch (e: Exception) {
+            this.timestamp = Instant.MIN
+        }
+        this.init()
+    }
 
     override fun searchableString(): String {
         return searchableString
