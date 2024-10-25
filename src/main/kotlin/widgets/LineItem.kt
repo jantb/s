@@ -86,6 +86,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.addText(logJson.offset, color = UiColors.orange)
 
         this.text.addText(" ", color = UiColors.defaultText)
+        this.text.addText(logJson.stacktraceType, color = UiColors.defaultText)
         this.text.addText(logJson.stacktrace, color = UiColors.defaultText)
         this.text.addText("${logJson.key} ${logJson.data}", color = UiColors.defaultText)
 

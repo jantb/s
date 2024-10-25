@@ -32,10 +32,11 @@ sealed class Domain {
 data class LogJson(
     val id :UUID = UUID.randomUUID(),
     @JsonProperty("@timestamp") val timestampString: String = "",
-    @JsonProperty("message") val message: String = "",
+    @JsonAlias("message","error.message" )  val message: String = "",
     @JsonAlias("log.level", "level") val level: String = "",
     @JsonAlias("application","service.name") val application: String = "",
-    @JsonProperty("stack_trace") val stacktrace: String = "",
+    @JsonAlias("error.type" ) val stacktraceType: String = "",
+    @JsonAlias("stack_trace","error.stack_trace" ) val stacktrace: String = "",
     @JsonProperty("topic") val topic: String = "",
     @JsonProperty("key") val key: String = "",
     @JsonProperty("partition") val partition: String = "",
@@ -76,7 +77,7 @@ data class LogJson(
     }
 
     fun init() {
-        searchableString = listOf(timestamp, application, level, message, stacktrace, topic, key, partition, offset, data).joinToString(" ")
+        searchableString = listOf(timestamp, application, level, message, stacktrace,stacktraceType, topic, key, partition, offset, data).joinToString(" ")
         punkt = searchableString.replace("[a-zA-Z0-9\\s]".toRegex(), "")
     }
 }
