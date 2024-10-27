@@ -2,6 +2,7 @@ import app.App
 import app.Channels
 import app.KafkaSelectChangedText
 import app.QueryChanged
+import kafka.Kafka
 import kotlinx.coroutines.channels.trySendBlocking
 import kube.Kube
 import util.UiColors.magenta
@@ -36,7 +37,7 @@ fun main() {
 
   App().start()
   Kube()
-//  Kafka()
+  Kafka()
   SwingUtilities.invokeLater {
     val frame = JFrame("Search")
     frame.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)

@@ -1,3 +1,5 @@
+import org.codehaus.groovy.tools.shell.util.Logger.io
+
 plugins {
     kotlin("jvm") version "2.0.20"
     id("com.github.johnrengelman.shadow") version "7.1.2"
@@ -9,6 +11,9 @@ version = "1.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
+    maven {
+        url = uri("https://packages.confluent.io/maven/")
+    }
 }
 
 dependencies {
@@ -18,6 +23,7 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.apache.kafka:kafka-clients:3.8.0")
+    implementation("io.confluent:kafka-avro-serializer:7.7.1")
     testImplementation(kotlin("test"))
 }
 
