@@ -83,7 +83,11 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
 
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(logJson.message, color = UiColors.defaultText)
+        this.text.addText(logJson.errorMessage, color = UiColors.defaultText)
         this.text.addText(logJson.offset, color = UiColors.orange)
+
+        this.text.addText(" ", color = UiColors.defaultText)
+        this.text.addText(logJson.headers, color = UiColors.magenta)
 
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(logJson.stacktraceType, color = UiColors.defaultText)
@@ -151,7 +155,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
             })
             textViewer.isVisible = true
         } else if (e.isShiftDown && e.isControlDown && e.clickCount == 1) {
-            Channels.kafkaChannel.put(PublishToTopic(topic = "LOCAL." + logJson!!.topic.substringAfter("."), key = logJson!!.key, value = logJson!!.data))
+            Channels.kafkaChannel.put(PublishToTopic(topic = logJson!!.topic, key = logJson!!.key, value = logJson!!.data))
         } else if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {
             inputTextLine.text = text.getHighlightedText()
             inputTextLine.cursorIndex = inputTextLine.text.length

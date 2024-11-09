@@ -98,7 +98,7 @@ class Kafka {
 
                     is PublishToTopic -> {
                         val configs = mutableMapOf<String, Any>()
-                        configs["bootstrap.servers"] = "localhost:9094"
+                        configs["bootstrap.servers"] = "localhost:19092"
                         val kafkaProducer = KafkaProducer(configs, StringSerializer(), StringSerializer())
                         kafkaProducer.send(ProducerRecord(msg.topic, msg.key, msg.value))
                     }
@@ -142,7 +142,7 @@ class Kafka {
 
             while (notStopping.get()) {
                 try {
-                    if (kafkaConsumer.assignment().size == 0) {
+                    if (kafkaConsumer.assignment().isEmpty()) {
                         notStopping.set(false)
                         continue
                     }
@@ -169,6 +169,7 @@ class Kafka {
                         val message = Message(
                             offset = it.offset().toInt(),
                             partition = it.partition(),
+                            headers = it.headers().toList().map { it.key() + " : " + it.value().toString(Charsets.UTF_8) }.joinToString(" | "),
                             z = value.toString(), timestamp = OffsetDateTime.ofInstant(
                                 Instant.ofEpochMilli(it.timestamp()),
                                 ZoneId.systemDefault()
@@ -176,7 +177,7 @@ class Kafka {
                         ).serializeToJson()
                         Channels.popChannel.send(
                             AddToIndex(
-                                "${Instant.ofEpochMilli(it.timestamp())} ${message}",
+                                "${Instant.ofEpochMilli(it.timestamp())} $message",
                                 it.topic()
                             )
                         )
@@ -197,6 +198,7 @@ class Message(
     val timestamp: OffsetDateTime,
     val partition: Int,
     val offset: Int,
+    val headers: String,
     @JsonDeserialize(using = RawJsonDeserializer::class) @JsonSerialize(using = RawJsonSerializer::class) val z: String,
 )
 

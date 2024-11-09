@@ -43,7 +43,7 @@ class Kube {
     return client.pods().inAnyNamespace().list().items.map {
       PodUnit(
         name = it.metadata.name,
-        version = it.status.containerStatuses.firstOrNull { it.name != "istio-proxy" }?.image?.substringAfterLast(":") ?: "",
+        version = it.status.containerStatuses.firstOrNull { it.name != "istio-proxy" && it.name != "daprd"  }?.image?.substringAfterLast(":") ?: "",
         creationTimestamp = it.metadata.creationTimestamp
       )
     }
