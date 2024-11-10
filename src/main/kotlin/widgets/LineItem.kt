@@ -148,11 +148,11 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
 
     override fun mouseClicked(e: MouseEvent) {
         if (e.isShiftDown && !e.isControlDown && e.clickCount == 1) {
-            val textViewer = TextViewer(title = "Text", text = if (logJson != null && logJson!!.data.isNotBlank()) {
+            val textViewer = TextViewer(title = logJson?.application?:"", text = if (logJson != null && logJson!!.data.isNotBlank()) {
                 logJson!!.data.deserializeJsonToObject<Any>().serializeToJsonPP()
             } else {
                 text.text
-            })
+            }, logJson)
             textViewer.isVisible = true
         } else if (e.isShiftDown && e.isControlDown && e.clickCount == 1) {
             Channels.kafkaChannel.put(PublishToTopic(topic = logJson!!.topic, key = logJson!!.key, value = logJson!!.data))
