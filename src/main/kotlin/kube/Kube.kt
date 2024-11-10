@@ -43,7 +43,7 @@ class Kube {
     return client.pods().inAnyNamespace().list().items.map {
       PodUnit(
         name = it.metadata.name,
-        version = it.status.containerStatuses.firstOrNull { it.name != "istio-proxy" && it.name != "daprd"  }?.image?.substringAfterLast(":") ?: "",
+        version = it.status.containerStatuses.firstOrNull { it.name != "istio-proxy" && it.name != "daprd" }?.image?.substringAfterLast(":") ?: "",
         creationTimestamp = it.metadata.creationTimestamp
       )
     }
@@ -79,13 +79,21 @@ class Kube {
         Channels.popChannel.send(AddToIndex(it, pod))
       }
 
-      val logSequence = getLogSequence(pod, podNamespacePair)
-      BufferedReader(InputStreamReader(logSequence.output)).use { reader ->
-        while (notStopping.get()) {
-          val line = reader.readLine()
-          if (line != null) {
-            Channels.popChannel.send(AddToIndex(line, pod))
+      while (notStopping.get()) {
+        try {
+          val logSequence = getLogSequence(pod, podNamespacePair)
+          BufferedReader(InputStreamReader(logSequence.output)).use { reader ->
+            while (notStopping.get()) {
+              val line = reader.readLine()
+              if (line != null) {
+                Channels.popChannel.send(AddToIndex(line, pod))
+              }
+            }
           }
+        } catch (e: Exception) {
+          // Handle disconnection/reconnection here
+          println("Lost connection for pod $pod. Retrying in 5 seconds...")
+          delay(5000) // Wait for 5 seconds before retrying
         }
       }
     }
