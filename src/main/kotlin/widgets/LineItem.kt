@@ -82,12 +82,16 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.addText(logJson.partition, color = UiColors.magenta)
 
         this.text.addText(" ", color = UiColors.defaultText)
+        this.text.addText(logJson.correlationId, color = UiColors.orange)
+
+        this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(logJson.message, color = UiColors.defaultText)
         this.text.addText(logJson.errorMessage, color = UiColors.defaultText)
         this.text.addText(logJson.offset, color = UiColors.orange)
 
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(logJson.headers, color = UiColors.magenta)
+
 
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(logJson.stacktraceType, color = UiColors.defaultText)

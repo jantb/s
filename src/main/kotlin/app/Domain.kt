@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize
 import kafka.RawJsonDeserializer
 import kafka.RawJsonSerializer
 import java.time.Instant
-import java.time.OffsetDateTime
 import java.util.UUID
 
 sealed class Domain {
@@ -16,11 +15,11 @@ sealed class Domain {
         return ""
     }
 
-    open fun timestamp():Instant{
+    open fun timestamp(): Instant {
         return Instant.MIN
     }
 
-    open fun contains(other :String): Boolean {
+    open fun contains(other: String): Boolean {
         return false
     }
 
@@ -30,20 +29,23 @@ sealed class Domain {
 }
 
 data class LogJson(
-    val id :UUID = UUID.randomUUID(),
+    val id: UUID = UUID.randomUUID(),
     @JsonProperty("@timestamp") val timestampString: String = "",
-    @JsonAlias("message")  val message: String = "",
-    @JsonAlias("error.message" )  val errorMessage: String = "",
+    @JsonAlias("correlation.id", "loyalityhub-correlation-id") val correlationId: String = "",
+    @JsonAlias("message") val message: String = "",
+    @JsonAlias("error.message") val errorMessage: String = "",
     @JsonAlias("log.level", "level") val level: String = "",
-    @JsonAlias("application","service.name") val application: String = "",
-    @JsonAlias("error.type" ) val stacktraceType: String = "",
-    @JsonAlias("stack_trace","error.stack_trace" ) val stacktrace: String = "",
+    @JsonAlias("application", "service.name") val application: String = "",
+    @JsonAlias("error.type") val stacktraceType: String = "",
+    @JsonAlias("stack_trace", "error.stack_trace") val stacktrace: String = "",
     @JsonProperty("topic") val topic: String = "",
     @JsonProperty("key") val key: String = "",
     @JsonProperty("partition") val partition: String = "",
     @JsonProperty("offset") val offset: String = "",
     @JsonProperty("headers") val headers: String = "",
-    @JsonDeserialize(using = RawJsonDeserializer::class) @JsonSerialize(using = RawJsonSerializer::class) @JsonProperty("z") val data: String = "",
+    @JsonDeserialize(using = RawJsonDeserializer::class) @JsonSerialize(using = RawJsonSerializer::class) @JsonProperty(
+        "z"
+    ) val data: String = "",
 
 
     ) : Domain() {
@@ -64,14 +66,14 @@ data class LogJson(
         return searchableString
     }
 
-    var cache= LRUCache<String, Boolean>(10_000)
+    var cache = LRUCache<String, Boolean>(10_000)
 
     override fun timestamp(): Instant {
         return timestamp
     }
 
     override fun contains(other: String): Boolean {
-       return cache.computeIfAbsent(key){searchableString().contains(other)}
+        return cache.computeIfAbsent(key) { searchableString().contains(other) }
     }
 
     override fun getPunct(): String {
@@ -79,7 +81,22 @@ data class LogJson(
     }
 
     fun init() {
-        searchableString = listOf(timestamp, application, level, message,errorMessage, stacktrace,stacktraceType, topic, key, partition, offset, headers, data).joinToString(" ")
+        searchableString = listOf(
+            timestamp,
+            application,
+            level,
+            correlationId,
+            message,
+            errorMessage,
+            stacktrace,
+            stacktraceType,
+            topic,
+            key,
+            partition,
+            offset,
+            headers,
+            data
+        ).joinToString(" ")
         punkt = searchableString.replace("[a-zA-Z0-9\\s]".toRegex(), "")
     }
 }

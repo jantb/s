@@ -44,8 +44,8 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
         }
 
         logJson?.let { log ->
-            addField("ID", log.id.toString(), fieldsPanel, constraints)
             addField("Timestamp", log.timestampString, fieldsPanel, constraints)
+            addField("CorrelationId", log.correlationId, fieldsPanel, constraints)
             addField("Message", log.message, fieldsPanel, constraints)
             addField("Error Message", log.errorMessage, fieldsPanel, constraints)
             addField("Level", log.level, fieldsPanel, constraints)
