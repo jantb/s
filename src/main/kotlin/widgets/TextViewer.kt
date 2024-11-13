@@ -12,8 +12,6 @@ import java.awt.MouseInfo
 import java.awt.Point
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
-import java.awt.event.ActionEvent
-import java.awt.event.ActionListener
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.JButton
@@ -49,7 +47,7 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
             addField("Message", log.message, fieldsPanel, constraints)
             addField("Error Message", log.errorMessage, fieldsPanel, constraints)
             addField("Level", log.level, fieldsPanel, constraints)
-            addField("Application", log.application, fieldsPanel, constraints)
+            addField("Application", log.indexIdentifier, fieldsPanel, constraints)
             addField("Stacktrace Type", log.stacktraceType, fieldsPanel, constraints)
             addField("Topic", log.topic, fieldsPanel, constraints)
             addField("Key", log.key, fieldsPanel, constraints)

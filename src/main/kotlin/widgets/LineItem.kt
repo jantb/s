@@ -19,6 +19,7 @@ import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
+import kotlin.math.absoluteValue
 
 class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: Int, y: Int, width: Int, height: Int) :
         ComponentOwn() {
@@ -78,7 +79,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.addText(logJson.topic, color = UiColors.green)
 
         this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(logJson.application, color = UiColors.magenta)
+        this.text.addText(logJson.application, color = UiColors.visibleColors[logJson.indexIdentifier.hashCode().toInt().absoluteValue % UiColors.visibleColors.size])
         this.text.addText(logJson.partition, color = UiColors.magenta)
 
         this.text.addText(" ", color = UiColors.defaultText)

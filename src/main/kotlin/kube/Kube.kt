@@ -51,21 +51,21 @@ class Kube {
 
   private fun getLogSequence(pod: String, namespace: String): LogWatch {
     val podResource = client.pods().inNamespace(namespace).withName(pod)
-    return podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" }.name)
+    return podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy"  && it.name != "daprd" }.name)
       .usingTimestamps().watchLog()
   }
 
   private fun getLogSequencePrev(pod: String, namespace: String): List<String> {
     val podResource = client.pods().inNamespace(namespace).withName(pod)
     return try {
-      podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" }.name)
+      podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy"  && it.name != "daprd" }.name)
         .usingTimestamps().terminated().log.split("\n")
     } catch (e: Exception) {
       emptyList()
     }
   }
 
-  @OptIn(DelicateCoroutinesApi::class)
+  @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
   private fun addLogsToIndex(pod: String): AtomicBoolean {
     val threadDispatcher = newSingleThreadContext("CoroutineThread")
     val scope = CoroutineScope(threadDispatcher)

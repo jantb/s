@@ -30,9 +30,10 @@ sealed class Domain {
 
 data class LogJson(
     val id: UUID = UUID.randomUUID(),
+    var indexIdentifier: String = "",
     @JsonProperty("@timestamp") val timestampString: String = "",
     @JsonAlias("correlation.id", "loyalityhub-correlation-id") val correlationId: String = "",
-    @JsonAlias("message") val message: String = "",
+    @JsonAlias("message", "msg") val message: String = "",
     @JsonAlias("error.message") val errorMessage: String = "",
     @JsonAlias("log.level", "level") val level: String = "",
     @JsonAlias("application", "service.name") val application: String = "",
@@ -83,6 +84,7 @@ data class LogJson(
     fun init() {
         searchableString = listOf(
             timestamp,
+            indexIdentifier,
             application,
             level,
             correlationId,

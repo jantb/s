@@ -18,11 +18,13 @@ class ValueStore : Serializable {
   fun put(v: String, indexIdentifier: String) {
     val domain = try {
       val logJson = v.substringAfter(" ").deserializeJsonToObject<LogJson>()
+      logJson.indexIdentifier = indexIdentifier
       logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
       logJson.init()
       logJson
     } catch (e: Exception) {
       val logJson = LogJson(message = v.substringAfter(" "), application = indexIdentifier)
+      logJson.indexIdentifier = indexIdentifier
       try {
         logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
         logJson.init()
