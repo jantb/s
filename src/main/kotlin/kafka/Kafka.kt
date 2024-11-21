@@ -1,5 +1,6 @@
 package kafka
 
+import State
 import app.*
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.core.JsonParser
@@ -10,7 +11,11 @@ import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient
 import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig
 import io.confluent.kafka.serializers.KafkaAvroDeserializer
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.newSingleThreadContext
+import org.apache.kafka.clients.admin.AdminClient
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.consumer.ConsumerRecords
 import org.apache.kafka.clients.consumer.KafkaConsumer
@@ -31,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class Kafka {
     val notStopping = AtomicBoolean(false)
     var kafkaConsumer: KafkaConsumer<String, ByteArray>
+    var adminClient: AdminClient
     var latch = CountDownLatch(1)
     val configs = mutableMapOf<String, Any>()
     private val schemaRegistryClient: SchemaRegistryClient
@@ -71,16 +77,25 @@ class Kafka {
             mapOf()
         )
 
-
         kafkaConsumer = KafkaConsumer(
             configs
         )
+
+
+
+        adminClient = AdminClient.create(configs)
+
+
         val thread = Thread {
             while (true) {
                 when (val msg = Channels.kafkaChannel.take()) {
 
                     is ListTopics -> {
                         msg.result.complete(list())
+                    }
+
+                    is ListLag -> {
+                        listLag(adminClient)
                     }
 
                     is ListenToTopic -> {
@@ -109,9 +124,42 @@ class Kafka {
         thread.start()
     }
 
+    private fun listLag(
+        adminClient: AdminClient,
+    ) {
+        val consumerGroups = listOf("clm-adapter", "rewards-ac-service", "rewards-ar-service", "party-rd-service")
+        val groups = adminClient.listConsumerGroups().all().get().filter { group ->
+            consumerGroups.any { it in group.groupId() }
+        }.toList()
+
+        if (groups.isEmpty()) {
+            println("No consumer groups found")
+        } else {
+            groups.forEach { group ->
+                val groupId = group.groupId()
+                val consumerGroupOffsets =
+                    adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get()
+                val endOffsets = kafkaConsumer.endOffsets(consumerGroupOffsets.keys)
+
+                consumerGroupOffsets.forEach { (topicPartition, offsetAndMetadata) ->
+                    val endOffset = endOffsets.getValue(topicPartition)
+                    val consumerOffset = offsetAndMetadata.offset()
+                    val lag = endOffset - consumerOffset
+
+                    if (lag > 0) {
+                        println(
+                            """Group: ${groupId}, Topic: ${topicPartition.topic()}, Partition: ${topicPartition.partition()}, Current Offset: ${consumerOffset}, End Offset: ${endOffset}, Lag: ${lag} """
+                        )
+                    }
+                }
+            }
+        }
+    }
+
 
     private fun list(): List<String> {
         val topic = kafkaConsumer.listTopics().map { it.key }.sorted()
+
         return topic
     }
 
@@ -169,7 +217,8 @@ class Kafka {
                         val message = Message(
                             offset = it.offset().toInt(),
                             partition = it.partition(),
-                            headers = it.headers().toList().map { it.key() + " : " + it.value().toString(Charsets.UTF_8) }.joinToString(" | "),
+                            headers = it.headers().toList()
+                                .map { it.key() + " : " + it.value().toString(Charsets.UTF_8) }.joinToString(" | "),
                             z = value.toString(), timestamp = OffsetDateTime.ofInstant(
                                 Instant.ofEpochMilli(it.timestamp()),
                                 ZoneId.systemDefault()

@@ -1,30 +1,17 @@
 package widgets
 
 import app.LogJson
-import util.UiColors
 import util.Styles
-import java.awt.BorderLayout
-import java.awt.Font
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
-import java.awt.Insets
-import java.awt.MouseInfo
-import java.awt.Point
-import java.awt.Toolkit
+import util.UiColors
+import java.awt.*
 import java.awt.datatransfer.StringSelection
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
-import javax.swing.JButton
-import javax.swing.JFrame
-import javax.swing.JLabel
-import javax.swing.JPanel
-import javax.swing.JScrollPane
-import javax.swing.JTextArea
-import javax.swing.JTextField
-import javax.swing.SwingConstants
-import javax.swing.ImageIcon
+import javax.swing.*
 
 class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame() {
+
+    private var textAreaFontSize = 12
 
     init {
         super.setTitle(title)
@@ -38,12 +25,13 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
             gridx = 0
             gridy = GridBagConstraints.RELATIVE
             anchor = GridBagConstraints.WEST
-            insets = Insets(2, 2, 2, 2)
+            insets = Insets(0, 2, 0, 2)
         }
 
         logJson?.let { log ->
             addField("Timestamp", log.timestampString, fieldsPanel, constraints)
             addField("CorrelationId", log.correlationId, fieldsPanel, constraints)
+            addField("RequestId", log.requestId, fieldsPanel, constraints)
             addField("Message", log.message, fieldsPanel, constraints)
             addField("Error Message", log.errorMessage, fieldsPanel, constraints)
             addField("Level", log.level, fieldsPanel, constraints)
@@ -55,12 +43,11 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
             addField("Offset", log.offset, fieldsPanel, constraints)
             addField("Headers", log.headers, fieldsPanel, constraints)
         }
-
         // Create the main body text area
         val textArea = JTextArea(text)
         textArea.isEditable = false
         textArea.lineWrap = true
-        textArea.font = Font(Styles.normalFont, Font.PLAIN, 12)
+        textArea.font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
         textArea.foreground = UiColors.defaultText
         textArea.background = UiColors.background
 
@@ -69,6 +56,7 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
         scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
 
         layout = BorderLayout()
+
         add(fieldsPanel, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
 

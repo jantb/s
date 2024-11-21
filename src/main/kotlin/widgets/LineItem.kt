@@ -10,8 +10,8 @@ import app.QueryChanged
 import deserializeJsonToObject
 import kotlinx.coroutines.channels.trySendBlocking
 import serializeToJsonPP
-import util.UiColors
 import util.Styles
+import util.UiColors
 import java.awt.Font
 import java.awt.Graphics2D
 import java.awt.event.KeyEvent
@@ -22,7 +22,7 @@ import java.awt.image.BufferedImage
 import kotlin.math.absoluteValue
 
 class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: Int, y: Int, width: Int, height: Int) :
-        ComponentOwn() {
+    ComponentOwn() {
     private var text: ColoredText = ColoredText()
     private var image: BufferedImage
     private var g2d: Graphics2D
@@ -45,7 +45,8 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.clear()
         this.text.addText(text, color = UiColors.defaultText)
         if (this.text.highlight) {
-            this.text.highlightRange = getWordRangeAtIndex(this.text.text, getCharIndexFromMouse(this.text.text, mouseposX))
+            this.text.highlightRange =
+                getWordRangeAtIndex(this.text.text, getCharIndexFromMouse(this.text.text, mouseposX))
         }
     }
 
@@ -55,35 +56,48 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.addText(logJson.timestamp.toString(), color = UiColors.teal)
 
         this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(logJson.level, color = when (logJson.level) {
-            "INFO" -> {
-                UiColors.green
-            }
+        this.text.addText(
+            logJson.level, color = when (logJson.level) {
+                "INFO" -> {
+                    UiColors.green
+                }
 
-            "WARN" -> {
-                UiColors.orange
-            }
+                "WARN" -> {
+                    UiColors.orange
+                }
 
-            "DEBUG" -> {
-                UiColors.defaultText
-            }
+                "DEBUG" -> {
+                    UiColors.defaultText
+                }
 
-            "ERROR" -> {
-                UiColors.red
-            }
+                "ERROR" -> {
+                    UiColors.red
+                }
 
-            else -> {
-                UiColors.defaultText
+                else -> {
+                    UiColors.defaultText
+                }
             }
-        })
+        )
         this.text.addText(logJson.topic, color = UiColors.green)
 
         this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(logJson.application, color = UiColors.visibleColors[logJson.indexIdentifier.hashCode().toInt().absoluteValue % UiColors.visibleColors.size])
+        this.text.addText(
+            logJson.application,
+            color = UiColors.visibleColors[logJson.indexIdentifier.hashCode()
+                .toInt().absoluteValue % UiColors.visibleColors.size]
+        )
         this.text.addText(logJson.partition, color = UiColors.magenta)
 
-        this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(logJson.correlationId, color = UiColors.orange)
+        if (logJson.correlationId != "") {
+            this.text.addText(" ", color = UiColors.defaultText)
+            this.text.addText(logJson.correlationId, color = UiColors.orange)
+        }
+
+        if (logJson.requestId != "") {
+            this.text.addText(" ", color = UiColors.defaultText)
+            this.text.addText(logJson.requestId, color = UiColors.orange)
+        }
 
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(logJson.message, color = UiColors.defaultText)
@@ -100,16 +114,17 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.addText("${logJson.key} ${logJson.data}", color = UiColors.defaultText)
 
         if (this.text.highlight) {
-            this.text.highlightRange = getWordRangeAtIndex(this.text.text, getCharIndexFromMouse(this.text.text, mouseposX))
+            this.text.highlightRange =
+                getWordRangeAtIndex(this.text.text, getCharIndexFromMouse(this.text.text, mouseposX))
         }
     }
 
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
         if (this.width != width || this.height != height || this.x != x || this.y != y) {
             this.image = BufferedImage(
-                    width.coerceIn(1..Int.MAX_VALUE),
-                    this.height.coerceIn(1..Int.MAX_VALUE),
-                    BufferedImage.TYPE_INT_RGB
+                width.coerceIn(1..Int.MAX_VALUE),
+                this.height.coerceIn(1..Int.MAX_VALUE),
+                BufferedImage.TYPE_INT_RGB
             )
             this.g2d = this.image.createGraphics()
             this.height = height.coerceIn(1..Int.MAX_VALUE)
@@ -153,19 +168,33 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
 
     override fun mouseClicked(e: MouseEvent) {
         if (e.isShiftDown && !e.isControlDown && e.clickCount == 1) {
-            val textViewer = TextViewer(title = logJson?.application?:"", text = if (logJson != null && logJson!!.data.isNotBlank()) {
-                logJson!!.data.deserializeJsonToObject<Any>().serializeToJsonPP()
-            } else {
-                text.text
-            }, logJson)
+            val textViewer = TextViewer(
+                title = logJson?.application ?: "", text = if (logJson != null && logJson!!.data.isNotBlank()) {
+                    logJson!!.data.deserializeJsonToObject<Any>().serializeToJsonPP()
+                } else {
+                    text.text
+                }, logJson
+            )
             textViewer.isVisible = true
         } else if (e.isShiftDown && e.isControlDown && e.clickCount == 1) {
-            Channels.kafkaChannel.put(PublishToTopic(topic = logJson!!.topic, key = logJson!!.key, value = logJson!!.data))
+            Channels.kafkaChannel.put(
+                PublishToTopic(
+                    topic = logJson!!.topic,
+                    key = logJson!!.key,
+                    value = logJson!!.data
+                )
+            )
         } else if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {
             inputTextLine.text = text.getHighlightedText()
             inputTextLine.cursorIndex = inputTextLine.text.length
 
-            Channels.searchChannel.trySendBlocking(QueryChanged(text.getHighlightedText(), length = State.length.get(), offset= State.offset.get()))
+            Channels.searchChannel.trySendBlocking(
+                QueryChanged(
+                    text.getHighlightedText(),
+                    length = State.length.get(),
+                    offset = State.offset.get()
+                )
+            )
         }
     }
 
@@ -203,11 +232,11 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         mouseposX = e.x - x
         mouseposY = e.y - y
         text.highlightRange =
-                if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {
-                    getWordRangeAtIndex(text.text, getCharIndexFromMouse(text.text, mouseposX))
-                } else {
-                    null
-                }
+            if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {
+                getWordRangeAtIndex(text.text, getCharIndexFromMouse(text.text, mouseposX))
+            } else {
+                null
+            }
         parent.repaint(this)
     }
 

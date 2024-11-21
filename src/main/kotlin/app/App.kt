@@ -11,11 +11,9 @@ import app.Channels.searchChannel
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.Channel.Factory.BUFFERED
 import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
-import kotlinx.coroutines.channels.Channel.Factory.RENDEZVOUS
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kube.PodUnit
@@ -81,6 +79,7 @@ sealed class KafkaMessage
 sealed class KafkaSelectMessage
 class ListPods(val result: CompletableFuture<List<PodUnit>> = CompletableFuture()) : PodsMessage()
 class ListTopics(val result: CompletableFuture<List<String>> = CompletableFuture()) : KafkaMessage()
+class ListLag() : KafkaMessage()
 class ListenToPod(val podName: String) : PodsMessage()
 class PublishToTopic(val topic: String, val key: String, val value: String) : KafkaMessage()
 class ListenToTopic(val name: List<String>) : KafkaMessage()
