@@ -42,7 +42,7 @@ fun main() {
     SwingUtilities.invokeLater {
         val frame = JFrame("Search")
         frame.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
-        val icon = ImageIcon("logo.png").image
+        val icon = ImageIcon(ClassLoader.getSystemResource("ontop.png")).image
 
         frame.iconImage = icon
 

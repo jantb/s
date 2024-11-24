@@ -20,6 +20,7 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
         val mouseLocation: Point = MouseInfo.getPointerInfo().location
         setLocation(mouseLocation.x - width / 2, mouseLocation.y - height / 2)
 
+        val topPanel = JPanel(BorderLayout())
         val fieldsPanel = JPanel(GridBagLayout())
         val constraints = GridBagConstraints().apply {
             gridx = 0
@@ -44,12 +45,21 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
             addField("Headers", log.headers, fieldsPanel, constraints)
         }
         // Create the main body text area
-        val textArea = JTextArea(text)
-        textArea.isEditable = false
-        textArea.lineWrap = true
-        textArea.font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
-        textArea.foreground = UiColors.defaultText
-        textArea.background = UiColors.background
+        val textArea = JTextArea(text).apply {
+            addMouseWheelListener { e ->
+                if (e.isControlDown || e.isMetaDown) {
+                    textAreaFontSize += -e.wheelRotation
+                    if (textAreaFontSize < 8) textAreaFontSize = 8
+                    font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
+                }
+            }
+
+            isEditable = false
+            lineWrap = true
+            font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
+            foreground = UiColors.defaultText
+            background = UiColors.background
+        }
 
         val scrollPane = JScrollPane(textArea)
         scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
@@ -57,7 +67,9 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
 
         layout = BorderLayout()
 
-        add(fieldsPanel, BorderLayout.NORTH)
+        topPanel.add(fieldsPanel, BorderLayout.CENTER)
+        topPanel.add(createAlwaysOnTopToggleButton(), BorderLayout.EAST)
+        add(topPanel, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
 
         addWindowListener(object : WindowAdapter() {
@@ -67,10 +79,18 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
         })
     }
 
+    private fun createAlwaysOnTopToggleButton(): JToggleButton {
+        val toggleButton = JToggleButton(ImageIcon(ClassLoader.getSystemResource("ontop.png")))
+        toggleButton.addActionListener {
+            isAlwaysOnTop = toggleButton.isSelected
+        }
+        return toggleButton
+    }
+
     private fun addField(label: String, value: String, panel: JPanel, constraints: GridBagConstraints) {
         if (value.isNotBlank()) {
             val fieldLabel = JLabel("$label:", SwingConstants.LEFT)
-            val copyButton = JButton(ImageIcon("path/to/copy_icon.png")).apply {
+            val copyButton = JButton(ImageIcon(ClassLoader.getSystemResource("copy.png"))).apply {
                 toolTipText = "Copy to clipboard"
                 addActionListener {
                     val stringSelection = StringSelection(value)
