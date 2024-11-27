@@ -5,6 +5,7 @@ import util.Styles
 import util.UiColors
 import java.awt.*
 import java.awt.datatransfer.StringSelection
+import java.awt.event.MouseWheelEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.*
@@ -49,8 +50,23 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
             addMouseWheelListener { e ->
                 if (e.isControlDown || e.isMetaDown) {
                     textAreaFontSize += -e.wheelRotation
-                    if (textAreaFontSize < 8) textAreaFontSize = 8
+                    if (textAreaFontSize <  8) textAreaFontSize = 8
                     font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
+                } else {
+                    parent.dispatchEvent(
+                        MouseWheelEvent(
+                            parent,
+                            e.getID(),
+                            e.getWhen(),
+                            e.getModifiersEx(),
+                            e.getX(),
+                            e.getY(),
+                            e.getClickCount(),
+                            e.isPopupTrigger(),
+                            e.getScrollType(),
+                            e.getScrollAmount(),
+                            e.getWheelRotation())
+                    )
                 }
             }
 
