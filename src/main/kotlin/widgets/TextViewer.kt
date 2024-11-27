@@ -56,16 +56,17 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
                     parent.dispatchEvent(
                         MouseWheelEvent(
                             parent,
-                            e.getID(),
+                            e.id,
                             e.getWhen(),
                             e.getModifiersEx(),
-                            e.getX(),
-                            e.getY(),
-                            e.getClickCount(),
-                            e.isPopupTrigger(),
-                            e.getScrollType(),
-                            e.getScrollAmount(),
-                            e.getWheelRotation())
+                            e.x,
+                            e.y,
+                            e.clickCount,
+                            e.isPopupTrigger,
+                            e.scrollType,
+                            e.scrollAmount,
+                            e.wheelRotation
+                        )
                     )
                 }
             }
