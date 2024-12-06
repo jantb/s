@@ -212,7 +212,6 @@ class ScrollableList(
 
   }
 
-
   override fun mousePressed(e: MouseEvent) {
     mouseposX = e.x - x
     mouseposY = e.y - y - 7

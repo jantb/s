@@ -30,6 +30,7 @@ sealed class Domain {
 
 data class LogJson(
     val id: UUID = UUID.randomUUID(),
+    var seq :Long ,
     var indexIdentifier: String = "",
     @JsonProperty("@timestamp") val timestampString: String = "",
     @JsonAlias("correlation.id", "X-Correlation-Id") val correlationId: String = "",

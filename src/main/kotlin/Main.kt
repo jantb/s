@@ -134,7 +134,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
             null
         )
 
-
         g.drawImage(
             componentOwns[1].display(width, height, componentOwns[1].x, height - 30),
             componentOwns[1].x,
@@ -143,7 +142,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
             componentOwns[1].height,
             null
         )
-
 
         g.color = magenta
         val timeString =
