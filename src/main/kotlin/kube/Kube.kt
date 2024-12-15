@@ -91,9 +91,7 @@ class Kube {
             }
           }
         } catch (e: Exception) {
-          // Handle disconnection/reconnection here
-          println("Lost connection for pod $pod. Retrying in 5 seconds...")
-          delay(5000) // Wait for 5 seconds before retrying
+          notStopping.set(false)
         }
       }
     }

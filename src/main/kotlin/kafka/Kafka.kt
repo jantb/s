@@ -195,13 +195,13 @@ class Kafka {
                         continue
                     }
                     val poll: ConsumerRecords<String, ByteArray> = kafkaConsumer.poll(Duration.ofMillis(500))
-                    poll.forEach {
+                    poll.forEach { consumerRecord ->
 
-                        val rawBytes = it.value()
+                        val rawBytes = consumerRecord.value()
                         val value = when {
                             rawBytes != null -> try {
                                 val avroDeserializer = KafkaAvroDeserializer(schemaRegistryClient)
-                                val avroRecord = avroDeserializer.deserialize(it.topic(), rawBytes)
+                                val avroRecord = avroDeserializer.deserialize(consumerRecord.topic(), rawBytes)
                                 avroRecord.toString()
                             } catch (e: Exception) {
                                 try {
@@ -215,19 +215,19 @@ class Kafka {
                         }
 
                         val message = Message(
-                            offset = it.offset().toInt(),
-                            partition = it.partition(),
-                            headers = it.headers().toList()
-                                .map { it.key() + " : " + it.value().toString(Charsets.UTF_8) }.joinToString(" | "),
+                            offset = consumerRecord.offset().toInt(),
+                            partition = consumerRecord.partition(),
+                            headers = consumerRecord.headers().toList()
+                                .joinToString(" | ") { it.key() + " : " + it.value().toString(Charsets.UTF_8) },
                             z = value.toString(), timestamp = OffsetDateTime.ofInstant(
-                                Instant.ofEpochMilli(it.timestamp()),
+                                Instant.ofEpochMilli(consumerRecord.timestamp()),
                                 ZoneId.systemDefault()
-                            ), key = it.key() ?: "", topic = it.topic()
+                            ), key = consumerRecord.key() ?: "", topic = consumerRecord.topic()
                         ).serializeToJson()
                         Channels.popChannel.send(
                             AddToIndex(
-                                "${Instant.ofEpochMilli(it.timestamp())} $message",
-                                it.topic()
+                                "${Instant.ofEpochMilli(consumerRecord.timestamp())} $message",
+                                consumerRecord.topic()
                             )
                         )
                     }
