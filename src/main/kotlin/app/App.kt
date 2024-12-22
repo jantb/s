@@ -96,7 +96,7 @@ sealed class KafkaMessage
 sealed class KafkaSelectMessage
 class ListPods(val result: CompletableFuture<List<PodUnit>> = CompletableFuture()) : PodsMessage()
 class ListTopics(val result: CompletableFuture<List<String>> = CompletableFuture()) : KafkaMessage()
-class ListLag() : KafkaMessage()
+data object ListLag : KafkaMessage()
 class ListenToPod(val podName: String) : PodsMessage()
 class PublishToTopic(val topic: String, val key: String, val value: String) : KafkaMessage()
 class ListenToTopic(val name: List<String>) : KafkaMessage()

@@ -12,11 +12,23 @@ val cap = 100_000
 
 class ValueStore : Serializable {
     private val indexes = mutableListOf(Index<LogJson>())
-    private val heavyHitters = CountMin()
     var size = 0
 
     fun put(seq: Long, v: String, indexIdentifier: String) {
-        val domain = try {
+        getLogJson(v, indexIdentifier, seq)?.let {
+            val value = it.searchableString()
+            size++
+            if (indexes.last().size >= cap) {
+                indexes.last().convertToHigherRank()
+                indexes.add(Index())
+            }
+            State.indexedLines.addAndGet(1)
+            indexes.last().add(it, value)
+        }
+    }
+
+    private fun getLogJson(v: String, indexIdentifier: String, seq: Long): LogJson? {
+        return try {
             val logJson = v.substringAfter(" ").deserializeJsonToObject<LogJson>()
             logJson.indexIdentifier = indexIdentifier
             logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
@@ -30,20 +42,10 @@ class ValueStore : Serializable {
                 logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
                 logJson.init()
             } catch (e: Exception) {
-                return
+                return  null
             }
             logJson
         }
-        val value = domain.searchableString()
-
-        size++
-        if (indexes.last().size >= cap) {
-            indexes.last().convertToHigherRank()
-            indexes.add(Index())
-        }
-        State.indexedLines.addAndGet(1)
-        heavyHitters.add(domain.getPunct())
-        indexes.last().add(domain, value)
     }
 
     fun search(query: String, length: Int, offsetLock: Long): List<Domain> {
@@ -79,9 +81,7 @@ class ValueStore : Serializable {
             }
             .filter { domain ->
                 val contains =
-                    if (State.heavyHitters.get() && heavyHitters.topKSetAbove(domain.getPunct())) {
-                        false
-                    } else if (queryList.isEmpty() && queryListNot.isEmpty()) {
+                    if (queryList.isEmpty() && queryListNot.isEmpty()) {
                         true
                     } else if (queryList.isEmpty()) {
                         queryListNot.none {

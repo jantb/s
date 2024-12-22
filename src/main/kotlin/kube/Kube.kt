@@ -91,7 +91,7 @@ class Kube {
             }
           }
         } catch (e: Exception) {
-          notStopping.set(false)
+           notStopping.set(false)
         }
       }
     }

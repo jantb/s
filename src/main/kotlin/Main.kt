@@ -20,7 +20,6 @@ import java.awt.event.MouseListener
 import java.awt.event.MouseMotionListener
 import java.awt.event.MouseWheelEvent
 import java.awt.event.MouseWheelListener
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.ImageIcon
@@ -115,7 +114,7 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
         g.color = magenta
         val timeString =
-            "Heavy hitters:${State.heavyHitters.get()} Indexed Lines: ${
+            "Indexed Lines: ${
                 State.indexedLines.get().format()
             } Query: ${State.searchTime.get().nanoseconds}"
         val stringBounds = g.fontMetrics.getStringBounds(timeString, g)
@@ -145,7 +144,7 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
         g.color = magenta
         val timeString =
-            "Kafka time in days:${State.kafkaDays.get()} Heavy hitters:${State.heavyHitters.get()} Indexed Lines: ${
+            "Kafka time in days:${State.kafkaDays.get()} Indexed Lines: ${
                 State.indexedLines.get().format()
             } Query: ${State.searchTime.get().nanoseconds}"
         val stringBounds = g.fontMetrics.getStringBounds(timeString, g)
@@ -157,10 +156,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
         when {
             e.keyCode == KeyEvent.VK_Q && State.onMac && e.isMetaDown -> exitProcess(0)
-
-            (e.isControlDown && e.keyCode == KeyEvent.VK_H) -> {
-                State.heavyHitters.set(!State.heavyHitters.get())
-            }
 
             (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) -> when (e.keyCode) {
                 KeyEvent.VK_P -> {
@@ -298,7 +293,6 @@ object State {
     val kafkaDays = AtomicLong(1)
     val indexedLines = AtomicInteger(0)
     val searchTime = AtomicLong(0)
-    val heavyHitters = AtomicBoolean(false)
     val length = AtomicInteger(0)
     val offset = AtomicInteger(0)
 
