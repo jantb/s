@@ -1,12 +1,13 @@
 package util
 
+import merge
 import net.openhft.hashing.LongHashFunction
 import util.Bf.Companion.estimate
 import java.io.Serializable
 import java.util.*
 import kotlin.math.*
 
-class Index<T>(
+class Index<T : Comparable<T>>(
     private val probability: Double = 0.01,
     private val goalCardinality: Double = 0.37,
 ) : Serializable {
@@ -15,21 +16,21 @@ class Index<T>(
     var size: Int = 0
     private var cacheKey: List<List<String>>? = null
     private var cacheValue: List<T>? = null
-    fun add(key: T, value: String) {
+    fun add(t: T) {
         require(!isHigherRank) {
             "Can not add values to a higher rank index"
         }
-        if (value.isBlank()) {
+        if (t.toString().isBlank()) {
             return
         }
 
-        val grams = value.grams()
+        val grams = t.toString().grams()
 
         val shardSize = Integer.numberOfTrailingZeros(estimate(grams.size, probability))
-        shardArray[shardSize]?.add(grams, key) ?: run {
+        shardArray[shardSize]?.add(grams, t) ?: run {
             shardArray[shardSize] =
                 Shard<T>(1 shl shardSize).apply {
-                    add(grams, key)
+                    add(grams, t)
                 }
         }
         size++
@@ -42,8 +43,8 @@ class Index<T>(
         // Must include all the strings in each of the lists
         val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
-        val result = shardArray.mapNotNull { it?.search(gramsList)?.toList() }.toList().flatten().filter { function(it) }
-
+        val result =
+            shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending()}.merge(descending = true).filter { function(it) }.toList()
 
         if (isHigherRank) {
             // save result in cache if higher rank

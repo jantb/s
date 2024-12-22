@@ -10,13 +10,12 @@ import java.time.OffsetDateTime
 const val cap = 10_000
 
 class ValueStore : Serializable {
-    private val indexes = mutableListOf(Index<LogJson>())
-    private val indexesCache = mutableListOf<List<LogJson>>()
+    private val indexes = mutableListOf(Index<Domain>())
+    private val indexesCache = mutableListOf<List<Domain>>()
     var size = 0
 
     fun put(seq: Long, v: String, indexIdentifier: String) {
         getLogJson(v, indexIdentifier, seq)?.let {
-            val value = it.searchableString()
             size++
             if (indexes.last().size >= cap) {
                 indexes.last().convertToHigherRank()
@@ -24,28 +23,28 @@ class ValueStore : Serializable {
                 indexesCache.add(mutableListOf())
             }
             State.indexedLines.addAndGet(1)
-            indexes.last().add(it, value)
+            indexes.last().add(it)
         }
     }
 
-    private fun getLogJson(v: String, indexIdentifier: String, seq: Long): LogJson? {
+    private fun getLogJson(v: String, indexIdentifier: String, seq: Long): Domain? {
         return try {
-            val logJson = v.substringAfter(" ").deserializeJsonToObject<LogJson>()
-            logJson.indexIdentifier = indexIdentifier
-            logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
-            logJson.seq = seq
-            logJson.init()
-            logJson
+            val domain = v.substringAfter(" ").deserializeJsonToObject<Domain>()
+            domain.indexIdentifier = indexIdentifier
+            domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
+            domain.seq = seq
+            domain.init()
+            domain
         } catch (e: Exception) {
-            val logJson = LogJson(seq = seq, message = v.substringAfter(" "), application = indexIdentifier)
-            logJson.indexIdentifier = indexIdentifier
+            val domain = Domain(seq = seq, message = v.substringAfter(" "), application = indexIdentifier)
+            domain.indexIdentifier = indexIdentifier
             try {
-                logJson.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
-                logJson.init()
+                domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
+                domain.init()
             } catch (e: Exception) {
                 return null
             }
-            logJson
+            domain
         }
     }
 
@@ -66,12 +65,12 @@ class ValueStore : Serializable {
         q: Query,
         offsetLock: Long,
         length: Int
-    ): List<LogJson> {
+    ): List<Domain> {
         return indexes.dropLast(1).reversed().asSequence()
             .flatMap { index ->
                 index.searchMustInclude(q.filteredQueryList) { domain ->
                     domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)
-                }.sortedByDescending { it.timestamp }.take(length)
+                }.take(length)
             }.take(length)
             .toList()
     }
@@ -94,8 +93,6 @@ class ValueStore : Serializable {
     private fun getQuery(
         query: String,
     ): Query {
-
-
         val queryListNot = mutableListOf<String>()
         val queryList = mutableListOf<String>()
 
@@ -128,23 +125,23 @@ class ValueStore : Serializable {
     private fun contains(
         queryList: List<String>,
         queryListNot: List<String>,
-        domain: LogJson
+        domain: Domain
     ): Boolean {
         val contains =
             if (queryList.isEmpty() && queryListNot.isEmpty()) {
                 true
             } else if (queryList.isEmpty()) {
                 queryListNot.none {
-                    domain.searchableString().contains(
+                    domain.toString().contains(
                         it,
                         true
                     )
                 }
             } else if (queryListNot.isEmpty()) {
-                queryList.all { domain.searchableString().contains(it, true) }
+                queryList.all { domain.toString().contains(it, true) }
             } else {
-                queryList.all { domain.searchableString().contains(it, true) } && queryListNot.none {
-                    domain.searchableString().contains(
+                queryList.all { domain.toString().contains(it, true) } && queryListNot.none {
+                    domain.toString().contains(
                         it,
                         true
                     )

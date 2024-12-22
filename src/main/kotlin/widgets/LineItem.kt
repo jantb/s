@@ -4,7 +4,7 @@ import ColoredText
 import ComponentOwn
 import State
 import app.Channels
-import app.LogJson
+import app.Domain
 import app.PublishToTopic
 import app.QueryChanged
 import deserializeJsonToObject
@@ -29,7 +29,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
     private var maxCharBounds: Rectangle2D
     private var mouseposX = 0
     private var mouseposY = 0
-    private var logJson: LogJson? = null
+    private var domain: Domain? = null
 
     init {
         this.x = x
@@ -50,14 +50,14 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         }
     }
 
-    fun setLogJson(logJson: LogJson) {
-        this.logJson = logJson
+    fun setLogJson(domain: Domain) {
+        this.domain = domain
         this.text.clear()
-        this.text.addText(logJson.timestamp.toString(), color = UiColors.teal)
+        this.text.addText(domain.timestamp.toString(), color = UiColors.teal)
 
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(
-            logJson.level, color = when (logJson.level) {
+            domain.level, color = when (domain.level) {
                 "INFO" -> {
                     UiColors.green
                 }
@@ -79,39 +79,39 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
                 }
             }
         )
-        this.text.addText(logJson.topic, color = UiColors.green)
+        this.text.addText(domain.topic, color = UiColors.green)
 
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(
-            logJson.application,
-            color = UiColors.visibleColors[logJson.indexIdentifier.hashCode()
+            domain.application,
+            color = UiColors.visibleColors[domain.indexIdentifier.hashCode()
                 .toInt().absoluteValue % UiColors.visibleColors.size]
         )
-        this.text.addText(logJson.partition, color = UiColors.magenta)
+        this.text.addText(domain.partition, color = UiColors.magenta)
 
-        if (logJson.correlationId != "") {
+        if (domain.correlationId != "") {
             this.text.addText(" ", color = UiColors.defaultText)
-            this.text.addText(logJson.correlationId, color = UiColors.orange)
+            this.text.addText(domain.correlationId, color = UiColors.orange)
         }
 
-        if (logJson.requestId != "") {
+        if (domain.requestId != "") {
             this.text.addText(" ", color = UiColors.defaultText)
-            this.text.addText(logJson.requestId, color = UiColors.orange)
+            this.text.addText(domain.requestId, color = UiColors.orange)
         }
 
         this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(logJson.message, color = UiColors.defaultText)
-        this.text.addText(logJson.errorMessage, color = UiColors.defaultText)
-        this.text.addText(logJson.offset, color = UiColors.orange)
+        this.text.addText(domain.message, color = UiColors.defaultText)
+        this.text.addText(domain.errorMessage, color = UiColors.defaultText)
+        this.text.addText(domain.offset, color = UiColors.orange)
 
         this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(logJson.headers, color = UiColors.magenta)
+        this.text.addText(domain.headers, color = UiColors.magenta)
 
 
         this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(logJson.stacktraceType, color = UiColors.defaultText)
-        this.text.addText(logJson.stacktrace, color = UiColors.defaultText)
-        this.text.addText("${logJson.key} ${logJson.data}", color = UiColors.defaultText)
+        this.text.addText(domain.stacktraceType, color = UiColors.defaultText)
+        this.text.addText(domain.stacktrace, color = UiColors.defaultText)
+        this.text.addText("${domain.key} ${domain.data}", color = UiColors.defaultText)
 
         if (this.text.highlight) {
             this.text.highlightRange =
@@ -169,19 +169,19 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
     override fun mouseClicked(e: MouseEvent) {
         if (e.isShiftDown && !e.isControlDown && e.clickCount == 1) {
             val textViewer = TextViewer(
-                title = logJson?.application ?: "", text = if (logJson != null && logJson!!.data.isNotBlank()) {
-                    logJson!!.data.deserializeJsonToObject<Any>().serializeToJsonPP()
+                title = domain?.application ?: "", text = if (domain != null && domain!!.data.isNotBlank()) {
+                    domain!!.data.deserializeJsonToObject<Any>().serializeToJsonPP()
                 } else {
                     text.text
-                }, logJson
+                }, domain
             )
             textViewer.isVisible = true
         } else if (e.isShiftDown && e.isControlDown && e.clickCount == 1) {
             Channels.kafkaChannel.put(
                 PublishToTopic(
-                    topic = logJson!!.topic,
-                    key = logJson!!.key,
-                    value = logJson!!.data
+                    topic = domain!!.topic,
+                    key = domain!!.key,
+                    value = domain!!.data
                 )
             )
         } else if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {

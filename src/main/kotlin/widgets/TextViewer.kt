@@ -1,6 +1,6 @@
 package widgets
 
-import app.LogJson
+import app.Domain
 import util.Styles
 import util.UiColors
 import java.awt.*
@@ -10,7 +10,7 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.*
 
-class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame() {
+class TextViewer(title: String = "", text: String, domain: Domain?) : JFrame() {
 
     private var textAreaFontSize = 12
 
@@ -30,7 +30,7 @@ class TextViewer(title: String = "", text: String, logJson: LogJson?) : JFrame()
             insets = Insets(0, 2, 0, 2)
         }
 
-        logJson?.let { log ->
+        domain?.let { log ->
             addField("Timestamp", log.timestampString, fieldsPanel, constraints)
             addField("CorrelationId", log.correlationId, fieldsPanel, constraints)
             addField("RequestId", log.requestId, fieldsPanel, constraints)

@@ -1,11 +1,10 @@
 import java.util.*
 
-fun <T> List<Sequence<Comparable<T>>>.merge(descending: Boolean = false): Sequence<Comparable<T>> = sequence {
-    data class Entry(val iterator: Iterator<Comparable<T>>, val value: Comparable<T>)
+fun <T: Comparable<T>> List<Sequence<T>>.merge(descending: Boolean = false): Sequence<T> = sequence {
+    data class Entry(val iterator: Iterator<T>, val value: T)
 
     val priorityQueue = PriorityQueue<Entry> { e1, e2 ->
-        @Suppress("UNCHECKED_CAST")
-        if (descending) e2.value.compareTo(e1.value as T) else e1.value.compareTo(e2.value as T)
+        if (descending) e2.value.compareTo(e1.value) else e1.value.compareTo(e2.value)
     }
     this@merge.forEach {
         it.iterator().let { iterator -> if (iterator.hasNext()) priorityQueue.add(Entry(iterator, iterator.next())) }

@@ -1,6 +1,5 @@
 package app
 
-import LRUCache
 import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -10,25 +9,7 @@ import kafka.RawJsonSerializer
 import java.time.Instant
 import java.util.UUID
 
-sealed class Domain : Comparable<Domain> {
-    open fun searchableString(): String {
-        return ""
-    }
-
-    open fun timestamp(): Instant {
-        return Instant.MIN
-    }
-
-    open fun contains(other: String): Boolean {
-        return false
-    }
-
-    open fun getPunct(): String {
-        return ""
-    }
-}
-
-data class LogJson(
+data class Domain(
     val id: UUID = UUID.randomUUID(),
     var seq :Long ,
     var indexIdentifier: String = "",
@@ -48,12 +29,10 @@ data class LogJson(
     @JsonProperty("headers") val headers: String = "",
     @JsonDeserialize(using = RawJsonDeserializer::class) @JsonSerialize(using = RawJsonSerializer::class) @JsonProperty(
         "z"
-    ) val data: String = "",
-
-
-    ) : Domain() {
+    )
+    val data: String = "",
+    ) :  Comparable<Domain>  {
     var timestamp: Instant = Instant.MIN
-    private var punkt = ""
     private var searchableString = ""
 
     init {
@@ -65,26 +44,12 @@ data class LogJson(
         this.init()
     }
 
-    override fun searchableString(): String {
-        return searchableString
-    }
-
-    var cache = LRUCache<String, Boolean>(10_000)
-
-    override fun timestamp(): Instant {
-        return timestamp
-    }
-
-    override fun contains(other: String): Boolean {
-        return cache.computeIfAbsent(key) { searchableString().contains(other) }
-    }
-
-    override fun getPunct(): String {
-        return punkt
-    }
-
     override fun compareTo(other: Domain): Int {
-        return this.timestamp.compareTo(other.timestamp())
+        return this.timestamp.compareTo(other.timestamp)
+    }
+
+    override fun toString(): String {
+        return searchableString
     }
 
     fun init() {
@@ -106,6 +71,5 @@ data class LogJson(
             headers,
             data
         ).joinToString(" ")
-        punkt = searchableString.replace("[a-zA-Z0-9\\s]".toRegex(), "")
     }
 }

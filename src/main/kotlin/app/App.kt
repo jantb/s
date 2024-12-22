@@ -73,8 +73,7 @@ class App : CoroutineScope {
                             }.merge(descending = true).drop(msg.offset).take(msg.length).toList().reversed()
                         }
                         searchTime.set(results.duration.inWholeNanoseconds)
-                        @Suppress("UNCHECKED_CAST")
-                        cmdGuiChannel.put(ResultChanged(results.value as List<Domain>))
+                        cmdGuiChannel.put(ResultChanged(results.value ))
                     }
                 }
             }

@@ -322,10 +322,7 @@ class ScrollableList(
     EventQueue.invokeLater {
       lineList.forEach { it.setText("") }
       result.forEachIndexed { i, it ->
-        when (it) {
-          is LogJson -> lineList[i.coerceIn(lineList.indices)].setLogJson(it)
-          else -> {}
-        }
+        lineList[i.coerceIn(lineList.indices)].setLogJson(it)
       }
 
       lastUpdate = System.nanoTime()
