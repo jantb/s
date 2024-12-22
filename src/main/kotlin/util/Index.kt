@@ -12,7 +12,8 @@ class Index<T>(
     private val goalCardinality: Double = 0.37,
 ) : Serializable {
     private var shardArray: Array<Shard<T>?> = Array(32) { null }
-    private var isHigherRank: Boolean = false
+     var isHigherRank: Boolean = false
+        get() = field
     var size: Int = 0
 
     fun add(key: T, value: String) {
