@@ -10,7 +10,7 @@ import kafka.RawJsonSerializer
 import java.time.Instant
 import java.util.UUID
 
-sealed class Domain {
+sealed class Domain : Comparable<Domain> {
     open fun searchableString(): String {
         return ""
     }
@@ -81,6 +81,10 @@ data class LogJson(
 
     override fun getPunct(): String {
         return punkt
+    }
+
+    override fun compareTo(other: Domain): Int {
+        return this.timestamp.compareTo(other.timestamp())
     }
 
     fun init() {

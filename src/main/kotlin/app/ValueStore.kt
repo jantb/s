@@ -63,14 +63,14 @@ class ValueStore : Serializable {
         return if (query == prevSearch && indexesLength == indexes.size){
             prevQ
             val list = getLiveIndexResults(prevQ, offsetLock, length)
-            (list + prevSearchCached).reversed()
+            (list + prevSearchCached)
         }else{
             prevQ =getQuery(query)
             val list = getLiveIndexResults(prevQ, offsetLock, length)
             val rankedList = getRankedListResults(prevQ, offsetLock, length)
             prevSearchCached = rankedList
             indexesLength = indexes.size
-            (list + rankedList).reversed()
+            (list + rankedList)
         }
     }
 

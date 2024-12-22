@@ -17,6 +17,7 @@ import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kube.PodUnit
+import merge
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
@@ -63,15 +64,17 @@ class App : CoroutineScope {
                             offsetLock = Long.MAX_VALUE
                         }
                         val results = measureTimedValue {
-                            valueStores.map { it.value.search(
-                                query = msg.query,
-                                length = msg.length + msg.offset,
-                                offsetLock = offsetLock
-                            ) }
-                                .flatten().sortedBy { it.timestamp() }.dropLast(msg.offset).takeLast(msg.length)
+                            valueStores.map {
+                                it.value.search(
+                                    query = msg.query,
+                                    length = msg.length + msg.offset,
+                                    offsetLock = offsetLock
+                                ).asSequence()
+                            }.merge(descending = true).drop(msg.offset).take(msg.length).toList().reversed()
                         }
                         searchTime.set(results.duration.inWholeNanoseconds)
-                        cmdGuiChannel.put(ResultChanged(results.value))
+                        @Suppress("UNCHECKED_CAST")
+                        cmdGuiChannel.put(ResultChanged(results.value as List<Domain>))
                     }
                 }
             }
