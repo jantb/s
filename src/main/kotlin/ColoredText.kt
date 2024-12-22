@@ -1,6 +1,7 @@
 import util.UiColors
 import java.awt.Color
 import java.awt.Graphics2D
+import javax.swing.text.html.HTML.Tag.P
 
 class ColoredText() {
     private var textList = mutableListOf<String>()
@@ -11,11 +12,13 @@ class ColoredText() {
     fun isNotBlank(): Boolean {
         return textList.isNotEmpty()
     }
+
     fun clear() {
         textList.clear()
         colorList.clear()
         text = ""
     }
+
     fun addText(text: String, color: Color) {
         colorList += color
         this.textList += text
@@ -54,10 +57,14 @@ class ColoredText() {
 
     fun getHighlightedText(): String {
         return if (highlight) {
-            text.substring(
-                highlightRange!!.first.coerceIn(0..text.length),
-                (highlightRange!!.last + 1).coerceIn(0..text.length)
-            )
+            if (highlightRange == null) {
+                ""
+            } else {
+                text.substring(
+                    highlightRange!!.first.coerceIn(0..text.length),
+                    (highlightRange!!.last + 1).coerceIn(0..text.length)
+                )
+            }
         } else {
 
             ""

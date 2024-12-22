@@ -45,7 +45,7 @@ class ScrollableList(
         updateResults()
         panel.repaint()
       }
-    }, 0, 8, TimeUnit.MILLISECONDS)
+    }, 0, 16, TimeUnit.MILLISECONDS)
   }
 
   private var selectedLineIndex = 0

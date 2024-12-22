@@ -3,7 +3,6 @@ package util
 import printBytesAsAppropriateUnit
 import serializeToBytes
 import java.util.*
-import kotlin.collections.ArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.nanoseconds
@@ -32,7 +31,7 @@ class IndexTest {
 
         assertEquals(1, index.size)
 
-        val searchMustInclude = index.searchMustInclude(listOf(listOf("val"))).toList()
+        val searchMustInclude = index.searchMustInclude(listOf(listOf("val"))) {}.toList()
         assertEquals(1, searchMustInclude.size)
     }
 
@@ -49,7 +48,7 @@ class IndexTest {
 
         assertEquals(2, index.size)
 
-        val searchMustInclude = index.searchMustInclude(listOf(listOf("a"))).toList()
+        val searchMustInclude = index.searchMustInclude(listOf(listOf("a"))) {}.toList()
         assertEquals(1, searchMustInclude.size)
     }
 
@@ -74,7 +73,7 @@ class IndexTest {
         var found = 0
         val timeTakenSearch = measureTime {
             for ((key, value) in map) {
-                val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
+                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {}
                 if (key in searchMustInclude) {
                     found++
                 }
@@ -124,7 +123,7 @@ class IndexTest {
         time = System.currentTimeMillis()
        var timeTakenSearch = measureTime {
             map.forEachIndexed { key, value ->
-                val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
+                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {}
                 if (key in searchMustInclude) {
                     found++
                 }else{

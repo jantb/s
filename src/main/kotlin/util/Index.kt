@@ -1,6 +1,5 @@
 package util
 
-
 import net.openhft.hashing.LongHashFunction
 import util.Bf.Companion.estimate
 import java.io.Serializable
@@ -12,10 +11,10 @@ class Index<T>(
     private val goalCardinality: Double = 0.37,
 ) : Serializable {
     private var shardArray: Array<Shard<T>?> = Array(32) { null }
-     var isHigherRank: Boolean = false
-        get() = field
+    private var isHigherRank: Boolean = false
     var size: Int = 0
-
+    private var cacheKey: List<List<String>>? = null
+    private var cacheValue: List<T>? = null
     fun add(key: T, value: String) {
         require(!isHigherRank) {
             "Can not add values to a higher rank index"
@@ -36,11 +35,22 @@ class Index<T>(
         size++
     }
 
-    fun searchMustInclude(valueListList: List<List<String>>): Sequence<T> {
+    fun searchMustInclude(valueListList: List<List<String>>, function: (T) -> Boolean): List<T> {
+        if (isHigherRank && valueListList == cacheKey) {
+            cacheValue?.let { return it }
+        }
         // Must include all the strings in each of the lists
         val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
-        return shardArray.mapNotNull { it?.search(gramsList) }.asSequence().flatten()
+        val result = shardArray.mapNotNull { it?.search(gramsList)?.toList() }.toList().flatten().filter { function(it) }
+
+
+        if (isHigherRank) {
+            // save result in cache if higher rank
+            cacheKey = valueListList
+            cacheValue = result
+        }
+        return result
     }
 
     fun convertToHigherRank() {
@@ -344,69 +354,4 @@ fun String.grams(): List<Long> {
         return listOf(LongHashFunction.xx3().hashChars(lowercase))
     }
     return lowercase.windowed(3).map { LongHashFunction.xx3().hashChars(it) }
-}
-
-class CountMin(epsOfTotalCount: Double = 0.0001, confidence: Double = 0.99) {
-    val width: Int
-    val depth: Int
-    var docCount = 0
-    private var count = 0
-
-    init {
-        val calculateWidthAndDepth = calculateWidthAndDepth(epsOfTotalCount, confidence)
-        width = calculateWidthAndDepth.first
-        depth = calculateWidthAndDepth.second
-    }
-
-    private val sketch = Array(depth) { IntArray(width) }
-    val size = width * depth
-
-    fun add(item: String) {
-        count++
-        val hashes = hash(item)
-        for (i in 0 until depth) {
-            sketch[i][(hashes[i] mod width)]++
-        }
-    }
-
-    fun count(item: String): Int {
-        val hashes = hash(item)
-        var countMin = Int.MAX_VALUE
-        for (i in 0 until depth) {
-            countMin = minOf(countMin, sketch[i][(hashes[i] mod width)])
-        }
-        return countMin
-    }
-
-
-    fun topKSetAbove(item: String, threshold: Double = 0.1): Boolean {
-        return (count * threshold) < count(item)
-    }
-
-
-    private fun calculateWidthAndDepth(
-        epsOfTotalCount: Double, confidence: Double
-    ): Pair<Int, Int> {
-
-        val width = ceil(2 / epsOfTotalCount).toInt()
-        val depth = ceil(-ln(1 - confidence) / ln(2.0)).toInt()
-
-        return width to depth
-    }
-
-    private fun hash(item: String): LongArray {
-        val number = LongHashFunction.xx3().hashChars(item)
-        val lower32 = number.and(0xFFFFFFFF)
-        val upper32 = number.shr(32)
-        val hashes = LongArray(depth)
-        (0 until depth).forEach {
-            hashes[it] = ((lower32 to upper32).first + (lower32 to upper32).second * it)
-        }
-
-        return hashes
-    }
-
-    private infix fun Long.mod(m: Int): Int {
-        return Math.floorMod(this, m)
-    }
 }

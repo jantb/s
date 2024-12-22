@@ -49,28 +49,16 @@ class ValueStore : Serializable {
         }
     }
 
-    private var prevSearch = ""
-    private var prevSearchCached = emptyList<Domain>()
-    private var indexesLength = 1
-    private var prevQ= Query(
-        queryListNot = emptyList(),
-        queryList =  emptyList(),
-        filteredQueryList =  emptyList()
-    )
-
-
     fun search(query: String, length: Int, offsetLock: Long): List<Domain> {
-        return if (query == prevSearch && indexesLength == indexes.size){
-            prevQ
-            val list = getLiveIndexResults(prevQ, offsetLock, length)
-            (list + prevSearchCached)
-        }else{
-            prevQ =getQuery(query)
-            val list = getLiveIndexResults(prevQ, offsetLock, length)
-            val rankedList = getRankedListResults(prevQ, offsetLock, length)
-            prevSearchCached = rankedList
-            indexesLength = indexes.size
-            (list + rankedList)
+        val liveIndexResults = getLiveIndexResults(getQuery(query), offsetLock, length)
+        return if (liveIndexResults.size >= length) {
+            liveIndexResults.take(length)
+        } else {
+            (liveIndexResults + getRankedListResults(
+                getQuery(query),
+                offsetLock,
+                length - liveIndexResults.size
+            )).take(length)
         }
     }
 
@@ -78,22 +66,21 @@ class ValueStore : Serializable {
         q: Query,
         offsetLock: Long,
         length: Int
-    ) = indexes.dropLast(1).reversed().asSequence()
-        .flatMap { index ->
-            index.searchMustInclude(q.filteredQueryList)
-        }
-        .filter { domain ->
-            domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)
-        }
-
-        .sortedByDescending { it.timestamp }.take(length)
-        .toList()
+    ): List<LogJson> {
+        return indexes.dropLast(1).reversed().asSequence()
+            .flatMap { index ->
+                index.searchMustInclude(q.filteredQueryList) { domain ->
+                    domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)
+                }.sortedByDescending { it.timestamp }.take(length)
+            }.take(length)
+            .toList()
+    }
 
     private fun getLiveIndexResults(
         q: Query,
         offsetLock: Long,
         length: Int
-    ) = indexes.last().searchMustInclude(q.filteredQueryList).filter {
+    ) = indexes.last().searchMustInclude(q.filteredQueryList) {
         it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
     }.sortedByDescending { it.timestamp }.take(length)
         .toList()
@@ -103,13 +90,14 @@ class ValueStore : Serializable {
         var queryList: List<String>,
         var filteredQueryList: List<List<String>>
     )
+
     private fun getQuery(
         query: String,
     ): Query {
 
 
-        val queryListNot =  mutableListOf<String>()
-        val queryList =  mutableListOf<String>()
+        val queryListNot = mutableListOf<String>()
+        val queryList = mutableListOf<String>()
 
         var isInPhrase = false
         var phrase = ""
@@ -130,7 +118,11 @@ class ValueStore : Serializable {
                 queryList.add(word)
             }
         }
-        return Query(queryListNot = queryListNot, queryList = queryList, filteredQueryList =  listOf(queryList.filter { it.isNotBlank() }))
+        return Query(
+            queryListNot = queryListNot,
+            queryList = queryList,
+            filteredQueryList = listOf(queryList.filter { it.isNotBlank() })
+        )
     }
 
     private fun contains(
