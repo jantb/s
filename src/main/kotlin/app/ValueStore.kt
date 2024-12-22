@@ -7,7 +7,7 @@ import java.io.Serializable
 import java.time.OffsetDateTime
 
 
-const val cap = 10_000
+const val cap = 1_000
 
 class ValueStore : Serializable {
     private val indexes = mutableListOf(Index<Domain>())
@@ -68,8 +68,8 @@ class ValueStore : Serializable {
     ): List<Domain> {
         return indexes.dropLast(1).reversed().asSequence()
             .flatMap { index ->
-                index.searchMustInclude(q.filteredQueryList) { domain ->
-                    domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)
+                index.searchMustInclude(q.filteredQueryList) {
+                    it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
                 }.take(length)
             }.take(length)
             .toList()
@@ -81,8 +81,7 @@ class ValueStore : Serializable {
         length: Int
     ) = indexes.last().searchMustInclude(q.filteredQueryList) {
         it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
-    }.sortedByDescending { it.timestamp }.take(length)
-        .toList()
+    }.take(length).toList()
 
     data class Query(
         val queryListNot: List<String>,
