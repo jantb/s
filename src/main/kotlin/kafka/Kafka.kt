@@ -51,31 +51,49 @@ class Kafka {
         val schemaRegistryRest = config.getValue("SCHEMA_REGISTRY_REST")
 
         configs[ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG] = bootstrapServers
-        configs["security.protocol"] = "SASL_SSL"
-        configs["sasl.mechanism"] = "PLAIN"
-        configs["sasl.jaas.config"] =
-            "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"$confluentId\" password=\"$confluentSecret\";"
+        if (confluentId.isBlank()) {
 
-        configs[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG] =
-            org.apache.kafka.common.serialization.StringDeserializer::class.java.name
-        configs[ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG] =
-            org.apache.kafka.common.serialization.ByteArrayDeserializer::class.java.name
-        configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] = schemaRegistryRest
-        configs[AbstractKafkaSchemaSerDeConfig.BASIC_AUTH_CREDENTIALS_SOURCE] = "USER_INFO"
+        } else {
+            configs["security.protocol"] = "SASL_SSL"
+            configs["sasl.mechanism"] = "PLAIN"
+            configs["sasl.jaas.config"] =
+                "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"$confluentId\" password=\"$confluentSecret\";"
+        }
+            configs[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG] =
+                org.apache.kafka.common.serialization.StringDeserializer::class.java.name
+            configs[ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG] =
+                org.apache.kafka.common.serialization.ByteArrayDeserializer::class.java.name
 
-        configs[AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG] = "$schemaRegistryId:$schemaRegistrySecret"
+        if (schemaRegistryId.isBlank()) {
+            configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] = schemaRegistryRest
+            schemaRegistryClient = CachedSchemaRegistryClient(
+                /* baseUrl = */ configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] as String,
+                /* cacheCapacity = */ 1000, // schema cache size
 
-        schemaRegistryClient = CachedSchemaRegistryClient(
-            configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] as String,
-            1000, // schema cache size
+                /* originals = */ mapOf(
+                    AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG to configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG],
+                ),
+                /* httpHeaders = */ mapOf()
+            )
+        } else {
+            configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] = schemaRegistryRest
+            configs[AbstractKafkaSchemaSerDeConfig.BASIC_AUTH_CREDENTIALS_SOURCE] = "USER_INFO"
+            configs[AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG] = "$schemaRegistryId:$schemaRegistrySecret"
 
-            mapOf(
-                AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG to configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG],
-                AbstractKafkaSchemaSerDeConfig.BASIC_AUTH_CREDENTIALS_SOURCE to "USER_INFO",
-                AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG to configs[AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG]
-            ),
-            mapOf()
-        )
+            schemaRegistryClient = CachedSchemaRegistryClient(
+                /* baseUrl = */ configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] as String,
+                /* cacheCapacity = */ 1000, // schema cache size
+
+                /* originals = */ mapOf(
+                    AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG to configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG],
+                    AbstractKafkaSchemaSerDeConfig.BASIC_AUTH_CREDENTIALS_SOURCE to "USER_INFO",
+                    AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG to configs[AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG]
+                ),
+                /* httpHeaders = */ mapOf()
+            )
+        }
+
+
 
         kafkaConsumer = KafkaConsumer(
             configs
@@ -95,7 +113,7 @@ class Kafka {
                     }
 
                     is ListLag -> {
-                        listLag(adminClient)
+//                        listLag(adminClient)
                     }
 
                     is ListenToTopic -> {
@@ -124,37 +142,37 @@ class Kafka {
         thread.start()
     }
 
-    private fun listLag(
-        adminClient: AdminClient,
-    ) {
-        val consumerGroups = listOf("clm-adapter", "rewards-ac-service", "rewards-ar-service", "party-rd-service")
-        val groups = adminClient.listConsumerGroups().all().get().filter { group ->
-            consumerGroups.any { it in group.groupId() }
-        }.toList()
-
-        if (groups.isEmpty()) {
-            println("No consumer groups found")
-        } else {
-            groups.forEach { group ->
-                val groupId = group.groupId()
-                val consumerGroupOffsets =
-                    adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get()
-                val endOffsets = kafkaConsumer.endOffsets(consumerGroupOffsets.keys)
-
-                consumerGroupOffsets.forEach { (topicPartition, offsetAndMetadata) ->
-                    val endOffset = endOffsets.getValue(topicPartition)
-                    val consumerOffset = offsetAndMetadata.offset()
-                    val lag = endOffset - consumerOffset
-
-                    if (lag > 0) {
-                        println(
-                            """Group: ${groupId}, Topic: ${topicPartition.topic()}, Partition: ${topicPartition.partition()}, Current Offset: ${consumerOffset}, End Offset: ${endOffset}, Lag: ${lag} """
-                        )
-                    }
-                }
-            }
-        }
-    }
+//    private fun listLag(
+//        adminClient: AdminClient,
+//    ) {
+//        val consumerGroups = listOf("clm-adapter", "rewards-ac-service", "rewards-ar-service", "party-rd-service")
+//        val groups = adminClient.listConsumerGroups().all().get().filter { group ->
+//            consumerGroups.any { it in group.groupId() }
+//        }.toList()
+//
+//        if (groups.isEmpty()) {
+//            println("No consumer groups found")
+//        } else {
+//            groups.forEach { group ->
+//                val groupId = group.groupId()
+//                val consumerGroupOffsets =
+//                    adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get()
+//                val endOffsets = kafkaConsumer.endOffsets(consumerGroupOffsets.keys)
+//
+//                consumerGroupOffsets.forEach { (topicPartition, offsetAndMetadata) ->
+//                    val endOffset = endOffsets.getValue(topicPartition)
+//                    val consumerOffset = offsetAndMetadata.offset()
+//                    val lag = endOffset - consumerOffset
+//
+//                    if (lag > 0) {
+//                        println(
+//                            """Group: ${groupId}, Topic: ${topicPartition.topic()}, Partition: ${topicPartition.partition()}, Current Offset: ${consumerOffset}, End Offset: ${endOffset}, Lag: ${lag} """
+//                        )
+//                    }
+//                }
+//            }
+//        }
+//    }
 
 
     private fun list(): List<String> {

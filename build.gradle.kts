@@ -1,8 +1,8 @@
 import org.codehaus.groovy.tools.shell.util.Logger.io
 
 plugins {
-    kotlin("jvm") version "2.0.20"
-    id("com.github.johnrengelman.shadow") version "7.1.2"
+    kotlin("jvm") version "2.1.0"
+    id("com.github.johnrengelman.shadow") version "8.1.1"
     application
 }
 
@@ -18,12 +18,12 @@ repositories {
 
 dependencies {
     implementation("net.openhft:zero-allocation-hashing:0.16")
-    implementation("io.fabric8:kubernetes-client:6.13.3")
+    implementation("io.fabric8:kubernetes-client:7.1.0")
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.14")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-    implementation("org.apache.kafka:kafka-clients:3.8.0")
-    implementation("io.confluent:kafka-avro-serializer:7.7.1")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
+    implementation("org.apache.kafka:kafka-clients:3.9.0")
+    implementation("io.confluent:kafka-avro-serializer:7.8.0")
     testImplementation(kotlin("test"))
 }
 

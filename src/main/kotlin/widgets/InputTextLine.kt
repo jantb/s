@@ -201,7 +201,7 @@ class InputTextLine(
                     textStack.removeLast()
                 }
                 if (textStack.isNotEmpty()) {
-                    if (textStack.last != text) {
+                    if (textStack.last() != text) {
                         textStack.addLast(text)
                         textStackIndex++
                     }
