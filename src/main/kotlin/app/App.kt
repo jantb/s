@@ -67,10 +67,10 @@ class App : CoroutineScope {
                             valueStores.map {
                                 it.value.search(
                                     query = msg.query,
-                                    length = msg.length + msg.offset,
+                                    length = msg.length + msg.offset + 10_000,
                                     offsetLock = offsetLock
                                 ).asSequence()
-                            }.merge(descending = true).drop(msg.offset).take(msg.length).toList().reversed()
+                            }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList().reversed()
                         }
                         searchTime.set(results.duration.inWholeNanoseconds)
                         cmdGuiChannel.put(ResultChanged(results.value ))

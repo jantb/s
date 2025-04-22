@@ -55,6 +55,7 @@ class LogLevelChart(
     /**
      * Update the chart with new log data.
      * This method groups logs by time periods and counts the number of entries for each log level.
+     * Only the last 100,000 messages are used to keep the chart fast and optimized.
      */
     fun updateChart(logs: List<Domain>) {
         if (logs.isEmpty()) {
@@ -63,9 +64,12 @@ class LogLevelChart(
             return
         }
 
+        // Limit to the last 100,000 logs for performance
+        val limitedLogs = if (logs.size > 10_000) logs.takeLast(10_000) else logs
+
         // Determine time range from logs
-        startTime = logs.minByOrNull { it.timestamp }?.timestamp ?: Instant.now()
-        endTime = logs.maxByOrNull { it.timestamp }?.timestamp ?: Instant.now()
+        startTime = limitedLogs.minByOrNull { it.timestamp }?.timestamp ?: Instant.now()
+        endTime = limitedLogs.maxByOrNull { it.timestamp }?.timestamp ?: Instant.now()
 
         // Ensure we have a valid time range
         if (startTime == endTime) {
@@ -83,7 +87,7 @@ class LogLevelChart(
         }
 
         // Count logs by time period and level
-        logs.forEach { domain ->
+        limitedLogs.forEach { domain ->
             val level = domain.level.ifEmpty { "UNKNOWN" }
 
             // Find the appropriate time point
