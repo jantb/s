@@ -70,7 +70,7 @@ class ValueStore : Serializable {
         val q = getQuery(query)
 
         // If levels are specified, search only those level indexes
-        if (levels != null && levels.isNotEmpty()) {
+        if (!levels.isNullOrEmpty()) {
             val results = mutableListOf<Domain>()
 
             // Search each specified level

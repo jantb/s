@@ -14,6 +14,7 @@ import util.Styles
 import util.UiColors
 import java.awt.Font
 import java.awt.Graphics2D
+import java.awt.SystemColor.text
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
@@ -56,29 +57,31 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.addText(domain.timestamp.toString(), color = UiColors.teal)
 
         this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(
-            domain.level, color = when (domain.level) {
-                "INFO" -> {
-                    UiColors.green
-                }
+        if (domain.topic == "") {
+            this.text.addText(
+                domain.level, color = when (domain.level) {
+                    "INFO" -> {
+                        UiColors.green
+                    }
 
-                "WARN" -> {
-                    UiColors.orange
-                }
+                    "WARN" -> {
+                        UiColors.orange
+                    }
 
-                "DEBUG" -> {
-                    UiColors.defaultText
-                }
+                    "DEBUG" -> {
+                        UiColors.defaultText
+                    }
 
-                "ERROR" -> {
-                    UiColors.red
-                }
+                    "ERROR" -> {
+                        UiColors.red
+                    }
 
-                else -> {
-                    UiColors.defaultText
+                    else -> {
+                        UiColors.defaultText
+                    }
                 }
-            }
-        )
+            )
+        }
         this.text.addText(domain.topic, color = UiColors.green)
 
         this.text.addText(" ", color = UiColors.defaultText)
