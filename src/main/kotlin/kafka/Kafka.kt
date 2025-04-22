@@ -113,7 +113,8 @@ class Kafka {
                     }
 
                     is ListLag -> {
-//                        listLag(adminClient)
+                        val lagInfo = listLag(adminClient)
+                        Channels.cmdGuiChannel.put(KafkaLagInfo(lagInfo))
                     }
 
                     is ListenToTopic -> {
@@ -142,37 +143,50 @@ class Kafka {
         thread.start()
     }
 
-//    private fun listLag(
-//        adminClient: AdminClient,
-//    ) {
-//        val consumerGroups = listOf("clm-adapter", "rewards-ac-service", "rewards-ar-service", "party-rd-service")
-//        val groups = adminClient.listConsumerGroups().all().get().filter { group ->
-//            consumerGroups.any { it in group.groupId() }
-//        }.toList()
-//
-//        if (groups.isEmpty()) {
-//            println("No consumer groups found")
-//        } else {
-//            groups.forEach { group ->
-//                val groupId = group.groupId()
-//                val consumerGroupOffsets =
-//                    adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get()
-//                val endOffsets = kafkaConsumer.endOffsets(consumerGroupOffsets.keys)
-//
-//                consumerGroupOffsets.forEach { (topicPartition, offsetAndMetadata) ->
-//                    val endOffset = endOffsets.getValue(topicPartition)
-//                    val consumerOffset = offsetAndMetadata.offset()
-//                    val lag = endOffset - consumerOffset
-//
-//                    if (lag > 0) {
-//                        println(
-//                            """Group: ${groupId}, Topic: ${topicPartition.topic()}, Partition: ${topicPartition.partition()}, Current Offset: ${consumerOffset}, End Offset: ${endOffset}, Lag: ${lag} """
-//                        )
-//                    }
-//                }
-//            }
-//        }
-//    }
+    private fun listLag(
+        adminClient: AdminClient,
+    ): List<LagInfo> {
+        val lagInfoList = mutableListOf<LagInfo>()
+        val groups = adminClient.listConsumerGroups().all().get().toList()
+
+        if (groups.isEmpty()) {
+            println("No consumer groups found")
+        } else {
+            groups.forEach { group ->
+                val groupId = group.groupId()
+                val consumerGroupOffsets =
+                    adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get()
+                val endOffsets = kafkaConsumer.endOffsets(consumerGroupOffsets.keys)
+
+                consumerGroupOffsets.forEach { (topicPartition, offsetAndMetadata) ->
+                    val endOffset = endOffsets.getValue(topicPartition)
+                    val consumerOffset = offsetAndMetadata.offset()
+                    val lag = endOffset - consumerOffset
+
+                    lagInfoList.add(
+                        LagInfo(
+                            groupId = groupId,
+                            topic = topicPartition.topic(),
+                            partition = topicPartition.partition(),
+                            currentOffset = consumerOffset,
+                            endOffset = endOffset,
+                            lag = lag
+                        )
+                    )
+                }
+            }
+        }
+        return lagInfoList
+    }
+
+    data class LagInfo(
+        val groupId: String,
+        val topic: String,
+        val partition: Int,
+        val currentOffset: Long,
+        val endOffset: Long,
+        val lag: Long
+    )
 
 
     private fun list(): List<String> {

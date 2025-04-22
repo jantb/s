@@ -117,3 +117,4 @@ class AddToIndex(val value: String, val indexIdentifier: String = UUID.randomUUI
 
 sealed class CmdGuiMessage
 class ResultChanged(val result: List<Domain>) : CmdGuiMessage()
+class KafkaLagInfo(val lagInfo: List<kafka.Kafka.LagInfo>) : CmdGuiMessage()

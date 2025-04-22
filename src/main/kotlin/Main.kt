@@ -1,12 +1,15 @@
 import app.App
 import app.Channels
+import app.Channels.kafkaChannel
 import app.KafkaSelectChangedText
+import app.ListLag
 import app.QueryChanged
 import kafka.Kafka
 import kotlinx.coroutines.channels.trySendBlocking
 import kube.Kube
 import util.UiColors.magenta
 import widgets.InputTextLine
+import widgets.KafkaLagView
 import widgets.KafkaSelect
 import widgets.PodSelect
 import widgets.ScrollableList
@@ -49,6 +52,7 @@ fun main() {
         buildViewer(panel)
         buildPodSelect(panel)
         buildKafkaSelect(panel)
+        buildKafkaLagView(panel)
         frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
         frame.contentPane.add(panel)
         frame.pack()
@@ -87,6 +91,10 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
             }
 
             Mode.kafkaSelect -> {
+                select(g)
+            }
+
+            Mode.kafkaLag -> {
                 select(g)
             }
         }
@@ -166,6 +174,17 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
                 KeyEvent.VK_K -> {
                     if (State.mode != Mode.kafkaSelect) {
                         State.mode = Mode.kafkaSelect
+                    } else {
+                        componentMap[State.mode]?.forEach { it.keyPressed(e) }
+                        State.mode = Mode.viewer
+                    }
+                    repaint()
+                }
+
+                KeyEvent.VK_G -> {
+                    if (State.mode != Mode.kafkaLag) {
+                        State.mode = Mode.kafkaLag
+                        kafkaChannel.put(ListLag)
                     } else {
                         componentMap[State.mode]?.forEach { it.keyPressed(e) }
                         State.mode = Mode.viewer
@@ -287,6 +306,23 @@ private fun buildKafkaSelect(panel: SlidePanel) {
     ) { Channels.kafkaSelectChannel.put(KafkaSelectChangedText(it)) }
 }
 
+private fun buildKafkaLagView(panel: SlidePanel) {
+    panel.componentMap.getOrPut(Mode.kafkaLag) { mutableListOf() } += KafkaLagView(
+        panel,
+        0,
+        0,
+        panel.width,
+        panel.height - 30
+    )
+    panel.componentMap.getOrPut(Mode.kafkaLag) { mutableListOf() } += InputTextLine(
+        panel,
+        0,
+        30,
+        panel.width,
+        30
+    ) { }
+}
+
 object State {
     val onMac: Boolean
     val changedAt = AtomicLong(0)
@@ -307,5 +343,6 @@ object State {
 enum class Mode {
     viewer,
     podSelect,
-    kafkaSelect
+    kafkaSelect,
+    kafkaLag
 }
