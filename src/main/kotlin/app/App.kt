@@ -67,10 +67,11 @@ class App : CoroutineScope {
                             valueStores.map {
                                 it.value.search(
                                     query = msg.query,
-                                    length = msg.length + msg.offset + 10_000,
-                                    offsetLock = offsetLock
+                                    length = msg.length + msg.offset + 1_000,
+                                    offsetLock = offsetLock,
+                                    levels = msg.levels
                                 ).asSequence()
-                            }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList().reversed()
+                            }.merge(descending = true).drop(msg.offset).take(msg.length + 1_000).toList().reversed()
                         }
                         searchTime.set(results.duration.inWholeNanoseconds)
                         cmdGuiChannel.put(ResultChanged(results.value ))
@@ -107,7 +108,7 @@ object UnListenToPods : PodsMessage()
 class KafkaSelectChangedText(val text: String) : KafkaSelectMessage()
 object UnListenToTopics : KafkaMessage()
 sealed class CmdMessage
-class QueryChanged(val query: String, val length: Int, val offset: Int) : CmdMessage()
+class QueryChanged(val query: String, val length: Int, val offset: Int, val levels: Set<String>? = null) : CmdMessage()
 object ClearIndex : CmdMessage()
 
 class ClearNamedIndex(val name: String) : CmdMessage()

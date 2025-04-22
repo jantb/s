@@ -35,7 +35,14 @@ class ScrollableList(
   private var lastUpdate = 0L
 
   // Chart for log levels
-  private val logLevelChart = LogLevelChart(panel, x, 0, width, 100)
+  private val logLevelChart = LogLevelChart(
+    panel = panel, 
+    x = x, 
+    y = 0, 
+    width = width, 
+    height = 100,
+    onLevelsChanged = { updateResults() } // Trigger a search when levels change
+  )
   private var chartHeight = 100 // Height of the chart (will be updated based on window height)
 
   // Time picker for selecting time range
@@ -226,27 +233,42 @@ class ScrollableList(
   }
 
   override fun mouseClicked(e: MouseEvent) {
+    // Check if mouse is over the chart
+    if (e.y < chartHeight) {
+      logLevelChart.mouseClicked(e)
+    }
     // Otherwise, handle clicks on log lines
-    if (e.clickCount == 1) {
+    else if (e.clickCount == 1) {
       lineList.firstOrNull { mouseInside(e, it) }?.mouseClicked(e)
       updateResults()
     }
   }
 
   override fun mousePressed(e: MouseEvent) {
-    mouseposX = e.x - x
-    mouseposY = e.y - y - 7
-    mouseposXPressed = mouseposX
-    mouseposYPressed = mouseposY
-    mouseposXReleased = mouseposX
-    mouseposYReleased = mouseposY
-    selectedTextRange = null
+    // Check if mouse is over the chart
+    if (e.y < chartHeight) {
+      logLevelChart.mousePressed(e)
+    }
+    // Otherwise, handle as before
+    else {
+      mouseposX = e.x - x
+      mouseposY = e.y - y - 7
+      mouseposXPressed = mouseposX
+      mouseposYPressed = mouseposY
+      mouseposXReleased = mouseposX
+      mouseposYReleased = mouseposY
+      selectedTextRange = null
+    }
 
     panel.repaint()
   }
 
   override fun mouseReleased(e: MouseEvent) {
-    // No action needed
+    // Check if mouse is over the chart
+    if (e.y < chartHeight) {
+      logLevelChart.mouseReleased(e)
+    }
+    // No other action needed
   }
 
 
@@ -279,6 +301,13 @@ class ScrollableList(
   }
 
   override fun mouseWheelMoved(e: MouseWheelEvent) {
+    // Check if mouse is over the chart
+    if (e.y < chartHeight) {
+      logLevelChart.mouseWheelMoved(e)
+      return
+    }
+
+    // Otherwise, handle as before
     if ((e.isControlDown && !State.onMac) || (e.isMetaDown && State.onMac)) {
       rowHeight -= e.wheelRotation
       rowHeight = rowHeight.coerceIn(4..100)
@@ -313,8 +342,15 @@ class ScrollableList(
   }
 
   override fun mouseDragged(e: MouseEvent) {
-    mouseposX = e.x - x
-    mouseposY = e.y - y - 7
+    // Check if mouse is over the chart
+    if (e.y < chartHeight) {
+      logLevelChart.mouseDragged(e)
+    }
+    // Otherwise, handle as before
+    else {
+      mouseposX = e.x - x
+      mouseposY = e.y - y - 7
+    }
   }
 
   override fun mouseMoved(e: MouseEvent) {
@@ -344,7 +380,18 @@ class ScrollableList(
     State.offset.set(indexOffset)
     State.length.set(length)
 
-    Channels.searchChannel.trySendBlocking(QueryChanged(query = inputTextLine.text, offset = indexOffset, length = length))
+    // Get selected levels from the chart
+    val selectedLevels = logLevelChart.getSelectedLevels()
+
+    // Include selected levels in the search query
+    Channels.searchChannel.trySendBlocking(
+      QueryChanged(
+        query = inputTextLine.text, 
+        offset = indexOffset, 
+        length = length,
+        levels = selectedLevels
+      )
+    )
   }
 
   private fun updateResults(result: List<Domain>) {
