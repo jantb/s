@@ -240,7 +240,7 @@ class InputTextLine(
             }
 
             KeyEvent.VK_A -> {
-                if (e.isMetaDown && State.onMac && e.isAltDown || e.isControlDown && !State.onMac) {
+                if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {
                     selectedText = text
                     selectedTextRange = text.indices
                     cursorIndex = selectedTextRange!!.last + 1

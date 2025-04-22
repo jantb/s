@@ -237,7 +237,7 @@ class Kafka {
                             partition = consumerRecord.partition(),
                             headers = consumerRecord.headers().toList()
                                 .joinToString(" | ") { it.key() + " : " + it.value().toString(Charsets.UTF_8) },
-                            z = value.toString(), timestamp = OffsetDateTime.ofInstant(
+                            z = value, timestamp = OffsetDateTime.ofInstant(
                                 Instant.ofEpochMilli(consumerRecord.timestamp()),
                                 ZoneId.systemDefault()
                             ), key = consumerRecord.key() ?: "", topic = consumerRecord.topic()
