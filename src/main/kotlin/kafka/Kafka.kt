@@ -280,6 +280,7 @@ class Message(
     val partition: Int,
     val offset: Int,
     val headers: String,
+    val level: String = "UNKNOWN", // Explicitly set level to UNKNOWN for Kafka messages
     @JsonDeserialize(using = RawJsonDeserializer::class) @JsonSerialize(using = RawJsonSerializer::class) val z: String,
 )
 

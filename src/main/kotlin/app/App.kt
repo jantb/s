@@ -63,7 +63,21 @@ class App : CoroutineScope {
                         } else {
                             offsetLock = Long.MAX_VALUE
                         }
-                        val results = measureTimedValue {
+
+                        // First search: for the scrollable list (without extra 1000)
+                        val listResults = measureTimedValue {
+                            valueStores.map {
+                                it.value.search(
+                                    query = msg.query,
+                                    length = msg.length + msg.offset,
+                                    offsetLock = offsetLock,
+                                    levels = msg.levels
+                                ).asSequence()
+                            }.merge(descending = true).drop(msg.offset).take(msg.length).toList().reversed()
+                        }
+
+                        // Second search: for the chart (with extra 1000)
+                        val chartResults = measureTimedValue {
                             valueStores.map {
                                 it.value.search(
                                     query = msg.query,
@@ -73,8 +87,12 @@ class App : CoroutineScope {
                                 ).asSequence()
                             }.merge(descending = true).drop(msg.offset).take(msg.length + 1_000).toList().reversed()
                         }
-                        searchTime.set(results.duration.inWholeNanoseconds)
-                        cmdGuiChannel.put(ResultChanged(results.value ))
+
+                        // Use the duration from the main search for metrics
+                        searchTime.set(listResults.duration.inWholeNanoseconds)
+
+                        // Send both results to the UI
+                        cmdGuiChannel.put(ResultChanged(listResults.value, chartResults.value))
                     }
                 }
             }
@@ -117,5 +135,5 @@ class AddToIndex(val value: String, val indexIdentifier: String = UUID.randomUUI
     CmdMessage()
 
 sealed class CmdGuiMessage
-class ResultChanged(val result: List<Domain>) : CmdGuiMessage()
+class ResultChanged(val result: List<Domain>, val chartResult: List<Domain> = emptyList()) : CmdGuiMessage()
 class KafkaLagInfo(val lagInfo: List<kafka.Kafka.LagInfo>) : CmdGuiMessage()

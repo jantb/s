@@ -45,10 +45,6 @@ class ScrollableList(
   )
   private var chartHeight = 100 // Height of the chart (will be updated based on window height)
 
-  // Time picker for selecting time range
-  private val timePickerHeight = 30
-  private val timePickerY = chartHeight + 10
-
 
   init {
     this.x = x
@@ -83,7 +79,14 @@ class ScrollableList(
     val thread = Thread {
       while (true) {
         when (val msg = Channels.cmdGuiChannel.take()) {
-          is ResultChanged -> updateResults(msg.result)
+          is ResultChanged -> {
+            // Use the chart result for the chart if available, otherwise use the regular result
+            val chartData = if (msg.chartResult.isNotEmpty()) msg.chartResult else msg.result
+            // Update the chart with the chart data
+            logLevelChart.updateChart(chartData)
+            // Update the scrollable list with the regular result
+            updateResults(msg.result)
+          }
           else -> {
           }
         }
@@ -126,16 +129,16 @@ class ScrollableList(
         val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
           0
         } else {
-          // Adjust for chart height and time picker
-          ((height - chartHeight - timePickerHeight - 10 - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
+          // Adjust for chart height
+          ((height - chartHeight - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
         }
         lineList = (0..length).map {
           LineItem(
             parent = this,
             inputTextLine = inputTextLine,
             x = x,
-            // Adjust y position to start below the chart and time picker
-            y = chartHeight + timePickerHeight + 10 + ((maxCharBounds.height.toInt()) * (it)),
+            // Adjust y position to start below the chart
+            y = chartHeight + ((maxCharBounds.height.toInt()) * (it)),
             width = width,
             height = ((maxCharBounds.height.toInt()))
           )
@@ -374,8 +377,8 @@ class ScrollableList(
     val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
       0
     } else {
-      // Adjust for chart height and time picker
-      ((height - chartHeight - timePickerHeight - 10 - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
+      // Adjust for chart height
+      ((height - chartHeight - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
     }
     State.offset.set(indexOffset)
     State.length.set(length)
@@ -398,8 +401,8 @@ class ScrollableList(
     val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
       0
     } else {
-      // Adjust for chart height and time picker
-      ((height - chartHeight - timePickerHeight - 10 - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
+      // Adjust for chart height
+      ((height - chartHeight - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
     }
     if (lineList.size - 1 != length && ::maxCharBounds.isInitialized) {
       lineList = (0..length).map {
@@ -407,16 +410,13 @@ class ScrollableList(
           parent = this,
           inputTextLine = inputTextLine,
           x = x,
-          // Adjust y position to start below the chart and time picker
-          y = chartHeight + timePickerHeight + 10 + ((maxCharBounds.height.toInt()) * (it)),
+          // Adjust y position to start below the chart
+          y = chartHeight + ((maxCharBounds.height.toInt()) * (it)),
           width = width,
           height = ((maxCharBounds.height.toInt()))
         )
       }
     }
-
-    // Update the chart with the log data
-    logLevelChart.updateChart(result)
 
     EventQueue.invokeLater {
       lineList.forEach { it.setText("") }

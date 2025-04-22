@@ -281,19 +281,40 @@ class LogLevelChart(
     }
 
     /**
+     * Draw the chart title
+     */
+    private fun drawChartTitle() {
+        // Set font and color for the title
+        g2d.font = Font("Monospaced", Font.BOLD, 12)
+        g2d.color = UiColors.defaultText
+
+        // Define the title text
+        val titleText = "Log Level Distribution"
+
+        // Calculate the width of the title text
+        val titleWidth = g2d.fontMetrics.stringWidth(titleText)
+
+        // Position the title in the middle of the chart with a 2px gap from the top
+        val titleX = (width - titleWidth) / 2
+        val titleY = 2 + g2d.fontMetrics.height // 2px gap + font height for baseline positioning
+
+        // Draw the title
+        g2d.drawString(titleText, titleX, titleY)
+    }
+
+    /**
      * Draw the legend for log levels
      */
     private fun drawLegend(levels: List<String>) {
-        // Position the legend at the bottom of the chart, below the time labels
-        // Increase the space from the bottom to ensure labels are fully visible
-        val legendY = height - 20
+        // Position the legend at the top of the chart
+        val legendY = 15 // Position near the top with a small gap
         g2d.font = Font("Monospaced", Font.PLAIN, 10)
 
         // Clear the level rectangles map
         levelRectangles.clear()
 
         // Calculate total width needed for all labels
-        val labelWidth = 70 // Width for each label including spacing
+        val labelWidth = 90 // Width for each label including spacing (increased from 70 to 90)
         val totalWidth = labelWidth * levels.size
         val startX = (width - totalWidth) / 2 // Center the labels horizontally
 
