@@ -36,7 +36,7 @@ class ScrollableList(
 
   // Chart for log levels
   private val logLevelChart = LogLevelChart(panel, x, 0, width, 100)
-  private var chartHeight = 100 // Height of the chart
+  private var chartHeight = 100 // Height of the chart (will be updated based on window height)
 
   // Time picker for selecting time range
   private val timePickerHeight = 30
@@ -111,6 +111,9 @@ class ScrollableList(
       // Update chart dimensions
       logLevelChart.width = width
       logLevelChart.x = x
+
+      // Make chart height proportional to window height (20% of total height, minimum 80 pixels)
+      chartHeight = (height * 0.2).toInt().coerceAtLeast(80)
 
       if (::maxCharBounds.isInitialized) {
         val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {

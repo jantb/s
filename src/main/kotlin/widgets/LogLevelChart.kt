@@ -100,6 +100,7 @@ class LogLevelChart(
     }
 
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
+        // Always update dimensions to ensure the chart resizes with the window
         if (this.width != width || this.height != height || this.x != x || this.y != y || !::image.isInitialized) {
             if (::g2d.isInitialized) {
                 this.g2d.dispose()
@@ -136,40 +137,60 @@ class LogLevelChart(
         }
 
         // Get all unique log levels across all time points
-        val allLevels = timePoints.flatMap { it.counts.keys }.distinct().sorted()
+        val allLevels = ArrayList<String>()
+        // Create a defensive copy of timePoints to prevent concurrent modification
+        val timePointsCopy = ArrayList(timePoints)
+        timePointsCopy.forEach { timePoint ->
+            if (timePoint.counts.isNotEmpty()) {
+                // Create a defensive copy of the keys to prevent concurrent modification
+                allLevels.addAll(ArrayList(timePoint.counts.keys))
+            }
+        }
+        // Create a defensive copy of the unique levels
+        val uniqueLevels = ArrayList(allLevels.distinct().sorted())
 
         // Calculate the maximum count for scaling
-        val maxCount = timePoints.flatMap { it.counts.values }.maxOrNull() ?: 0
+        var maxCount = 0
+        // Use the same defensive copy of timePoints
+        timePointsCopy.forEach { timePoint ->
+            // Create a defensive copy of the values to prevent concurrent modification
+            val valuesCopy = ArrayList(timePoint.counts.values)
+            valuesCopy.maxOrNull()?.let { max ->
+                if (max > maxCount) maxCount = max
+            }
+        }
         if (maxCount == 0) return
 
         // Calculate bar width based on number of time points
-        val timeSlotWidth = (width - 40) / timePoints.size
-        val barWidth = timeSlotWidth / (allLevels.size + 1) // +1 for spacing
+        val timeSlotWidth = (width - 60) / timePointsCopy.size.coerceAtLeast(1)
+        val barWidth = (timeSlotWidth / (uniqueLevels.size + 1)).coerceAtLeast(3) // +1 for spacing, minimum width of 3
         val barSpacing = 2
 
         // Draw time axis
         g2d.color = UiColors.defaultText
-        g2d.drawLine(20, height - 25, width - 20, height - 25)
+        g2d.drawLine(30, height - 35, width - 30, height - 35)
 
         // Draw bars for each time point
-        timePoints.forEachIndexed { timeIndex, timePoint ->
-            val xPosBase = 20 + (timeIndex * timeSlotWidth)
+        timePointsCopy.forEachIndexed { timeIndex, timePoint ->
+            val xPosBase = 30 + (timeIndex * timeSlotWidth)
 
             // Draw time label (only for some time points to avoid crowding)
-            if (timeIndex % 2 == 0 || timeIndex == timePoints.size - 1) {
+            if (timeIndex % 2 == 0 || timeIndex == timePointsCopy.size - 1) {
                 val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
                     .withZone(ZoneId.systemDefault())
                 val timeLabel = formatter.format(timePoint.time)
                 g2d.font = Font("Monospaced", Font.PLAIN, 8)
-                g2d.drawString(timeLabel, xPosBase, height - 10)
+                g2d.drawString(timeLabel, xPosBase, height - 15)
             }
 
             // Draw bars for each log level at this time point
-            allLevels.forEachIndexed { levelIndex, level ->
-                val count = timePoint.counts.getOrDefault(level, 0)
+            // Create a defensive copy of the counts to prevent concurrent modification
+            val countsCopy = HashMap(timePoint.counts)
+            uniqueLevels.forEachIndexed { levelIndex, level ->
+                val count = countsCopy.getOrDefault(level, 0)
                 if (count > 0) {
                     // Calculate bar height (scaled to fit in the chart)
-                    val barHeight = ((count.toFloat() / maxCount) * (height - 60)).toInt()
+                    val barHeight = ((count.toFloat() / maxCount) * (height - 80)).toInt()
 
                     // Set bar color based on log level
                     g2d.color = when (level) {
@@ -184,24 +205,26 @@ class LogLevelChart(
                     val xPos = xPosBase + (levelIndex * barWidth)
 
                     // Draw the bar
-                    g2d.fillRect(xPos, height - 30 - barHeight, barWidth - barSpacing, barHeight)
+                    g2d.fillRect(xPos, height - 40 - barHeight, barWidth - barSpacing, barHeight)
 
                     // Draw count label if bar is tall enough
                     if (barHeight > 15) {
                         g2d.color = UiColors.defaultText
                         g2d.font = Font("Monospaced", Font.PLAIN, 8)
-                        g2d.drawString(count.toString(), xPos, height - 35 - barHeight)
+                        // Position the label above the bar with some padding
+                        g2d.drawString(count.toString(), xPos, height - 45 - barHeight)
                     }
                 }
             }
         }
 
         // Draw legend for log levels
-        val legendX = 20
+        val legendX = 30
         val legendY = 20
         g2d.font = Font("Monospaced", Font.PLAIN, 10)
 
-        allLevels.forEachIndexed { index, level ->
+        // Use the same defensive copy of uniqueLevels
+        ArrayList(uniqueLevels).forEachIndexed { index, level ->
             g2d.color = when (level) {
                 "INFO" -> UiColors.green
                 "WARN" -> UiColors.orange

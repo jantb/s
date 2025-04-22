@@ -26,6 +26,10 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
     private val lagInfo = AtomicReference<List<Kafka.LagInfo>>(emptyList())
     private var indexOffset = 0
     private var visibleLines = 0
+    private var hideTopicsWithoutLag = false
+    private var sortByLag = false
+    private val hideButtonRect = java.awt.Rectangle(0, 0, 200, 20)
+    private val sortButtonRect = java.awt.Rectangle(0, 0, 200, 20)
 
     init {
         this.x = x
@@ -96,16 +100,44 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
         // Calculate visible lines
         visibleLines = (height / maxCharBounds.height.toInt()) - 1 // -1 for header
 
+        // Draw the hide/show button
+        hideButtonRect.x = width - 200
+        hideButtonRect.y = 0
+        g2d.color = UiColors.selection
+        g2d.fillRect(hideButtonRect.x, hideButtonRect.y, hideButtonRect.width, hideButtonRect.height)
+        g2d.color = UiColors.defaultText
+        val buttonText = if (hideTopicsWithoutLag) "Show All Topics" else "Hide Topics Without Lag"
+        g2d.drawString(buttonText, hideButtonRect.x + 10, hideButtonRect.y + 15)
+
+        // Draw the sort button
+        sortButtonRect.x = width - 410
+        sortButtonRect.y = 0
+        g2d.color = UiColors.selection
+        g2d.fillRect(sortButtonRect.x, sortButtonRect.y, sortButtonRect.width, sortButtonRect.height)
+        g2d.color = UiColors.defaultText
+        val sortButtonText = if (sortByLag) "Unsort" else "Sort by Lag (Most to Least)"
+        g2d.drawString(sortButtonText, sortButtonRect.x + 10, sortButtonRect.y + 15)
+
         // Draw header
         g2d.color = UiColors.magenta
         val header = "Group ID | Topic | Partition | Current Offset | End Offset | Lag"
         g2d.drawString(header, 0, maxCharBounds.height.toInt())
 
         // Draw lag info
-        val currentLagInfo = lagInfo.get()
+        var currentLagInfo = lagInfo.get()
+
+        // Filter out topics without lag if the flag is set
+        if (hideTopicsWithoutLag) {
+            currentLagInfo = currentLagInfo.filter { it.lag > 0 }
+        }
+
+        // Sort by lag if the flag is set
+        if (sortByLag) {
+            currentLagInfo = currentLagInfo.sortedByDescending { it.lag }
+        }
 
         // Only display the visible items based on indexOffset
-        val startIndex = indexOffset
+        val startIndex = indexOffset.coerceAtMost(maxOf(0, currentLagInfo.size - 1))
         val endIndex = minOf(startIndex + visibleLines, currentLagInfo.size)
 
         for (i in startIndex until endIndex) {
@@ -220,6 +252,27 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
     override fun mousePressed(e: MouseEvent) {
         mouseposX = e.x - x
         mouseposY = e.y - y - 7
+
+        // Check if the hide/show button was clicked
+        if (e.x >= hideButtonRect.x && e.x <= hideButtonRect.x + hideButtonRect.width &&
+            e.y >= hideButtonRect.y && e.y <= hideButtonRect.y + hideButtonRect.height) {
+            // Toggle the flag
+            hideTopicsWithoutLag = !hideTopicsWithoutLag
+
+            // Reset the index offset when toggling to ensure we start from the beginning
+            indexOffset = 0
+        }
+
+        // Check if the sort button was clicked
+        if (e.x >= sortButtonRect.x && e.x <= sortButtonRect.x + sortButtonRect.width &&
+            e.y >= sortButtonRect.y && e.y <= sortButtonRect.y + sortButtonRect.height) {
+            // Toggle the sort flag
+            sortByLag = !sortByLag
+
+            // Reset the index offset when toggling to ensure we start from the beginning
+            indexOffset = 0
+        }
+
         panel.repaint()
     }
 
