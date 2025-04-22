@@ -34,6 +34,15 @@ class ScrollableList(
   private var follow = true
   private var lastUpdate = 0L
 
+  // Chart for log levels
+  private val logLevelChart = LogLevelChart(panel, x, 0, width, 100)
+  private var chartHeight = 100 // Height of the chart
+
+  // Time picker for selecting time range
+  private val timePickerHeight = 30
+  private val timePickerY = chartHeight + 10
+
+
   init {
     this.x = x
     this.y = y
@@ -98,24 +107,30 @@ class ScrollableList(
       this.width = width
       this.x = x
       this.y = y
+
+      // Update chart dimensions
+      logLevelChart.width = width
+      logLevelChart.x = x
+
       if (::maxCharBounds.isInitialized) {
         val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
           0
         } else {
-          ((height - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
+          // Adjust for chart height and time picker
+          ((height - chartHeight - timePickerHeight - 10 - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
         }
         lineList = (0..length).map {
           LineItem(
             parent = this,
             inputTextLine = inputTextLine,
             x = x,
-            y = ((maxCharBounds.height.toInt()) * (it)),
+            // Adjust y position to start below the chart and time picker
+            y = chartHeight + timePickerHeight + 10 + ((maxCharBounds.height.toInt()) * (it)),
             width = width,
             height = ((maxCharBounds.height.toInt()))
           )
         }
       }
-
 
       indexOffset = 0
       updateResults()
@@ -126,10 +141,14 @@ class ScrollableList(
     g2d.font = Font(Styles.normalFont, Font.PLAIN, rowHeight)
     maxCharBounds = g2d.fontMetrics.getMaxCharBounds(g2d)
 
+    // Draw the chart
+    g2d.drawImage(logLevelChart.display(width, chartHeight, x, y), x, y, width, chartHeight, null)
+
     g2d.color = UiColors.magenta
     paintLineItem()
     return image
   }
+
 
   override fun repaint(it: ComponentOwn) {
     g2d.drawImage(it.display(it.width, it.height, it.x, it.y), it.x, it.y, it.width, it.height, null)
@@ -204,12 +223,11 @@ class ScrollableList(
   }
 
   override fun mouseClicked(e: MouseEvent) {
-
+    // Otherwise, handle clicks on log lines
     if (e.clickCount == 1) {
       lineList.firstOrNull { mouseInside(e, it) }?.mouseClicked(e)
       updateResults()
     }
-
   }
 
   override fun mousePressed(e: MouseEvent) {
@@ -220,11 +238,12 @@ class ScrollableList(
     mouseposXReleased = mouseposX
     mouseposYReleased = mouseposY
     selectedTextRange = null
+
     panel.repaint()
   }
 
   override fun mouseReleased(e: MouseEvent) {
-
+    // No action needed
   }
 
 
@@ -232,12 +251,26 @@ class ScrollableList(
     if (!mouseInside) {
       mouseInside = true
     }
-    lineList.firstOrNull { mouseInside(e, it) }?.mouseEntered(e)
+
+    // Check if mouse is over the chart
+    if (e.y < chartHeight) {
+      logLevelChart.mouseEntered(e)
+    } 
+
+    // Otherwise, it's over the log lines
+    else {
+      lineList.firstOrNull { mouseInside(e, it) }?.mouseEntered(e)
+    }
   }
 
   override fun mouseExited(e: MouseEvent) {
     if (mouseInside) {
       mouseInside = false
+    }
+
+    // Check if mouse was over the chart
+    if (e.y < chartHeight) {
+      logLevelChart.mouseExited(e)
     }
 
   }
@@ -277,22 +310,33 @@ class ScrollableList(
   }
 
   override fun mouseDragged(e: MouseEvent) {
+    mouseposX = e.x - x
+    mouseposY = e.y - y - 7
   }
 
   override fun mouseMoved(e: MouseEvent) {
     mouseposX = e.x - x
     mouseposY = e.y - y
 
-    lineList.firstOrNull { mouseInside(e, it) }?.mouseMoved(e)
-    lineList.firstOrNull { e.x in it.x..it.width && e.y in it.y..it.height }?.mouseEntered(e)
-    lineList.filter { e.x !in it.x..it.width || e.y !in it.y..it.height }.forEach { it.mouseExited(e) }
+    // Check if mouse is over the chart
+    if (e.y < chartHeight) {
+      logLevelChart.mouseMoved(e)
+    } 
+
+    // Otherwise, it's over the log lines
+    else {
+      lineList.firstOrNull { mouseInside(e, it) }?.mouseMoved(e)
+      lineList.firstOrNull { e.x in it.x..it.width && e.y in it.y..it.height }?.mouseEntered(e)
+      lineList.filter { e.x !in it.x..it.width || e.y !in it.y..it.height }.forEach { it.mouseExited(e) }
+    }
   }
 
   private fun updateResults() {
     val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
       0
     } else {
-      ((height - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
+      // Adjust for chart height and time picker
+      ((height - chartHeight - timePickerHeight - 10 - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
     }
     State.offset.set(indexOffset)
     State.length.set(length)
@@ -304,7 +348,8 @@ class ScrollableList(
     val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
       0
     } else {
-      ((height - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
+      // Adjust for chart height and time picker
+      ((height - chartHeight - timePickerHeight - 10 - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
     }
     if (lineList.size - 1 != length && ::maxCharBounds.isInitialized) {
       lineList = (0..length).map {
@@ -312,12 +357,16 @@ class ScrollableList(
           parent = this,
           inputTextLine = inputTextLine,
           x = x,
-          y = ((maxCharBounds.height.toInt()) * (it)),
+          // Adjust y position to start below the chart and time picker
+          y = chartHeight + timePickerHeight + 10 + ((maxCharBounds.height.toInt()) * (it)),
           width = width,
           height = ((maxCharBounds.height.toInt()))
         )
       }
     }
+
+    // Update the chart with the log data
+    logLevelChart.updateChart(result)
 
     EventQueue.invokeLater {
       lineList.forEach { it.setText("") }

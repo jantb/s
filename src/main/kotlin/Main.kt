@@ -326,7 +326,7 @@ private fun buildKafkaLagView(panel: SlidePanel) {
 object State {
     val onMac: Boolean
     val changedAt = AtomicLong(0)
-    val kafkaDays = AtomicLong(1)
+    val kafkaDays = AtomicLong(7)
     val indexedLines = AtomicInteger(0)
     val searchTime = AtomicLong(0)
     val length = AtomicInteger(0)
