@@ -30,6 +30,7 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
     private var sortByLag = false
     private val hideButtonRect = java.awt.Rectangle(0, 0, 200, 20)
     private val sortButtonRect = java.awt.Rectangle(0, 0, 200, 20)
+    private val refreshButtonRect = java.awt.Rectangle(0, 0, 200, 20)
 
     init {
         this.x = x
@@ -118,10 +119,43 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
         val sortButtonText = if (sortByLag) "Unsort" else "Sort by Lag (Most to Least)"
         g2d.drawString(sortButtonText, sortButtonRect.x + 10, sortButtonRect.y + 15)
 
+        // Draw the refresh button
+        refreshButtonRect.x = width - 620
+        refreshButtonRect.y = 0
+        g2d.color = UiColors.selection
+        g2d.fillRect(refreshButtonRect.x, refreshButtonRect.y, refreshButtonRect.width, refreshButtonRect.height)
+        g2d.color = UiColors.defaultText
+        val refreshButtonText = "Refresh"
+        g2d.drawString(refreshButtonText, refreshButtonRect.x + 10, refreshButtonRect.y + 15)
+
+        // Measure column header widths
+        val fontMetrics = g2d.fontMetrics
+        val columnHeaders = listOf("Group ID", "Topic", "Partition", "Current Offset", "End Offset", "Lag")
+        val sampleData = lagInfo.get().take(visibleLines) // limit to visible for perf
+
+        val columnWidths = columnHeaders.mapIndexed { index, header ->
+            val maxDataWidth = sampleData.maxOfOrNull {
+                when (index) {
+                    0 -> fontMetrics.stringWidth(it.groupId)
+                    1 -> fontMetrics.stringWidth(it.topic)
+                    2 -> fontMetrics.stringWidth(it.partition.toString())
+                    3 -> fontMetrics.stringWidth(it.currentOffset.toString())
+                    4 -> fontMetrics.stringWidth(it.endOffset.toString())
+                    5 -> fontMetrics.stringWidth(it.lag.toString())
+                    else -> 0
+                }
+            } ?: 0
+            maxOf(fontMetrics.stringWidth(header), maxDataWidth) + 20 // padding
+        }
+
+// Calculate column x-offsets
+        val columnOffsets = columnWidths.runningFold(0) { acc, w -> acc + w }
+
         // Draw header
         g2d.color = UiColors.magenta
-        val header = "Group ID | Topic | Partition | Current Offset | End Offset | Lag"
-        g2d.drawString(header, 0, maxCharBounds.height.toInt())
+        for (col in columnHeaders.indices) {
+            g2d.drawString(columnHeaders[col], columnOffsets[col], maxCharBounds.height.toInt())
+        }
 
         // Draw lag info
         var currentLagInfo = lagInfo.get()
@@ -145,8 +179,23 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
             val lineColor = if (info.lag > 0) UiColors.red else UiColors.green
             g2d.color = lineColor
 
-            val line = "${info.groupId} | ${info.topic} | ${info.partition} | ${info.currentOffset} | ${info.endOffset} | ${info.lag}"
-            g2d.drawString(line, 0, maxCharBounds.height.toInt() * ((i - startIndex) + 2))
+            val values = listOf(
+                info.groupId,
+                info.topic,
+                info.partition.toString(),
+                info.currentOffset.toString(),
+                info.endOffset.toString(),
+                info.lag.toString()
+            )
+
+            // Draw each value in its column
+            for (col in values.indices) {
+                g2d.drawString(
+                    values[col],
+                    columnOffsets[col],
+                    maxCharBounds.height.toInt() * ((i - startIndex) + 2)
+                )
+            }
         }
 
         // If no lag info, show a message
@@ -155,6 +204,7 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
             g2d.drawString("No consumer lag information available. Press Cmd+L to refresh.", 0, maxCharBounds.height.toInt() * 2)
         }
     }
+
 
     private fun drawSelectedLine() {
         // Only draw selection if it's visible
@@ -271,6 +321,13 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
 
             // Reset the index offset when toggling to ensure we start from the beginning
             indexOffset = 0
+        }
+
+        // Check if the refresh button was clicked
+        if (e.x >= refreshButtonRect.x && e.x <= refreshButtonRect.x + refreshButtonRect.width &&
+            e.y >= refreshButtonRect.y && e.y <= refreshButtonRect.y + refreshButtonRect.height) {
+            // Toggle the sort flag
+            kafkaChannel.put(ListLag)
         }
 
         panel.repaint()
