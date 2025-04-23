@@ -3,8 +3,6 @@ package widgets
 import ComponentOwn
 import SlidePanel
 import app.Domain
-import app.QueryChanged
-import app.Channels
 import util.UiColors
 import java.awt.BasicStroke
 import java.awt.Color
@@ -85,12 +83,9 @@ class LogLevelChart(
             return
         }
 
-        // Limit to the last 100,000 logs for performance
-        val limitedLogs = if (logs.size > 10_000) logs.takeLast(10_000) else logs
-
         // Determine time range from logs
-        startTime = limitedLogs.minByOrNull { it.timestamp }?.timestamp ?: Instant.now()
-        endTime = limitedLogs.maxByOrNull { it.timestamp }?.timestamp ?: Instant.now()
+        startTime = logs.firstOrNull()?.timestamp ?: Instant.now()
+        endTime = logs.lastOrNull()?.timestamp ?: Instant.now()
 
         // Ensure we have a valid time range
         if (startTime == endTime) {
@@ -103,12 +98,11 @@ class LogLevelChart(
         // Create time points
         timePoints.clear()
         for (i in 0 until numTimeDivisions) {
-            val pointTime = startTime.plus(timeInterval.multipliedBy(i.toLong()))
-            timePoints.add(TimePoint(pointTime))
+            timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i.toLong()))))
         }
 
         // Count logs by time period and level
-        limitedLogs.forEach { domain ->
+        logs.forEach { domain ->
             val level = domain.level.ifEmpty { "UNKNOWN" }
 
             // Find the appropriate time point
@@ -167,7 +161,7 @@ class LogLevelChart(
         }
 
         // Get all log levels (use the predefined set)
-        val sortedLevels = allLogLevels.toList().sorted()
+        val levels = allLogLevels.toList()
 
         // Calculate the maximum total count for scaling (for stacked bars)
         var maxTotalCount = 0
@@ -188,17 +182,17 @@ class LogLevelChart(
         g2d.color = Color.GRAY // Use gray color for time axis
         g2d.drawLine(30, height - 35, width - 30, height - 35)
 
+        val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+            .withZone(ZoneId.systemDefault())
         // Draw stacked bars for each time point
         timePointsCopy.forEachIndexed { timeIndex, timePoint ->
             val xPosBase = 30 + (timeIndex * timeSlotWidth)
 
             // Draw time label (only for some time points to avoid crowding)
             if (timeIndex % 25 == 0 || timeIndex == timePointsCopy.size - 1) {
-                val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
-                    .withZone(ZoneId.systemDefault())
                 val timeLabel = formatter.format(timePoint.time)
                 g2d.font = Font("Monospaced", Font.PLAIN, 8)
-                g2d.color = Color.GRAY // Use gray color for x-axis dates
+                g2d.color = Color.GRAY
                 g2d.drawString(timeLabel, xPosBase, height - 15)
             }
 
@@ -207,7 +201,7 @@ class LogLevelChart(
             val countsCopy = HashMap(timePoint.counts)
 
             // Draw bars in a consistent order
-            sortedLevels.forEach { level ->
+            levels.forEach { level ->
                 // Only draw bars for selected levels
                 if (level in selectedLevels) {
                     val count = countsCopy.getOrDefault(level, 0)
@@ -228,8 +222,7 @@ class LogLevelChart(
             }
         }
 
-        // Draw legend for log levels (all levels, not just those in the data)
-        drawLegend(sortedLevels)
+        drawLegend(levels)
     }
 
     /**
@@ -249,12 +242,7 @@ class LogLevelChart(
         drawGridlines(100) // Use a default scale
 
         // Draw legend for all possible log levels
-        drawLegend(allLogLevels.toList().sorted())
-
-        // Draw "No data" message
-        g2d.color = UiColors.defaultText
-        g2d.font = Font("Monospaced", Font.PLAIN, 12)
-        g2d.drawString("No log data available", width / 2 - 80, height / 2)
+        drawLegend(allLogLevels.toList())
     }
 
     /**
@@ -278,28 +266,6 @@ class LogLevelChart(
 
         // Reset stroke
         g2d.stroke = BasicStroke(1.0f)
-    }
-
-    /**
-     * Draw the chart title
-     */
-    private fun drawChartTitle() {
-        // Set font and color for the title
-        g2d.font = Font("Monospaced", Font.BOLD, 12)
-        g2d.color = UiColors.defaultText
-
-        // Define the title text
-        val titleText = "Log Level Distribution"
-
-        // Calculate the width of the title text
-        val titleWidth = g2d.fontMetrics.stringWidth(titleText)
-
-        // Position the title in the middle of the chart with a 2px gap from the top
-        val titleX = (width - titleWidth) / 2
-        val titleY = 2 + g2d.fontMetrics.height // 2px gap + font height for baseline positioning
-
-        // Draw the title
-        g2d.drawString(titleText, titleX, titleY)
     }
 
     /**
@@ -351,7 +317,6 @@ class LogLevelChart(
             g2d.drawString(level, textX, textY)
 
             // Store the rectangle for click detection
-            val textWidth = g2d.fontMetrics.stringWidth(level)
             levelRectangles[level] = Rectangle(boxX - 2, boxY - 2, labelWidth - 4, 14)
         }
     }
