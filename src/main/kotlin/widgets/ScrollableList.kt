@@ -37,7 +37,6 @@ class ScrollableList(
 
   // Chart for log levels
   private val logLevelChart = LogLevelChart(
-    panel = panel,
     x = x,
     y = 0,
     width = width,

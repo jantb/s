@@ -1,7 +1,6 @@
 package widgets
 
 import ComponentOwn
-import SlidePanel
 import app.Domain
 import util.UiColors
 import java.awt.BasicStroke
@@ -26,7 +25,6 @@ import java.util.concurrent.locks.ReentrantLock
  * and displays them as color-coded bars on a time-based x-axis.
  */
 class LogLevelChart(
-    private val panel: SlidePanel,
     x: Int,
     y: Int,
     width: Int,
@@ -74,6 +72,8 @@ class LogLevelChart(
 
     // Update the updateChart method to handle scaling properly
 
+    private val widthDivision = 6
+
     fun updateChart(logs: List<Domain>) {
        lock.lock()
         try {
@@ -87,18 +87,18 @@ class LogLevelChart(
                 allLogLevels.add(level)
             }
 
-            startTime = logs.firstOrNull()?.timestamp ?: Instant.now()
-            endTime = logs.lastOrNull()?.timestamp ?: Instant.now()
+            startTime = logs.lastOrNull()?.timestamp ?: Instant.now()
+            endTime = logs.firstOrNull()?.timestamp ?: Instant.now()
 
             if (startTime == endTime) {
                 endTime = startTime.plus(1, ChronoUnit.MINUTES)
             }
 
-            val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / 8)
+            val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / widthDivision)
 
             timePoints.clear()
-            for (i in 0 until width.toLong() / 8) {
-                timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i.toLong()))))
+            for (i in 0 until width.toLong() / widthDivision) {
+                timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i))))
             }
 
             // Count logs by time period and level
@@ -188,8 +188,8 @@ class LogLevelChart(
     private fun calculateTotalMaxCount(logs: List<Domain>): Int {
         // First, update time points as you do in your existing code
         // Determine time range from logs
-        startTime = logs.firstOrNull()?.timestamp ?: Instant.now()
-        endTime = logs.lastOrNull()?.timestamp ?: Instant.now()
+        startTime = logs.lastOrNull()?.timestamp ?: Instant.now()
+        endTime = logs.firstOrNull()?.timestamp ?: Instant.now()
 
         // Ensure we have a valid time range
         if (startTime == endTime) {
@@ -197,12 +197,12 @@ class LogLevelChart(
         }
 
         // Calculate time interval for divisions
-        val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / 8)
+        val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / widthDivision)
 
         // Create time points
         timePoints.clear()
-        for (i in 0 until width.toLong() / 8) {
-            timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i.toLong()))))
+        for (i in 0 until width.toLong() / widthDivision) {
+            timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i))))
         }
 
         // Count logs by time period and level
@@ -259,7 +259,6 @@ class LogLevelChart(
         smoothedMaxCount = maxOf(avgMax, smoothedMaxCount / 2) // Prevent scale from shrinking too fast
 
         val timeSlotWidth = (width - 60).toFloat() / timePoints.size.coerceAtLeast(1)
-        val barWidth = timeSlotWidth - 2
 
         // Draw gridlines using the smoothed max
         drawGridlines(smoothedMaxCount)
@@ -278,7 +277,7 @@ class LogLevelChart(
             // Draw time label (only for some time points to avoid crowding)
             if (timeIndex % 25 == 0 || timeIndex == timePoints.size - 1) {
                 val timeLabel = formatter.format(timePoint.time)
-                g2d.font = Font("Monospaced", Font.PLAIN, 8)
+                g2d.font = Font("Monospaced", Font.PLAIN, 12)
                 g2d.color = Color.GRAY
                 g2d.drawString(timeLabel, xPosBase.toInt(), height - 15)
             }
@@ -305,7 +304,7 @@ class LogLevelChart(
                         g2d.fillRect(
                             xPosBase.toInt(),
                             height - 40 - currentHeight - barHeight,
-                            barWidth.toInt(),
+                            timeSlotWidth.toInt()-1,
                             barHeight
                         )
 
@@ -360,7 +359,7 @@ class LogLevelChart(
             g2d.drawLine(30, y.toInt(), width - 30, y.toInt())
 
             // Draw scale label
-            g2d.font = Font("Monospaced", Font.PLAIN, 8)
+            g2d.font = Font("Monospaced", Font.PLAIN, 10)
             g2d.color = Color.GRAY // Use gray color for y-axis numbers
             g2d.drawString((maxCount * i / 5).toString(), 5, y.toInt() + 4)
         }

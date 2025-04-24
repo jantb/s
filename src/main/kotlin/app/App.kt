@@ -83,7 +83,7 @@ class App : CoroutineScope {
                                     offsetLock = offsetLock,
                                     levels = msg.levels
                                 ).asSequence()
-                            }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList().reversed()
+                            }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList()
                         }
 
                         // Use the duration from the main search for metrics
