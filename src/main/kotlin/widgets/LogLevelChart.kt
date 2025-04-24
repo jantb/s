@@ -18,6 +18,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.locks.ReentrantLock
 
 /**
  * A component that displays a bar chart of log levels.
@@ -42,9 +43,14 @@ class LogLevelChart(
     // Time range for the chart
     private var startTime: Instant = Instant.now()
     private var endTime: Instant = Instant.now()
+    private var maxCountHistory = mutableListOf<Int>()
+    private var smoothedMaxCount = 100 // Default starting value
 
-    // Number of time divisions to display
-    private val numTimeDivisions = 250
+    // Add these properties to the class
+    private var currentScaleMax = 100 // Starting scale
+    private var scaleLastChangedTime = Instant.now()
+    private var pendingScaleMax = 0 // Tracks if we need to scale up
+
 
     // Set of all possible log levels
     private val allLogLevels = mutableSetOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN")
@@ -65,24 +71,122 @@ class LogLevelChart(
     private lateinit var image: BufferedImage
     private lateinit var g2d: Graphics2D
 
-    /**
-     * Update the chart with new log data.
-     * This method groups logs by time periods and counts the number of entries for each log level.
-     * Only the last 100,000 messages are used to keep the chart fast and optimized.
-     */
+
+    // Update the updateChart method to handle scaling properly
+
     fun updateChart(logs: List<Domain>) {
-        // Update the set of all log levels from the logs
-        logs.forEach { domain ->
-            val level = domain.level.ifEmpty { "UNKNOWN" }
-            allLogLevels.add(level)
-        }
+       lock.lock()
+        try {
 
-        if (logs.isEmpty()) {
+            if (logs.isEmpty()) {
+                return
+            }
+            // Update the set of all log levels from the logs
+            logs.forEach { domain ->
+                val level = domain.level.ifEmpty { "UNKNOWN" }
+                allLogLevels.add(level)
+            }
+
+            startTime = logs.firstOrNull()?.timestamp ?: Instant.now()
+            endTime = logs.lastOrNull()?.timestamp ?: Instant.now()
+
+            if (startTime == endTime) {
+                endTime = startTime.plus(1, ChronoUnit.MINUTES)
+            }
+
+            val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / 8)
+
             timePoints.clear()
-            panel.repaint()
-            return
+            for (i in 0 until width.toLong() / 8) {
+                timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i.toLong()))))
+            }
+
+            // Count logs by time period and level
+            logs.forEach { domain ->
+                val level = domain.level.ifEmpty { "UNKNOWN" }
+
+                // Find the appropriate time point
+                val timePoint = timePoints.findLast { it.time.isBefore(domain.timestamp) || it.time == domain.timestamp }
+                    ?: timePoints.firstOrNull()
+
+                timePoint?.let {
+                    it.counts[level] = it.counts.getOrDefault(level, 0) + 1
+                }
+            }
+
+            // Get the current max count across all time points after updating
+            val newMaxTotal = calculateTotalMaxCount(logs)
+
+            // If new max is significantly larger than current scale, prepare to increase scale
+            if (newMaxTotal > currentScaleMax * 1.5) {
+                pendingScaleMax = newMaxTotal
+
+                // Only change scale if it's been stable for at least 2 seconds
+                // or if the difference is extremely large (emergency rescale)
+                val timeSinceLastScaleChange = Duration.between(scaleLastChangedTime, Instant.now())
+                if (timeSinceLastScaleChange.seconds > 2 || newMaxTotal > currentScaleMax * 4) {
+                    currentScaleMax = (newMaxTotal * 1.2).toInt() // Add 20% buffer
+                    scaleLastChangedTime = Instant.now()
+                    pendingScaleMax = 0
+                }
+            } else if (newMaxTotal < currentScaleMax / 3) {
+                val timeSinceLastScaleChange = Duration.between(scaleLastChangedTime, Instant.now())
+                if (timeSinceLastScaleChange.seconds > 1) {
+                    // Decrease scale gradually, not suddenly
+                    currentScaleMax = maxOf(newMaxTotal * 2, 100)
+                    scaleLastChangedTime = Instant.now()
+                }
+            }
+        }finally {
+            lock.unlock()
         }
 
+    }
+
+    /**
+     * Get the currently selected log levels
+     */
+    fun getSelectedLevels(): Set<String> {
+        return selectedLevels.toSet()
+    }
+
+    private val lock = ReentrantLock()
+    override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
+        lock.lock()
+        try {
+            // Always update dimensions to ensure the chart resizes with the window
+            if (this.width != width || this.height != height || this.x != x || this.y != y || !::image.isInitialized) {
+                if (::g2d.isInitialized) {
+                    this.g2d.dispose()
+                }
+                this.image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+                this.g2d = this.image.createGraphics()
+                this.height = height
+                this.width = width
+                this.x = x
+                this.y = y
+            }
+
+            // Clear background
+            g2d.color = UiColors.background
+            g2d.fillRect(0, 0, width, height)
+
+            // Draw chart
+            drawChart()
+
+            return image
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    override fun repaint(componentOwn: ComponentOwn) {
+        // Not implemented
+    }
+
+    // Add a helper method to calculate the max count
+    private fun calculateTotalMaxCount(logs: List<Domain>): Int {
+        // First, update time points as you do in your existing code
         // Determine time range from logs
         startTime = logs.firstOrNull()?.timestamp ?: Instant.now()
         endTime = logs.lastOrNull()?.timestamp ?: Instant.now()
@@ -93,11 +197,11 @@ class LogLevelChart(
         }
 
         // Calculate time interval for divisions
-        val timeInterval = Duration.between(startTime, endTime).dividedBy(numTimeDivisions.toLong())
+        val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / 8)
 
         // Create time points
         timePoints.clear()
-        for (i in 0 until numTimeDivisions) {
+        for (i in 0 until width.toLong() / 8) {
             timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i.toLong()))))
         }
 
@@ -114,44 +218,17 @@ class LogLevelChart(
             }
         }
 
-        // Repaint the chart
-        panel.repaint()
-    }
-
-    /**
-     * Get the currently selected log levels
-     */
-    fun getSelectedLevels(): Set<String> {
-        return selectedLevels.toSet()
-    }
-
-    override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
-        // Always update dimensions to ensure the chart resizes with the window
-        if (this.width != width || this.height != height || this.x != x || this.y != y || !::image.isInitialized) {
-            if (::g2d.isInitialized) {
-                this.g2d.dispose()
-            }
-            this.image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-            this.g2d = this.image.createGraphics()
-            this.height = height
-            this.width = width
-            this.x = x
-            this.y = y
+        // Then calculate the maximum
+        var maxCount = 0
+        timePoints.forEach { timePoint ->
+            val totalCount = timePoint.counts.values.sum()
+            if (totalCount > maxCount) maxCount = totalCount
         }
 
-        // Clear background
-        g2d.color = UiColors.background
-        g2d.fillRect(0, 0, width, height)
-
-        // Draw chart
-        drawChart()
-
-        return image
+        return maxOf(maxCount, 1) // Ensure we never return zero
     }
 
-    override fun repaint(componentOwn: ComponentOwn) {
-        // Not implemented
-    }
+    // Then modify the drawChart method to use the stable scale
 
     private fun drawChart() {
         // Draw an empty chart with axes and gridlines if no data
@@ -164,19 +241,33 @@ class LogLevelChart(
         val levels = allLogLevels.toList()
 
         // Calculate the maximum total count for scaling (for stacked bars)
-        var maxTotalCount = 0
-        val timePointsCopy = ArrayList(timePoints)
-        timePointsCopy.forEach { timePoint ->
+        var currentMaxCount = 0
+        timePoints.forEach { timePoint ->
             val totalCount = timePoint.counts.values.sum()
-            if (totalCount > maxTotalCount) maxTotalCount = totalCount
+            if (totalCount > currentMaxCount) currentMaxCount = totalCount
         }
 
-        // Calculate bar width based on number of time points
-        val timeSlotWidth = (width - 60) / timePointsCopy.size.coerceAtLeast(1)
+        // Add to history and limit history size
+        maxCountHistory.add(currentMaxCount)
+        if (maxCountHistory.size > 10) { // Keep last 10 max counts
+            maxCountHistory.removeAt(0)
+        }
+
+        // Use a smoothed maximum that prevents rapid changes
+        // Either use the average of recent maximums
+        val avgMax = maxCountHistory.average().toInt().coerceAtLeast(1)
+        // Or use the maximum of recent maximums
+        val historyMax = maxCountHistory.maxOrNull() ?: 1
+
+        // Choose which approach works best for your use case
+        smoothedMaxCount = maxOf(avgMax, smoothedMaxCount / 2) // Prevent scale from shrinking too fast
+
+        // Calculate bar width based on number of time points using float precision
+        val timeSlotWidth = (width - 60).toFloat() / timePoints.size.coerceAtLeast(1)
         val barWidth = timeSlotWidth - 2 // Full width with small spacing
 
-        // Draw gridlines
-        drawGridlines(maxTotalCount)
+        // Draw gridlines using the smoothed max
+        drawGridlines(smoothedMaxCount)
 
         // Draw time axis
         g2d.color = Color.GRAY // Use gray color for time axis
@@ -185,15 +276,16 @@ class LogLevelChart(
         val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
             .withZone(ZoneId.systemDefault())
         // Draw stacked bars for each time point
-        timePointsCopy.forEachIndexed { timeIndex, timePoint ->
+        timePoints.forEachIndexed { timeIndex, timePoint ->
+            // Use float precision for x position calculation
             val xPosBase = 30 + (timeIndex * timeSlotWidth)
 
             // Draw time label (only for some time points to avoid crowding)
-            if (timeIndex % 25 == 0 || timeIndex == timePointsCopy.size - 1) {
+            if (timeIndex % 25 == 0 || timeIndex == timePoints.size - 1) {
                 val timeLabel = formatter.format(timePoint.time)
                 g2d.font = Font("Monospaced", Font.PLAIN, 8)
                 g2d.color = Color.GRAY
-                g2d.drawString(timeLabel, xPosBase, height - 15)
+                g2d.drawString(timeLabel, xPosBase.toInt(), height - 15)
             }
 
             // Draw stacked bars for each log level at this time point
@@ -207,13 +299,20 @@ class LogLevelChart(
                     val count = countsCopy.getOrDefault(level, 0)
                     if (count > 0) {
                         // Calculate bar height (scaled to fit in the chart)
+                        // Use the stable scale instead of calculating a new max each time
+                        val maxTotalCount = currentScaleMax
                         val barHeight = ((count.toFloat() / maxTotalCount) * (height - 80)).toInt().coerceAtLeast(1)
 
                         // Set bar color based on log level
                         g2d.color = getLevelColor(level)
 
                         // Draw the bar (stacked on top of previous bars)
-                        g2d.fillRect(xPosBase, height - 40 - currentHeight - barHeight, barWidth, barHeight)
+                        g2d.fillRect(
+                            xPosBase.toInt(),
+                            height - 40 - currentHeight - barHeight,
+                            barWidth.toInt(),
+                            barHeight
+                        )
 
                         // Update the current height for the next bar in the stack
                         currentHeight += barHeight
@@ -251,7 +350,14 @@ class LogLevelChart(
     private fun drawGridlines(maxCount: Int) {
         // Draw horizontal gridlines
         g2d.color = Color.GRAY // Use gray color for gridlines
-        g2d.stroke = BasicStroke(0.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10.0f, floatArrayOf(2.0f), 0.0f) // Dashed line
+        g2d.stroke = BasicStroke(
+            0.5f,
+            BasicStroke.CAP_BUTT,
+            BasicStroke.JOIN_MITER,
+            10.0f,
+            floatArrayOf(2.0f),
+            0.0f
+        ) // Dashed line
 
         // Draw 5 gridlines
         for (i in 1..5) {
@@ -366,8 +472,6 @@ class LogLevelChart(
                 // Notify listener that levels have changed
                 onLevelsChanged?.invoke()
 
-                // Repaint the chart
-                panel.repaint()
                 break
             }
         }

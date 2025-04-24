@@ -15,6 +15,7 @@ import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 
 class ScrollableList(
   private val panel: SlidePanel,
@@ -36,15 +37,14 @@ class ScrollableList(
 
   // Chart for log levels
   private val logLevelChart = LogLevelChart(
-    panel = panel, 
-    x = x, 
-    y = 0, 
-    width = width, 
+    panel = panel,
+    x = x,
+    y = 0,
+    width = width,
     height = 100,
-    onLevelsChanged = { updateResults() } // Trigger a search when levels change
+    onLevelsChanged = { updateResults() }
   )
-  private var chartHeight = 100 // Height of the chart (will be updated based on window height)
-
+  private var chartHeight = 100
 
   init {
     this.x = x
@@ -65,6 +65,7 @@ class ScrollableList(
   private var rowHeight = 12
   private lateinit var image: BufferedImage
   private lateinit var g2d: Graphics2D
+private val lock = ReentrantLock()
 
   private var mouseposX = 0
   private var mouseposY = 0
@@ -81,9 +82,9 @@ class ScrollableList(
         when (val msg = Channels.cmdGuiChannel.take()) {
           is ResultChanged -> {
             // Use the chart result for the chart if available, otherwise use the regular result
-            val chartData = if (msg.chartResult.isNotEmpty()) msg.chartResult else msg.result
             // Update the chart with the chart data
-            logLevelChart.updateChart(chartData)
+            lock.lock()
+            logLevelChart.updateChart(msg.chartResult.ifEmpty { msg.result })
             // Update the scrollable list with the regular result
             updateResults(msg.result)
           }
@@ -283,7 +284,7 @@ class ScrollableList(
     // Check if mouse is over the chart
     if (e.y < chartHeight) {
       logLevelChart.mouseEntered(e)
-    } 
+    }
 
     // Otherwise, it's over the log lines
     else {
@@ -363,7 +364,7 @@ class ScrollableList(
     // Check if mouse is over the chart
     if (e.y < chartHeight) {
       logLevelChart.mouseMoved(e)
-    } 
+    }
 
     // Otherwise, it's over the log lines
     else {
@@ -389,8 +390,8 @@ class ScrollableList(
     // Include selected levels in the search query
     Channels.searchChannel.trySendBlocking(
       QueryChanged(
-        query = inputTextLine.text, 
-        offset = indexOffset, 
+        query = inputTextLine.text,
+        offset = indexOffset,
         length = length,
         levels = selectedLevels
       )

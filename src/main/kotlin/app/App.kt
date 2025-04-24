@@ -64,7 +64,6 @@ class App : CoroutineScope {
                             offsetLock = Long.MAX_VALUE
                         }
 
-                        // First search: for the scrollable list (without extra 1000)
                         val listResults = measureTimedValue {
                             valueStores.map {
                                 it.value.search(
@@ -76,20 +75,19 @@ class App : CoroutineScope {
                             }.merge(descending = true).drop(msg.offset).take(msg.length).toList().reversed()
                         }
 
-                        // Second search: for the chart (with extra 1000)
                         val chartResults = measureTimedValue {
                             valueStores.map {
                                 it.value.search(
                                     query = msg.query,
-                                    length = msg.length + msg.offset + 1_000,
+                                    length = msg.length + msg.offset + 10_000,
                                     offsetLock = offsetLock,
                                     levels = msg.levels
                                 ).asSequence()
-                            }.merge(descending = true).drop(msg.offset).take(msg.length + 1_000).toList().reversed()
+                            }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList().reversed()
                         }
 
                         // Use the duration from the main search for metrics
-                        searchTime.set(listResults.duration.inWholeNanoseconds)
+                        searchTime.set(listResults.duration.inWholeNanoseconds + chartResults.duration.inWholeNanoseconds)
 
                         // Send both results to the UI
                         cmdGuiChannel.put(ResultChanged(listResults.value, chartResults.value))
