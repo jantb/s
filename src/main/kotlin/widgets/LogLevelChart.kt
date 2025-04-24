@@ -253,18 +253,13 @@ class LogLevelChart(
             maxCountHistory.removeAt(0)
         }
 
-        // Use a smoothed maximum that prevents rapid changes
-        // Either use the average of recent maximums
         val avgMax = maxCountHistory.average().toInt().coerceAtLeast(1)
-        // Or use the maximum of recent maximums
-        val historyMax = maxCountHistory.maxOrNull() ?: 1
 
         // Choose which approach works best for your use case
         smoothedMaxCount = maxOf(avgMax, smoothedMaxCount / 2) // Prevent scale from shrinking too fast
 
-        // Calculate bar width based on number of time points using float precision
         val timeSlotWidth = (width - 60).toFloat() / timePoints.size.coerceAtLeast(1)
-        val barWidth = timeSlotWidth - 2 // Full width with small spacing
+        val barWidth = timeSlotWidth - 2
 
         // Draw gridlines using the smoothed max
         drawGridlines(smoothedMaxCount)

@@ -7,7 +7,7 @@ import java.io.Serializable
 import java.time.OffsetDateTime
 
 
-const val cap = 1_000
+const val cap = 10_000
 
 class ValueStore : Serializable {
     // Main index for all logs
