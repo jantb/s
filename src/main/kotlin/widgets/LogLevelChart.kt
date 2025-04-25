@@ -20,295 +20,169 @@ import java.time.temporal.ChronoUnit
 import java.util.concurrent.locks.ReentrantLock
 
 /**
- * A component that displays a bar chart of log levels.
- * The chart counts the number of log entries for each log level (INFO, WARN, DEBUG, ERROR)
- * and displays them as color-coded bars on a time-based x-axis.
+ * A component that displays a bar chart of log levels over time.
+ * Log entries are counted by level (INFO, WARN, DEBUG, ERROR) and shown as stacked bars.
  */
 class LogLevelChart(
-    x: Int,
-    y: Int,
-    width: Int,
-    height: Int,
-    private val onLevelsChanged: (() -> Unit)? = null
+    x: Int, y: Int, width: Int, height: Int, private val onLevelsChanged: (() -> Unit)? = null
 ) : ComponentOwn() {
 
-    // Data structure to store log counts by time period and level
+    // Data structure for log counts at a specific time
     private data class TimePoint(val time: Instant, val counts: MutableMap<String, Int> = mutableMapOf())
 
-    // List of time points for the chart
+    // Chart state
     private val timePoints = mutableListOf<TimePoint>()
-
-    // Time range for the chart
     private var startTime: Instant = Instant.now()
     private var endTime: Instant = Instant.now()
-    private var maxCountHistory = mutableListOf<Int>()
-    private var smoothedMaxCount = 100 // Default starting value
-
-    // Add these properties to the class
-    private var currentScaleMax = 100 // Starting scale
+    private var currentScaleMax = 100 // Stable scale for bar heights and gridlines
     private var scaleLastChangedTime = Instant.now()
-    private var pendingScaleMax = 0 // Tracks if we need to scale up
+    private var pendingScaleMax = 0 // For delayed scale increases
 
-
-    // Set of all possible log levels
+    // Log levels
     private val allLogLevels = mutableSetOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN")
-
-    // Set of currently selected log levels (all selected by default)
     private val selectedLevels = mutableSetOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN")
-
-    // Rectangles for level labels (used for click detection)
     private val levelRectangles = mutableMapOf<String, Rectangle>()
+
+    // UI properties
+    private var image: BufferedImage? = null
+    private var g2d: Graphics2D? = null
+    private val lock = ReentrantLock()
+    private val widthDivision = 6
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
 
     init {
         this.x = x
         this.y = y
-        this.height = height
         this.width = width
+        this.height = height
     }
 
-    private lateinit var image: BufferedImage
-    private lateinit var g2d: Graphics2D
-
-
-    // Update the updateChart method to handle scaling properly
-
-    private val widthDivision = 6
-
+    /** Updates the chart with new log data. */
     fun updateChart(logs: List<Domain>) {
-       lock.lock()
+        if (logs.isEmpty()) return
+
+        lock.lock()
         try {
+            // Update log levels
+            allLogLevels.addAll(logs.map { it.level.ifEmpty { "UNKNOWN" } })
 
-            if (logs.isEmpty()) {
-                return
-            }
-            // Update the set of all log levels from the logs
-            logs.forEach { domain ->
-                val level = domain.level.ifEmpty { "UNKNOWN" }
-                allLogLevels.add(level)
-            }
-
+            // Set time range (assuming logs are ordered oldest to newest)
             startTime = logs.lastOrNull()?.timestamp ?: Instant.now()
             endTime = logs.firstOrNull()?.timestamp ?: Instant.now()
-
-            if (startTime == endTime) {
-                endTime = startTime.plus(1, ChronoUnit.MINUTES)
-            }
+            if (startTime == endTime) endTime = startTime.plus(1, ChronoUnit.MINUTES)
 
             val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / widthDivision)
+            val intervalNanos = timeInterval.toNanos()
 
+            // Recreate time points
             timePoints.clear()
-            for (i in 0 until width.toLong() / widthDivision) {
+            (0 until width.toLong() / widthDivision).forEach { i ->
                 timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i))))
             }
 
-            // Count logs by time period and level
+            // Assign logs to time points efficiently
             logs.forEach { domain ->
                 val level = domain.level.ifEmpty { "UNKNOWN" }
-
-                // Find the appropriate time point
-                val timePoint = timePoints.findLast { it.time.isBefore(domain.timestamp) || it.time == domain.timestamp }
-                    ?: timePoints.firstOrNull()
-
-                timePoint?.let {
-                    it.counts[level] = it.counts.getOrDefault(level, 0) + 1
-                }
+                val durationSinceStart = Duration.between(startTime, domain.timestamp).toNanos()
+                val index = if (intervalNanos > 0) {
+                    (durationSinceStart / intervalNanos).toInt().coerceIn(0, timePoints.size - 1)
+                } else 0 // Fallback for zero interval
+                timePoints[index].counts[level] = timePoints[index].counts.getOrDefault(level, 0) + 1
             }
 
-            // Get the current max count across all time points after updating
-            val newMaxTotal = calculateTotalMaxCount(logs)
-
-            // If new max is significantly larger than current scale, prepare to increase scale
-            if (newMaxTotal > currentScaleMax * 1.5) {
-                pendingScaleMax = newMaxTotal
-
-                // Only change scale if it's been stable for at least 2 seconds
-                // or if the difference is extremely large (emergency rescale)
-                val timeSinceLastScaleChange = Duration.between(scaleLastChangedTime, Instant.now())
-                if (timeSinceLastScaleChange.seconds > 2 || newMaxTotal > currentScaleMax * 4) {
-                    currentScaleMax = (newMaxTotal * 1.2).toInt() // Add 20% buffer
-                    scaleLastChangedTime = Instant.now()
-                    pendingScaleMax = 0
-                }
-            } else if (newMaxTotal < currentScaleMax / 3) {
-                val timeSinceLastScaleChange = Duration.between(scaleLastChangedTime, Instant.now())
-                if (timeSinceLastScaleChange.seconds > 1) {
-                    // Decrease scale gradually, not suddenly
-                    currentScaleMax = maxOf(newMaxTotal * 2, 100)
-                    scaleLastChangedTime = Instant.now()
-                }
-            }
-        }finally {
-            lock.unlock()
-        }
-
-    }
-
-    /**
-     * Get the currently selected log levels
-     */
-    fun getSelectedLevels(): Set<String> {
-        return selectedLevels.toSet()
-    }
-
-    private val lock = ReentrantLock()
-    override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
-        lock.lock()
-        try {
-            // Always update dimensions to ensure the chart resizes with the window
-            if (this.width != width || this.height != height || this.x != x || this.y != y || !::image.isInitialized) {
-                if (::g2d.isInitialized) {
-                    this.g2d.dispose()
-                }
-                this.image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-                this.g2d = this.image.createGraphics()
-                this.height = height
-                this.width = width
-                this.x = x
-                this.y = y
-            }
-
-            // Clear background
-            g2d.color = UiColors.background
-            g2d.fillRect(0, 0, width, height)
-
-            // Draw chart
-            drawChart()
-
-            return image
+            // Update scale
+            val newMaxTotal = timePoints.maxOf { it.counts.values.sum() }
+            updateScale(newMaxTotal)
         } finally {
             lock.unlock()
         }
     }
 
-    override fun repaint(componentOwn: ComponentOwn) {
-        // Not implemented
-    }
+    /** Updates the chart scale with hysteresis. */
+    private fun updateScale(newMaxTotal: Int) {
+        val now = Instant.now()
+        val timeSinceLastChange = Duration.between(scaleLastChangedTime, now).seconds
 
-    // Add a helper method to calculate the max count
-    private fun calculateTotalMaxCount(logs: List<Domain>): Int {
-        // First, update time points as you do in your existing code
-        // Determine time range from logs
-        startTime = logs.lastOrNull()?.timestamp ?: Instant.now()
-        endTime = logs.firstOrNull()?.timestamp ?: Instant.now()
+        when {
+            newMaxTotal > currentScaleMax * 1.5 -> {
+                pendingScaleMax = newMaxTotal
+                if (timeSinceLastChange > 2 || newMaxTotal > currentScaleMax * 4) {
+                    currentScaleMax = (newMaxTotal * 1.2).toInt()
+                    scaleLastChangedTime = now
+                    pendingScaleMax = 0
+                }
+            }
 
-        // Ensure we have a valid time range
-        if (startTime == endTime) {
-            endTime = startTime.plus(1, ChronoUnit.MINUTES)
-        }
-
-        // Calculate time interval for divisions
-        val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / widthDivision)
-
-        // Create time points
-        timePoints.clear()
-        for (i in 0 until width.toLong() / widthDivision) {
-            timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i))))
-        }
-
-        // Count logs by time period and level
-        logs.forEach { domain ->
-            val level = domain.level.ifEmpty { "UNKNOWN" }
-
-            // Find the appropriate time point
-            val timePoint = timePoints.findLast { it.time.isBefore(domain.timestamp) || it.time == domain.timestamp }
-                ?: timePoints.firstOrNull()
-
-            timePoint?.let {
-                it.counts[level] = it.counts.getOrDefault(level, 0) + 1
+            newMaxTotal < currentScaleMax / 3 && timeSinceLastChange > 1 -> {
+                currentScaleMax = maxOf(newMaxTotal * 2, 100)
+                scaleLastChangedTime = now
             }
         }
-
-        // Then calculate the maximum
-        var maxCount = 0
-        timePoints.forEach { timePoint ->
-            val totalCount = timePoint.counts.values.sum()
-            if (totalCount > maxCount) maxCount = totalCount
-        }
-
-        return maxOf(maxCount, 1) // Ensure we never return zero
     }
 
-    // Then modify the drawChart method to use the stable scale
+    /** Returns the currently selected log levels. */
+    fun getSelectedLevels(): Set<String> = selectedLevels.toSet()
 
-    private fun drawChart() {
-        // Draw an empty chart with axes and gridlines if no data
+    override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
+        lock.lock()
+        try {
+            // Reinitialize image if dimensions change or not yet initialized
+            if (image == null || this.width != width || this.height != height) {
+                g2d?.dispose()
+                image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+                g2d = image!!.createGraphics()
+                this.width = width
+                this.height = height
+                this.x = x
+                this.y = y
+            }
+
+            // Clear and draw
+            g2d!!.apply {
+                color = UiColors.background
+                fillRect(0, 0, width, height)
+                drawChart()
+            }
+
+            return image!!
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    private fun Graphics2D.drawChart() {
         if (timePoints.isEmpty()) {
             drawEmptyChart()
             return
         }
 
-        // Get all log levels (use the predefined set)
         val levels = allLogLevels.toList()
-
-        // Calculate the maximum total count for scaling (for stacked bars)
-        var currentMaxCount = 0
-        timePoints.forEach { timePoint ->
-            val totalCount = timePoint.counts.values.sum()
-            if (totalCount > currentMaxCount) currentMaxCount = totalCount
-        }
-
-        // Add to history and limit history size
-        maxCountHistory.add(currentMaxCount)
-        if (maxCountHistory.size > 10) { // Keep last 10 max counts
-            maxCountHistory.removeAt(0)
-        }
-
-        val avgMax = maxCountHistory.average().toInt().coerceAtLeast(1)
-
-        // Choose which approach works best for your use case
-        smoothedMaxCount = maxOf(avgMax, smoothedMaxCount / 2) // Prevent scale from shrinking too fast
-
         val timeSlotWidth = (width - 60).toFloat() / timePoints.size.coerceAtLeast(1)
 
-        // Draw gridlines using the smoothed max
-        drawGridlines(smoothedMaxCount)
+        // Draw gridlines and axis
+        drawGridlines(currentScaleMax)
+        color = Color.GRAY
+        drawLine(30, height - 35, width - 30, height - 35)
 
-        // Draw time axis
-        g2d.color = Color.GRAY // Use gray color for time axis
-        g2d.drawLine(30, height - 35, width - 30, height - 35)
-
-        val formatter = DateTimeFormatter.ofPattern("HH:mm:ss")
-            .withZone(ZoneId.systemDefault())
-        // Draw stacked bars for each time point
-        timePoints.forEachIndexed { timeIndex, timePoint ->
-            // Use float precision for x position calculation
-            val xPosBase = 30 + (timeIndex * timeSlotWidth)
-
-            // Draw time label (only for some time points to avoid crowding)
-            if (timeIndex % 25 == 0 || timeIndex == timePoints.size - 1) {
-                val timeLabel = formatter.format(timePoint.time)
-                g2d.font = Font("Monospaced", Font.PLAIN, 12)
-                g2d.color = Color.GRAY
-                g2d.drawString(timeLabel, xPosBase.toInt(), height - 15)
+        // Draw bars and time labels
+        timePoints.forEachIndexed { index, timePoint ->
+            val xPosBase = 30 + (index * timeSlotWidth).toInt()
+            if (index % 25 == 0 || index == timePoints.size - 1) {
+                font = Font("Monospaced", Font.PLAIN, 12)
+                color = Color.GRAY
+                drawString(timeFormatter.format(timePoint.time), xPosBase, height - 15)
             }
 
-            // Draw stacked bars for each log level at this time point
             var currentHeight = 0
-            val countsCopy = HashMap(timePoint.counts)
-
-            // Draw bars in a consistent order
             levels.forEach { level ->
-                // Only draw bars for selected levels
                 if (level in selectedLevels) {
-                    val count = countsCopy.getOrDefault(level, 0)
+                    val count = timePoint.counts.getOrDefault(level, 0)
                     if (count > 0) {
-                        // Calculate bar height (scaled to fit in the chart)
-                        // Use the stable scale instead of calculating a new max each time
-                        val maxTotalCount = currentScaleMax
-                        val barHeight = ((count.toFloat() / maxTotalCount) * (height - 80)).toInt().coerceAtLeast(1)
-
-                        // Set bar color based on log level
-                        g2d.color = getLevelColor(level)
-
-                        // Draw the bar (stacked on top of previous bars)
-                        g2d.fillRect(
-                            xPosBase.toInt(),
-                            height - 40 - currentHeight - barHeight,
-                            timeSlotWidth.toInt()-1,
-                            barHeight
+                        val barHeight = ((count.toFloat() / currentScaleMax) * (height - 80)).toInt().coerceAtLeast(1)
+                        color = getLevelColor(level)
+                        fillRect(
+                            xPosBase, height - 40 - currentHeight - barHeight, timeSlotWidth.toInt() - 1, barHeight
                         )
-
-                        // Update the current height for the next bar in the stack
                         currentHeight += barHeight
                     }
                 }
@@ -318,190 +192,90 @@ class LogLevelChart(
         drawLegend(levels)
     }
 
-    /**
-     * Draw an empty chart with axes and gridlines
-     */
-    private fun drawEmptyChart() {
-        // Draw background
-        g2d.color = UiColors.background
-        g2d.fillRect(0, 0, width, height)
-
-        // Draw axes
-        g2d.color = Color.GRAY // Use gray color for axes
-        g2d.drawLine(30, height - 35, width - 30, height - 35) // X-axis
-        g2d.drawLine(30, 40, 30, height - 35) // Y-axis
-
-        // Draw gridlines
-        drawGridlines(100) // Use a default scale
-
-        // Draw legend for all possible log levels
+    private fun Graphics2D.drawEmptyChart() {
+        color = UiColors.background
+        fillRect(0, 0, width, height)
+        color = Color.GRAY
+        drawLine(30, height - 35, width - 30, height - 35) // X-axis
+        drawLine(30, 40, 30, height - 35) // Y-axis
+        drawGridlines(100)
         drawLegend(allLogLevels.toList())
     }
 
-    /**
-     * Draw horizontal gridlines
-     */
-    private fun drawGridlines(maxCount: Int) {
-        // Draw horizontal gridlines
-        g2d.color = Color.GRAY // Use gray color for gridlines
-        g2d.stroke = BasicStroke(
-            0.5f,
-            BasicStroke.CAP_BUTT,
-            BasicStroke.JOIN_MITER,
-            10.0f,
-            floatArrayOf(2.0f),
-            0.0f
-        ) // Dashed line
+    private fun Graphics2D.drawGridlines(maxCount: Int) {
+        color = Color.GRAY
+        stroke = BasicStroke(0.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10.0f, floatArrayOf(2.0f), 0.0f)
+        font = Font("Monospaced", Font.PLAIN, 10)
 
-        // Draw 5 gridlines
-        for (i in 1..5) {
-            val y = height - 35 - ((i.toFloat() / 5) * (height - 80))
-            g2d.drawLine(30, y.toInt(), width - 30, y.toInt())
-
-            // Draw scale label
-            g2d.font = Font("Monospaced", Font.PLAIN, 10)
-            g2d.color = Color.GRAY // Use gray color for y-axis numbers
-            g2d.drawString((maxCount * i / 5).toString(), 5, y.toInt() + 4)
+        (1..5).forEach { i ->
+            val y = height - 35 - ((i.toFloat() / 5) * (height - 80)).toInt()
+            drawLine(30, y, width - 30, y)
+            drawString((maxCount * i / 5).toString(), 5, y + 4)
         }
-
-        // Reset stroke
-        g2d.stroke = BasicStroke(1.0f)
+        stroke = BasicStroke(1.0f)
     }
 
-    /**
-     * Draw the legend for log levels
-     */
-    private fun drawLegend(levels: List<String>) {
-        // Position the legend at the top of the chart
-        val legendY = 15 // Position near the top with a small gap
-        g2d.font = Font("Monospaced", Font.PLAIN, 10)
-
-        // Clear the level rectangles map
+    private fun Graphics2D.drawLegend(levels: List<String>) {
+        font = Font("Monospaced", Font.PLAIN, 10)
         levelRectangles.clear()
-
-        // Calculate total width needed for all labels
-        val labelWidth = 90 // Width for each label including spacing (increased from 70 to 90)
+        val labelWidth = 90
         val totalWidth = labelWidth * levels.size
-        val startX = (width - totalWidth) / 2 // Center the labels horizontally
+        val startX = (width - totalWidth) / 2
 
-        // Draw each level in the legend horizontally
         levels.forEachIndexed { index, level ->
-            // Calculate position for this label
             val boxX = startX + (index * labelWidth)
-            val boxY = legendY
-
-            // Set color based on log level
-            val color = getLevelColor(level)
-
-            // Check if level is selected
+            val boxY = 15
             val isSelected = level in selectedLevels
 
-            // Draw selection indicator (background rectangle) if selected
             if (isSelected) {
-                g2d.color = Color(color.red, color.green, color.blue, 40) // Semi-transparent background
-                g2d.fillRect(boxX - 2, boxY - 2, labelWidth - 4, 14)
-
-                // Draw border around selected level
-                g2d.color = color
-                g2d.drawRect(boxX - 2, boxY - 2, labelWidth - 4, 14)
+                color = getLevelColor(level).let { Color(it.red, it.green, it.blue, 40) }
+                fillRect(boxX - 2, boxY - 2, labelWidth - 4, 14)
+                color = getLevelColor(level)
+                drawRect(boxX - 2, boxY - 2, labelWidth - 4, 14)
             }
 
-            // Draw the color box
-            g2d.color = color
-            g2d.fillRect(boxX, boxY, 10, 10)
+            color = getLevelColor(level)
+            fillRect(boxX, boxY, 10, 10)
+            color = if (isSelected) UiColors.defaultText else Color.GRAY
+            drawString(level, boxX + 15, boxY + 10)
 
-            // Draw the level name
-            g2d.color = if (isSelected) UiColors.defaultText else Color.GRAY
-            val textX = boxX + 15
-            val textY = boxY + 10
-            g2d.drawString(level, textX, textY)
-
-            // Store the rectangle for click detection
             levelRectangles[level] = Rectangle(boxX - 2, boxY - 2, labelWidth - 4, 14)
         }
     }
 
-    /**
-     * Get the color for a log level
-     */
-    private fun getLevelColor(level: String): Color {
-        return when (level) {
-            "INFO" -> UiColors.green
-            "WARN" -> UiColors.orange
-            "DEBUG" -> UiColors.defaultText
-            "ERROR" -> UiColors.red
-            "UNKNOWN" -> Color.GRAY
-            else -> UiColors.defaultText
-        }
+    private fun getLevelColor(level: String): Color = when (level) {
+        "INFO" -> UiColors.green
+        "WARN" -> UiColors.orange
+        "DEBUG" -> UiColors.defaultText
+        "ERROR" -> UiColors.red
+        "UNKNOWN" -> Color.GRAY
+        else -> UiColors.defaultText
     }
 
-    // KeyListener implementation
-    override fun keyTyped(e: KeyEvent) {
-        // Not used
-    }
-
-    override fun keyPressed(e: KeyEvent) {
-        // Not used
-    }
-
-    override fun keyReleased(e: KeyEvent) {
-        // Not used
-    }
-
-    // MouseListener implementation
     override fun mouseClicked(e: MouseEvent) {
-        // Check if a level label was clicked
-        for ((level, rect) in levelRectangles) {
-            if (rect.contains(e.point)) {
-                // Toggle the level selection
-                if (level in selectedLevels) {
-                    // Don't allow deselecting the last level
-                    if (selectedLevels.size > 1) {
-                        selectedLevels.remove(level)
-                    }
-                } else {
-                    selectedLevels.add(level)
-                }
-
-                // Notify listener that levels have changed
-                onLevelsChanged?.invoke()
-
-                break
-            }
+        levelRectangles.entries.find { it.value.contains(e.point) }?.key?.let { level ->
+            if (level in selectedLevels && selectedLevels.size > 1) selectedLevels.remove(level)
+            else selectedLevels.add(level)
+            onLevelsChanged?.invoke()
         }
     }
 
-    override fun mousePressed(e: MouseEvent) {
-        // Not used
-    }
-
-    override fun mouseReleased(e: MouseEvent) {
-        // Not used
-    }
-
+    // Unused overrides omitted for brevity
+    override fun repaint(componentOwn: ComponentOwn) {}
+    override fun keyTyped(e: KeyEvent) {}
+    override fun keyPressed(e: KeyEvent) {}
+    override fun keyReleased(e: KeyEvent) {}
+    override fun mousePressed(e: MouseEvent) {}
+    override fun mouseReleased(e: MouseEvent) {}
     override fun mouseEntered(e: MouseEvent) {
-        if (!mouseInside) {
-            mouseInside = true
-        }
+        mouseInside = true
     }
 
     override fun mouseExited(e: MouseEvent) {
-        if (mouseInside) {
-            mouseInside = false
-        }
+        mouseInside = false
     }
 
-    // MouseWheelListener implementation
-    override fun mouseWheelMoved(e: MouseWheelEvent) {
-        // Not used
-    }
-
-    // MouseMotionListener implementation
-    override fun mouseDragged(e: MouseEvent) {
-        // Not used
-    }
-
-    override fun mouseMoved(e: MouseEvent) {
-        // Not used
-    }
+    override fun mouseWheelMoved(e: MouseWheelEvent) {}
+    override fun mouseDragged(e: MouseEvent) {}
+    override fun mouseMoved(e: MouseEvent) {}
 }
