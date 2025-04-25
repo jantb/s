@@ -5,7 +5,6 @@ import net.openhft.hashing.LongHashFunction
 import util.Bf.Companion.estimate
 import java.io.Serializable
 import java.util.*
-import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.math.*
 
 class Index<T : Comparable<T>>(
@@ -17,8 +16,6 @@ class Index<T : Comparable<T>>(
     var size: Int = 0
     private var cacheKey: List<List<String>>? = null
     private var cacheValue: List<T>? = null
-    private val lock = ReentrantReadWriteLock()
-
     fun add(t: T) {
         require(!isHigherRank) {
             "Can not add values to a higher rank index"
@@ -30,74 +27,51 @@ class Index<T : Comparable<T>>(
         val grams = t.toString().grams()
 
         val shardSize = Integer.numberOfTrailingZeros(estimate(grams.size, probability))
-        lock.writeLock().lock()
-        try {
-            shardArray[shardSize]?.add(grams, t) ?: run {
-                shardArray[shardSize] =
-                    Shard<T>(1 shl shardSize).apply {
-                        add(grams, t)
-                    }
-            }
-            size++
-        } finally {
-            lock.writeLock().unlock()
+        shardArray[shardSize]?.add(grams, t) ?: run {
+            shardArray[shardSize] =
+                Shard<T>(1 shl shardSize).apply {
+                    add(grams, t)
+                }
         }
+        size++
     }
 
     fun searchMustInclude(valueListList: List<List<String>>, function: (T) -> Boolean): List<T> {
-        if (!isHigherRank) {
-            lock.readLock().lock()
+        if (isHigherRank && valueListList == cacheKey) {
+            cacheValue?.let { return it }
         }
-        try {
-            if (isHigherRank && valueListList == cacheKey) {
-                cacheValue?.let { return it }
-            }
-            // Must include all the strings in each of the lists
-            val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
+        // Must include all the strings in each of the lists
+        val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
-            val result =
-                shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending() }.merge(descending = true)
-                    .filter { function(it) }.toList()
+        val result =
+            shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending()}.merge(descending = true).filter { function(it) }.toList()
 
-            if (isHigherRank) {
-                // save result in cache if higher rank
-                cacheKey = valueListList
-                cacheValue = result
-            }
-            return result
-        } finally {
-            if (!isHigherRank) {
-                lock.readLock().unlock()
-            }
+        if (isHigherRank) {
+            // save result in cache if higher rank
+            cacheKey = valueListList
+            cacheValue = result
         }
+        return result
     }
 
     fun convertToHigherRank() {
-        if (!isHigherRank) {
-            lock.readLock().lock()
+        require(!isHigherRank) {
+            "Can not convert an already converted higher rank"
         }
-        try {
-            require(!isHigherRank) {
-                "Can not convert an already converted higher rank"
-            }
-            isHigherRank = true
-            shardArray.forEach { it?.convertToHigherRankRows(goalCardinality) }
-        } finally {
-            if (!isHigherRank) {
-                lock.readLock().unlock()
-            }
-        }
+        isHigherRank = true
+        shardArray.forEach { it?.convertToHigherRankRows(goalCardinality) }
     }
 }
 
 class Shard<T>(
-    private val m: Int,
+    m: Int,
 ) : Serializable {
+    private val bf = Bf(m)
     private val valueList: MutableList<T> = mutableListOf()
     private val rows: Array<Row> = Array(m) { Row() }
     private var isHigherRank: Boolean = false
     fun add(gramList: List<Long>, key: T) {
-        val bf = Bf(m)
+        bf.clear()
         gramList.forEach { g ->
             bf.addHash(g)
         }
@@ -144,7 +118,7 @@ class Shard<T>(
     private fun getRows(
         grams: List<Long>,
     ): List<Row> {
-        val bf = Bf(m)
+        bf.clear()
         grams.forEach {
             bf.addHash(it)
         }
