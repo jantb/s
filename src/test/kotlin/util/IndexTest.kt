@@ -107,7 +107,7 @@ class IndexTest {
         }
         println("Time taken to add $itemCount elements: $timeTaken")
         var found = 0
-        var timeTakenSearch1 = measureTime {
+        val timeTakenSearch1 = measureTime {
             map.forEach() {  value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))){
                     it == value
@@ -124,7 +124,7 @@ class IndexTest {
         index.convertToHigherRank()
         println("hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
         found = 0
-       var timeTakenSearch = measureTime {
+       val timeTakenSearch = measureTime {
             map.forEach { value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
                     it == value
@@ -136,7 +136,7 @@ class IndexTest {
                 }
             }
         }
-        println("Time taken to search higher rang $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / found).nanoseconds}")
+        println("Time taken to search higher rank $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / found).nanoseconds}")
 
     }
 }
