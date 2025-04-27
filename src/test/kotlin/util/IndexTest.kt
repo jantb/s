@@ -16,7 +16,7 @@ class IndexTest {
         val key = "key"
         val value = "value"
 
-        index.add(key, value)
+        index.add( value)
 
         assertEquals(1, index.size)
     }
@@ -27,11 +27,13 @@ class IndexTest {
         val key = "key"
         val value = "value"
 
-        index.add(key, value)
+        index.add( value)
 
         assertEquals(1, index.size)
 
-        val searchMustInclude = index.searchMustInclude(listOf(listOf("val"))) {}.toList()
+        val searchMustInclude = index.searchMustInclude(listOf(listOf("val"))) {
+            true
+        }.toList()
         assertEquals(1, searchMustInclude.size)
     }
 
@@ -43,38 +45,42 @@ class IndexTest {
         val value = "a"
         val value2 = "b"
 
-        index.add(key, value)
-        index.add(key2, value2)
+        index.add( value)
+        index.add( value2)
 
         assertEquals(2, index.size)
 
-        val searchMustInclude = index.searchMustInclude(listOf(listOf("a"))) {}.toList()
+        val searchMustInclude = index.searchMustInclude(listOf(listOf("a"))) {
+            true
+        }.toList()
         assertEquals(1, searchMustInclude.size)
     }
 
     @Test
     fun regression_test() {
-        val index = Index<Int>()
+        val index = Index<String>()
         val itemCount = 300_000
 
-        val map = mutableMapOf<Int, String>() // For later verification
+        val map = mutableSetOf< String>() // For later verification
 
         val timeTaken = measureTime {
             for (key in 1..itemCount) {
                 val value = UUID.randomUUID().toString()
 
-                index.add(key, value)
+                index.add(value)
 
-                map[key] = value // Save information for verification
+                map.add(value)
             }
         }
         println("Time taken to add $itemCount elements: $timeTaken")
         println(index.serializeToBytes().size.printBytesAsAppropriateUnit())
         var found = 0
         val timeTakenSearch = measureTime {
-            for ((key, value) in map) {
-                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {}
-                if (key in searchMustInclude) {
+            for ( value in map) {
+                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
+                    it == value
+                }
+                if (value in searchMustInclude) {
                     found++
                 }
             }
@@ -85,52 +91,48 @@ class IndexTest {
 
     @Test
     fun regression_test_higher_rank() {
-        val index = Index<Int>()
-        val itemCount = 500_000
+        val index = Index<String        >()
+        val itemCount = 5_000_00
 
-        val map = Array(itemCount) { "" } // For later verification
+        val map = mutableSetOf< String>() // For later verification
 
         val timeTaken = measureTime {
             for (key in 0..<itemCount) {
                 val value = UUID.randomUUID().toString()
 
-                index.add(key, value)
+                index.add(value)
 
-                map[key] = value // Save information for verification
+                map.add(value)
             }
         }
         println("Time taken to add $itemCount elements: $timeTaken")
         var found = 0
-        var time = System.currentTimeMillis()
-//        var timeTakenSearch = measureTime {
-//            map.forEachIndexed { key, value ->
-//                val searchMustInclude = index.searchMustInclude(listOf(listOf(value)))
-//                if (key in searchMustInclude) {
-//                    found++
-//                }else{
-//                    throw IllegalStateException("Not finding the entry")
-//                }
-//                if (System.currentTimeMillis() - time > 10_000) {
-//                    return@measureTime
-//                }
-//            }
-//        }
-//        println("Time taken to search $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / found).nanoseconds}")
-        println("not hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
-        index.convertToHigherRank()
-        println("hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
-        found = 0
-        time = System.currentTimeMillis()
-       var timeTakenSearch = measureTime {
-            map.forEachIndexed { key, value ->
-                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {}
-                if (key in searchMustInclude) {
+        var timeTakenSearch1 = measureTime {
+            map.forEach() {  value ->
+                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))){
+                    it == value
+                }
+                if (value in searchMustInclude) {
                     found++
                 }else{
                     throw IllegalStateException("Not finding the entry")
                 }
-                if (System.currentTimeMillis() - time > 10_000) {
-                    return@measureTime
+            }
+        }
+        println("Time taken to search $itemCount elements: $timeTakenSearch1, average ${(timeTakenSearch1.inWholeNanoseconds / found).nanoseconds}")
+        println("not hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
+        index.convertToHigherRank()
+        println("hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
+        found = 0
+       var timeTakenSearch = measureTime {
+            map.forEach { value ->
+                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
+                    it == value
+                }
+                if (value in searchMustInclude) {
+                    found++
+                }else{
+                    throw IllegalStateException("Not finding the entry")
                 }
             }
         }
@@ -143,7 +145,7 @@ class ShardTest {
     @Test
     fun test_search() {
         val shard = Shard<String>(5)
-        val gramList = listOf(12345L, 23456L)
+        val gramList = listOf(12345, 23456)
         val key = "key"
 
         shard.add(gramList, key)

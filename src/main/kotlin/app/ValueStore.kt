@@ -7,7 +7,7 @@ import java.io.Serializable
 import java.time.OffsetDateTime
 
 
-const val cap = 1_000
+const val cap = 512
 
 class ValueStore : Serializable {
     private val levelIndexes = mutableMapOf<String, MutableList<Index<Domain>>>()

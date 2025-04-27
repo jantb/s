@@ -1,7 +1,6 @@
 package util
 
 import merge
-import net.openhft.hashing.LongHashFunction
 import util.Bf.Companion.estimate
 import java.io.Serializable
 import java.util.*
@@ -44,7 +43,8 @@ class Index<T : Comparable<T>>(
         val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
         val result =
-            shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending()}.merge(descending = true).filter { function(it) }.toList()
+            shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending() }.merge(descending = true)
+                .filter { function(it) }.toList()
 
         if (isHigherRank) {
             // save result in cache if higher rank
@@ -70,7 +70,7 @@ class Shard<T>(
     private val valueList: MutableList<T> = mutableListOf()
     private val rows: Array<Row> = Array(m) { Row() }
     private var isHigherRank: Boolean = false
-    fun add(gramList: List<Long>, key: T) {
+    fun add(gramList: List<Int>, key: T) {
         bf.clear()
         gramList.forEach { g ->
             bf.addHash(g)
@@ -99,7 +99,7 @@ class Shard<T>(
         }
     }
 
-    fun search(gramsList: List<List<Long>>): Sequence<T> {
+    fun search(gramsList: List<List<Int>>): Sequence<T> {
         if (gramsList.flatten().isEmpty()) {
             return valueList.asSequence()
         }
@@ -116,7 +116,7 @@ class Shard<T>(
     }
 
     private fun getRows(
-        grams: List<Long>,
+        grams: List<Int>,
     ): List<Row> {
         bf.clear()
         grams.forEach {
@@ -179,11 +179,11 @@ class Shard<T>(
 }
 
 class Bf(m: Int) : Serializable {
-    private val modMask = m.toLong() - 1
+    private val modMask = m - 1
     private val bitSet = BitSet(m)
     private var cardinality = 0
-    fun addHash(l: Long) {
-        val pos = (l and modMask).toInt()
+    fun addHash(l: Int) {
+        val pos = (l and modMask)
         if (!bitSet.get(pos))
             cardinality++
         bitSet.set(pos)
@@ -349,10 +349,74 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
 fun LongArray.calculateDensity() = sumOf { java.lang.Long.bitCount(it) }.toDouble() / (size * java.lang.Long.SIZE)
 
 
-fun String.grams(): List<Long> {
-    val lowercase = lowercase().filter { it.isLetterOrDigit() }
-    if (lowercase.length < 3) {
-        return listOf(LongHashFunction.xx3().hashChars(lowercase))
+fun String.grams(): List<Int> {
+    return GramHasher.grams(this)
+}
+
+
+object GramHasher {
+    private val builder = StringBuilder(16) // Initial capacity for small strings
+    private var hashArray = IntArray(8) // Initial capacity for trigrams
+    private val singleHash = IntArray(1) // Reusable single-element array
+    private val singleHashList = singleHash.asList() // Cached List<Int> for short strings
+
+    fun grams(input: String): List<Int> {
+        builder.clear()
+        var validCount = 0
+        var shortHash = 0
+        var pos = 0
+
+        // First pass: build lowercase string and compute short-string hash
+        for (c in input) {
+            if (c.isLetterOrDigit()) {
+                // Fast lowercase for a-z, A-Z; pass-through for 0-9
+                val lc = when {
+                    c in 'A'..'Z' -> (c.code or 0x20).toChar() // Bitwise lowercase
+                    c in 'a'..'z' || c in '0'..'9' -> c
+                    else -> continue
+                }
+                builder.append(lc)
+                validCount++
+
+                // Compute short-string hash (≤ 3 chars)
+                if (pos < 3) {
+                    val code = when {
+                        lc in 'a'..'z' -> lc - 'a' // 0-25
+                        lc in '0'..'9' -> lc - '0' + 26 // 26-35
+                        else -> continue
+                    }
+                    shortHash = (shortHash shl 6) or code
+                    pos++
+                }
+            }
+        }
+
+        // Handle short strings (≤ 3 valid chars)
+        if (validCount <= 3) {
+            // Pad with zeros if fewer than 3 chars
+            while (pos < 3) {
+                shortHash = shortHash shl 6
+                pos++
+            }
+            singleHash[0] = shortHash
+            return singleHashList
+        }
+
+        // For longer strings, compute trigrams
+        val trigramCount = validCount - 2
+        // Resize hashArray if necessary
+        if (hashArray.size < trigramCount) {
+            hashArray = IntArray(trigramCount.coerceAtLeast(hashArray.size * 2)) // Grow conservatively
+        }
+        // Compute trigram hashes
+        for (i in 0 until trigramCount) {
+            var hash = 0
+            for (j in 0 until 3) {
+                // Use faster hash: shift and XOR
+                hash = (hash shl 5) xor builder[i + j].code
+            }
+            hashArray[i] = hash
+        }
+        return hashArray.asList().subList(0, trigramCount)
     }
-    return lowercase.windowed(3).map { LongHashFunction.xx3().hashChars(it) }
 }

@@ -15,7 +15,6 @@ repositories {
 }
 
 dependencies {
-    implementation("net.openhft:zero-allocation-hashing:0.16")
     implementation("io.fabric8:kubernetes-client:7.1.0")
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.14")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
