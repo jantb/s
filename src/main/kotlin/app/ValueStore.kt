@@ -1,7 +1,7 @@
 package app
 
-import State
 import deserializeJsonToObject
+import parallelSortWith
 import util.Index
 import java.io.Serializable
 import java.time.OffsetDateTime
@@ -10,11 +10,7 @@ import java.time.OffsetDateTime
 const val cap = 1_000
 
 class ValueStore : Serializable {
-    // Main index for all logs
-    private val indexes = mutableListOf(Index<Domain>())
-    // Separate indexes for each log level
     private val levelIndexes = mutableMapOf<String, MutableList<Index<Domain>>>()
-    private val indexesCache = mutableListOf<List<Domain>>()
     var size = 0
 
     // Set of all log levels encountered
@@ -23,15 +19,7 @@ class ValueStore : Serializable {
     fun put(seq: Long, v: String, indexIdentifier: String) {
         getLogJson(v, indexIdentifier, seq)?.let {
             size++
-            // Add to main index
-            if (indexes.last().size >= cap) {
-                indexes.last().convertToHigherRank()
-                indexes.add(Index())
-                indexesCache.add(mutableListOf())
-            }
             State.indexedLines.addAndGet(1)
-            indexes.last().add(it)
-
             // Add to level-specific index
             val level = it.level.ifEmpty { "UNKNOWN" }
             logLevels.add(level)
@@ -66,78 +54,43 @@ class ValueStore : Serializable {
         }
     }
 
-    fun search(query: String, length: Int, offsetLock: Long, levels: Set<String>? = null): List<Domain> {
+    suspend fun search(query: String, length: Int, offsetLock: Long, levels: Set<String>): List<Domain> {
         val q = getQuery(query)
 
         // If levels are specified, search only those level indexes
-        if (!levels.isNullOrEmpty()) {
-            val results = mutableListOf<Domain>()
+        val results = mutableListOf<Domain>()
 
-            // Search each specified level
-            for (level in levels) {
-                val levelIndexList = levelIndexes[level] ?: continue
+        // Search each specified level
+        for (level in levels) {
+            val levelIndexList = levelIndexes[level] ?: continue
 
-                // Search the live index for this level
-                if (levelIndexList.isNotEmpty()) {
-                    val liveResults = levelIndexList.last().searchMustInclude(q.filteredQueryList) {
-                        it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
-                    }.take(length).toList()
+            // Search the live index for this level
+            if (levelIndexList.isNotEmpty()) {
+                val liveResults = levelIndexList.last().searchMustInclude(q.filteredQueryList) {
+                    it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
+                }.take(length).toList()
 
-                    results.addAll(liveResults)
+                results.addAll(liveResults)
 
-                    // If we need more results, search the ranked indexes for this level
-                    if (liveResults.size < length) {
-                        val rankedResults = levelIndexList.dropLast(1).reversed().asSequence()
-                            .flatMap { index ->
-                                index.searchMustInclude(q.filteredQueryList) {
-                                    it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
-                                }.take(length - liveResults.size)
+                // If we need more results, search the ranked indexes for this level
+                if (liveResults.size < length) {
+                    val rankedResults = levelIndexList.dropLast(1).reversed().asSequence()
+                        .flatMap { index ->
+                            index.searchMustInclude(q.filteredQueryList) {
+                                it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
                             }.take(length - liveResults.size)
-                            .toList()
+                        }.take(length - liveResults.size)
+                        .toList()
 
-                        results.addAll(rankedResults)
-                    }
+                    results.addAll(rankedResults)
                 }
             }
-
-            // Sort and limit the results
-            return results.sortedByDescending { it.timestamp }.take(length)
-        } else {
-            // If no levels specified, use the main index (original behavior)
-            val liveIndexResults = getLiveIndexResults(q, offsetLock, length)
-            return if (liveIndexResults.size >= length) {
-                liveIndexResults.take(length)
-            } else {
-                (liveIndexResults + getRankedListResults(
-                    q,
-                    offsetLock,
-                    length - liveIndexResults.size
-                )).take(length)
-            }
         }
-    }
 
-    private fun getRankedListResults(
-        q: Query,
-        offsetLock: Long,
-        length: Int
-    ): List<Domain> {
-        return indexes.dropLast(1).reversed().asSequence()
-            .flatMap { index ->
-                index.searchMustInclude(q.filteredQueryList) {
-                    it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
-                }.take(length)
-            }.take(length)
-            .toList()
-    }
+        // Sort and limit the results
+        return results.parallelSortWith(compareByDescending { it.timestamp }).take(length)
 
-    private fun getLiveIndexResults(
-        q: Query,
-        offsetLock: Long,
-        length: Int
-    ) = indexes.last().searchMustInclude(q.filteredQueryList) {
-        it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
-    }.take(length).toList()
+    }
 
     data class Query(
         val queryListNot: List<String>,

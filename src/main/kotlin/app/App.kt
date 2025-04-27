@@ -124,7 +124,7 @@ object UnListenToPods : PodsMessage()
 class KafkaSelectChangedText(val text: String) : KafkaSelectMessage()
 object UnListenToTopics : KafkaMessage()
 sealed class CmdMessage
-class QueryChanged(val query: String, val length: Int, val offset: Int, val levels: Set<String>? = null) : CmdMessage()
+class QueryChanged(val query: String, val length: Int, val offset: Int, val levels: Set<String>) : CmdMessage()
 object ClearIndex : CmdMessage()
 
 class ClearNamedIndex(val name: String) : CmdMessage()

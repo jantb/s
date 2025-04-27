@@ -163,9 +163,9 @@ private val lock = ReentrantLock()
   }
 
 
-  override fun repaint(it: ComponentOwn) {
-    g2d.drawImage(it.display(it.width, it.height, it.x, it.y), it.x, it.y, it.width, it.height, null)
-    panel.repaint(it.x, it.y, it.width, it.height)
+  override fun repaint(componentOwn: ComponentOwn) {
+    g2d.drawImage(componentOwn.display(componentOwn.width, componentOwn.height, componentOwn.x, componentOwn.y), componentOwn.x, componentOwn.y, componentOwn.width, componentOwn.height, null)
+    panel.repaint(componentOwn.x, componentOwn.y, componentOwn.width, componentOwn.height)
   }
 
   private fun paintLineItem() {

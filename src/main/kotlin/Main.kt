@@ -263,7 +263,8 @@ private fun buildViewer(panel: SlidePanel) {
                 QueryChanged(
                     it,
                     length = State.length.get(),
-                    offset = State.offset.get()
+                    offset = State.offset.get(),
+                    levels = State.levels
                 )
             )
         }
@@ -331,7 +332,7 @@ object State {
     val searchTime = AtomicLong(0)
     val length = AtomicInteger(0)
     val offset = AtomicInteger(0)
-
+    val levels = mutableSetOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN")
     var mode = Mode.viewer
 
     init {

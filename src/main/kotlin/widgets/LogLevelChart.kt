@@ -1,6 +1,7 @@
 package widgets
 
 import ComponentOwn
+import State
 import app.Domain
 import util.UiColors
 import java.awt.BasicStroke
@@ -40,7 +41,6 @@ class LogLevelChart(
 
     // Log levels
     private val allLogLevels = mutableSetOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN")
-    private val selectedLevels = mutableSetOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN")
     private val levelRectangles = mutableMapOf<String, Rectangle>()
 
     // UI properties
@@ -121,7 +121,7 @@ class LogLevelChart(
     }
 
     /** Returns the currently selected log levels. */
-    fun getSelectedLevels(): Set<String> = selectedLevels.toSet()
+    fun getSelectedLevels(): Set<String> = State.levels
 
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
         lock.lock()
@@ -175,7 +175,7 @@ class LogLevelChart(
 
             var currentHeight = 0
             levels.forEach { level ->
-                if (level in selectedLevels) {
+                if (level in State.levels) {
                     val count = timePoint.counts.getOrDefault(level, 0)
                     if (count > 0) {
                         val barHeight = ((count.toFloat() / currentScaleMax) * (height - 80)).toInt().coerceAtLeast(1)
@@ -225,7 +225,7 @@ class LogLevelChart(
         levels.forEachIndexed { index, level ->
             val boxX = startX + (index * labelWidth)
             val boxY = 15
-            val isSelected = level in selectedLevels
+            val isSelected = level in State.levels
 
             if (isSelected) {
                 color = getLevelColor(level).let { Color(it.red, it.green, it.blue, 40) }
@@ -254,8 +254,8 @@ class LogLevelChart(
 
     override fun mouseClicked(e: MouseEvent) {
         levelRectangles.entries.find { it.value.contains(e.point) }?.key?.let { level ->
-            if (level in selectedLevels && selectedLevels.size > 1) selectedLevels.remove(level)
-            else selectedLevels.add(level)
+            if (level in State.levels && State.levels.size > 1) State.levels.remove(level)
+            else State.levels.add(level)
             onLevelsChanged?.invoke()
         }
     }

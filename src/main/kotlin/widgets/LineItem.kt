@@ -195,7 +195,8 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
                 QueryChanged(
                     text.getHighlightedText(),
                     length = State.length.get(),
-                    offset = State.offset.get()
+                    offset = State.offset.get(),
+                    levels = State.levels
                 )
             )
         }
