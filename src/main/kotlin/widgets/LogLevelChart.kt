@@ -114,7 +114,7 @@ class LogLevelChart(
             }
 
             newMaxTotal < currentScaleMax / 3 && timeSinceLastChange > 1 -> {
-                currentScaleMax = maxOf(newMaxTotal * 2, 100)
+                currentScaleMax = maxOf(newMaxTotal * 2, 5)
                 scaleLastChangedTime = now
             }
         }
@@ -203,8 +203,7 @@ class LogLevelChart(
     }
 
     private fun Graphics2D.drawGridlines(maxCount: Int) {
-        color = Color.GRAY
-        stroke = BasicStroke(0.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10.0f, floatArrayOf(2.0f), 0.0f)
+        color = Color.DARK_GRAY
         font = Font("Monospaced", Font.PLAIN, 10)
 
         (1..5).forEach { i ->

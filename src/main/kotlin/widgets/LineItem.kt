@@ -14,7 +14,6 @@ import util.Styles
 import util.UiColors
 import java.awt.Font
 import java.awt.Graphics2D
-import java.awt.SystemColor.text
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent

@@ -21,6 +21,7 @@ import merge
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.ExperimentalTime
 import kotlin.time.measureTimedValue
@@ -75,22 +76,19 @@ class App : CoroutineScope {
                             }.merge(descending = true).drop(msg.offset).take(msg.length).toList().reversed()
                         }
 
-                        val chartResults = measureTimedValue {
-                            valueStores.map {
-                                it.value.search(
-                                    query = msg.query,
-                                    length = msg.length + msg.offset + 10_000,
-                                    offsetLock = offsetLock,
-                                    levels = msg.levels
-                                ).asSequence()
-                            }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList()
-                        }
+                        val chartResults =
+                                valueStores.map {
+                                    it.value.search(
+                                        query = msg.query,
+                                        length = msg.length + msg.offset + 10_000,
+                                        offsetLock = offsetLock,
+                                        levels = msg.levels
+                                    ).asSequence()
+                                }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList()
 
-                        // Use the duration from the main search for metrics
-                        searchTime.set(listResults.duration.inWholeNanoseconds + chartResults.duration.inWholeNanoseconds)
+                        searchTime.set(listResults.duration.inWholeNanoseconds)
 
-                        // Send both results to the UI
-                        cmdGuiChannel.put(ResultChanged(listResults.value, chartResults.value))
+                        cmdGuiChannel.put(ResultChanged(listResults.value, chartResults))
                     }
                 }
             }
