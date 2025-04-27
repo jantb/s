@@ -1,5 +1,6 @@
 package app
 
+import LogLevel
 import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -8,7 +9,6 @@ import kafka.RawJsonDeserializer
 import kafka.RawJsonSerializer
 import java.time.Instant
 import java.util.UUID
-
 data class Domain(
     val id: UUID = UUID.randomUUID(),
     var seq :Long ,
@@ -18,7 +18,7 @@ data class Domain(
     @JsonAlias("request.id", "X-Request-Id") val requestId: String = "",
     @JsonAlias("message", "msg") val message: String = "",
     @JsonAlias("error.message") val errorMessage: String = "",
-    @JsonAlias("log.level", "level") val level: String = "",
+    @JsonAlias("log.level", "level") val level: LogLevel = LogLevel.UNKNOWN,
     @JsonAlias("application", "service.name") val application: String = "",
     @JsonAlias("error.type") val stacktraceType: String = "",
     @JsonAlias("stack_trace", "error.stack_trace") val stacktrace: String = "",
@@ -32,14 +32,14 @@ data class Domain(
     )
     val data: String = "",
     ) :  Comparable<Domain>  {
-    var timestamp: Instant = Instant.MIN
+    var timestamp: Long = 0
     private var searchableString = ""
 
     init {
         try {
-            this.timestamp = Instant.parse(timestampString)
+            this.timestamp = Instant.parse(timestampString).toEpochMilli()
         } catch (e: Exception) {
-            this.timestamp = Instant.MIN
+            this.timestamp = 0
         }
         this.init()
     }

@@ -58,20 +58,20 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.addText(" ", color = UiColors.defaultText)
         if (domain.topic == "") {
             this.text.addText(
-                domain.level, color = when (domain.level) {
-                    "INFO" -> {
+                domain.level.name, color = when (domain.level) {
+                    LogLevel.INFO -> {
                         UiColors.green
                     }
 
-                    "WARN" -> {
+                    LogLevel.WARN -> {
                         UiColors.orange
                     }
 
-                    "DEBUG" -> {
+                    LogLevel.DEBUG -> {
                         UiColors.defaultText
                     }
 
-                    "ERROR" -> {
+                    LogLevel.ERROR -> {
                         UiColors.red
                     }
 

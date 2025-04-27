@@ -1,5 +1,6 @@
 package app
 
+import LogLevel
 import deserializeJsonToObject
 import parallelSortWith
 import util.Index
@@ -10,19 +11,17 @@ import java.time.OffsetDateTime
 const val cap = 512
 
 class ValueStore : Serializable {
-    private val levelIndexes = mutableMapOf<String, MutableList<Index<Domain>>>()
+    private val levelIndexes = mutableMapOf<LogLevel, MutableList<Index<Domain>>>()
     var size = 0
 
-    // Set of all log levels encountered
-    val logLevels = mutableSetOf<String>()
 
     fun put(seq: Long, v: String, indexIdentifier: String) {
         getLogJson(v, indexIdentifier, seq)?.let {
             size++
             State.indexedLines.addAndGet(1)
             // Add to level-specific index
-            val level = it.level.ifEmpty { "UNKNOWN" }
-            logLevels.add(level)
+            val level = it.level
+
 
             val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index()) }
             if (levelIndexList.last().size >= cap) {
@@ -37,7 +36,7 @@ class ValueStore : Serializable {
         return try {
             val domain = v.substringAfter(" ").deserializeJsonToObject<Domain>()
             domain.indexIdentifier = indexIdentifier
-            domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
+            domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant().toEpochMilli()
             domain.seq = seq
             domain.init()
             domain
@@ -45,7 +44,7 @@ class ValueStore : Serializable {
             val domain = Domain(seq = seq, message = v.substringAfter(" "), application = indexIdentifier)
             domain.indexIdentifier = indexIdentifier
             try {
-                domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant()
+                domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant().toEpochMilli()
                 domain.init()
             } catch (e: Exception) {
                 return null
@@ -54,7 +53,7 @@ class ValueStore : Serializable {
         }
     }
 
-    suspend fun search(query: String, length: Int, offsetLock: Long, levels: Set<String>): List<Domain> {
+    suspend fun search(query: String, length: Int, offsetLock: Long, levels: Set<LogLevel>): List<Domain> {
         val q = getQuery(query)
 
         // If levels are specified, search only those level indexes

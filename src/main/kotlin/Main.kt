@@ -332,7 +332,7 @@ object State {
     val searchTime = AtomicLong(0)
     val length = AtomicInteger(0)
     val offset = AtomicInteger(0)
-    val levels = mutableSetOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN")
+    val levels = LogLevel.entries.toMutableSet()
     var mode = Mode.viewer
 
     init {
@@ -346,4 +346,18 @@ enum class Mode {
     podSelect,
     kafkaSelect,
     kafkaLag
+}
+
+enum class LogLevel{
+    INFO, WARN, DEBUG, ERROR, UNKNOWN;
+    companion object {
+        fun of(value: String?): LogLevel {
+            if (value == null) return UNKNOWN
+            return try {
+                valueOf(value.uppercase())
+            } catch (e: IllegalArgumentException) {
+                UNKNOWN
+            }
+        }
+    }
 }

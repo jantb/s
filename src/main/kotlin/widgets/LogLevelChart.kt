@@ -1,6 +1,7 @@
 package widgets
 
 import ComponentOwn
+import LogLevel
 import State
 import app.Domain
 import util.UiColors
@@ -29,7 +30,7 @@ class LogLevelChart(
 ) : ComponentOwn() {
 
     // Data structure for log counts at a specific time
-    private data class TimePoint(val time: Instant, val counts: MutableMap<String, Int> = mutableMapOf())
+    private data class TimePoint(val time: Instant, val counts: MutableMap<LogLevel, Int> = mutableMapOf())
 
     // Chart state
     private val timePoints = mutableListOf<TimePoint>()
@@ -40,8 +41,8 @@ class LogLevelChart(
     private var pendingScaleMax = 0 // For delayed scale increases
 
     // Log levels
-    private val allLogLevels = mutableSetOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN")
-    private val levelRectangles = mutableMapOf<String, Rectangle>()
+    private val allLogLevels = LogLevel.entries.toTypedArray().toList()
+    private val levelRectangles = mutableMapOf<LogLevel, Rectangle>()
 
     // UI properties
     private var image: BufferedImage? = null
@@ -63,12 +64,9 @@ class LogLevelChart(
 
         lock.lock()
         try {
-            // Update log levels
-            allLogLevels.addAll(logs.map { it.level.ifEmpty { "UNKNOWN" } })
-
             // Set time range (assuming logs are ordered oldest to newest)
-            startTime = logs.lastOrNull()?.timestamp ?: Instant.now()
-            endTime = logs.firstOrNull()?.timestamp ?: Instant.now()
+            startTime = logs.lastOrNull()?.timestamp?.let { Instant.ofEpochMilli(it) } ?: Instant.now()
+            endTime = logs.firstOrNull()?.timestamp?.let { Instant.ofEpochMilli(it) } ?: Instant.now()
             if (startTime == endTime) endTime = startTime.plus(1, ChronoUnit.MINUTES)
 
             val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / widthDivision)
@@ -82,11 +80,11 @@ class LogLevelChart(
 
             // Assign logs to time points efficiently
             logs.forEach { domain ->
-                val level = domain.level.ifEmpty { "UNKNOWN" }
-                val durationSinceStart = Duration.between(startTime, domain.timestamp).toNanos()
+                val level = domain.level
+                val durationSinceStart = Duration.between(startTime, Instant.ofEpochMilli(domain.timestamp)).toNanos()
                 val index = if (intervalNanos > 0) {
                     (durationSinceStart / intervalNanos).toInt().coerceIn(0, timePoints.size - 1)
-                } else 0 // Fallback for zero interval
+                } else 0
                 timePoints[index].counts[level] = timePoints[index].counts.getOrDefault(level, 0) + 1
             }
 
@@ -121,7 +119,7 @@ class LogLevelChart(
     }
 
     /** Returns the currently selected log levels. */
-    fun getSelectedLevels(): Set<String> = State.levels
+    fun getSelectedLevels(): Set<LogLevel> = State.levels
 
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
         lock.lock()
@@ -214,7 +212,7 @@ class LogLevelChart(
         stroke = BasicStroke(1.0f)
     }
 
-    private fun Graphics2D.drawLegend(levels: List<String>) {
+    private fun Graphics2D.drawLegend(levels: List<LogLevel>) {
         font = Font("Monospaced", Font.PLAIN, 10)
         levelRectangles.clear()
         val labelWidth = 90
@@ -236,19 +234,19 @@ class LogLevelChart(
             color = getLevelColor(level)
             fillRect(boxX, boxY, 10, 10)
             color = if (isSelected) UiColors.defaultText else Color.GRAY
-            drawString(level, boxX + 15, boxY + 10)
+            drawString(level.name, boxX + 15, boxY + 10)
 
             levelRectangles[level] = Rectangle(boxX - 2, boxY - 2, labelWidth - 4, 14)
         }
     }
 
-    private fun getLevelColor(level: String): Color = when (level) {
-        "INFO" -> UiColors.green
-        "WARN" -> UiColors.orange
-        "DEBUG" -> UiColors.defaultText
-        "ERROR" -> UiColors.red
-        "UNKNOWN" -> Color.GRAY
-        else -> UiColors.defaultText
+    private fun getLevelColor(level: LogLevel): Color = when (level) {
+
+        LogLevel.INFO -> UiColors.green
+        LogLevel.WARN -> UiColors.orange
+        LogLevel.DEBUG -> UiColors.defaultText
+        LogLevel.ERROR -> UiColors.red
+        LogLevel.UNKNOWN -> Color.GRAY
     }
 
     override fun mouseClicked(e: MouseEvent) {

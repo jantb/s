@@ -36,7 +36,7 @@ class TextViewer(title: String = "", text: String, domain: Domain?) : JFrame() {
             addField("RequestId", log.requestId, fieldsPanel, constraints)
             addField("Message", log.message, fieldsPanel, constraints)
             addField("Error Message", log.errorMessage, fieldsPanel, constraints)
-            addField("Level", log.level, fieldsPanel, constraints)
+            addField("Level", log.level.name, fieldsPanel, constraints)
             addField("Application", log.indexIdentifier, fieldsPanel, constraints)
             addField("Stacktrace Type", log.stacktraceType, fieldsPanel, constraints)
             addField("Topic", log.topic, fieldsPanel, constraints)
