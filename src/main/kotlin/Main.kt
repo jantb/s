@@ -8,11 +8,7 @@ import kafka.Kafka
 import kotlinx.coroutines.channels.trySendBlocking
 import kube.Kube
 import util.UiColors.magenta
-import widgets.InputTextLine
-import widgets.KafkaLagView
-import widgets.KafkaSelect
-import widgets.PodSelect
-import widgets.ScrollableList
+import widgets.*
 import java.awt.Graphics
 import java.awt.MouseInfo
 import java.awt.Point
@@ -25,6 +21,7 @@ import java.awt.event.MouseWheelEvent
 import java.awt.event.MouseWheelListener
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.ImageIcon
 import javax.swing.JFrame
 import javax.swing.JPanel
@@ -53,6 +50,7 @@ fun main() {
         buildPodSelect(panel)
         buildKafkaSelect(panel)
         buildKafkaLagView(panel)
+        buildLogGroupsView(panel)
         frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
         frame.contentPane.add(panel)
         frame.pack()
@@ -68,6 +66,7 @@ fun main() {
         frame.isVisible = true
     }
 }
+
 
 class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, MouseMotionListener {
     var componentMap: MutableMap<Mode, MutableList<ComponentOwn>> = mutableMapOf()
@@ -86,18 +85,17 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
         when (State.mode) {
             Mode.viewer -> viewer(g)
-            Mode.podSelect -> {
-                select(g)
-            }
-
-            Mode.kafkaSelect -> {
-                select(g)
-            }
-
-            Mode.kafkaLag -> {
-                select(g)
-            }
+            Mode.podSelect -> select(g)
+            Mode.kafkaSelect -> select(g)
+            Mode.kafkaLag -> select(g)
+            Mode.logGroups -> select(g)
         }
+
+        // Draw info line with commands
+        g.color = magenta
+        val infoString = "Commands: Cmd+P (Pod Select), Cmd+K (Kafka Select), Cmd+G (Kafka Lag), Cmd+I (Log Groups), Cmd+Q (Quit)"
+        val infoBounds = g.fontMetrics.getStringBounds(infoString, g)
+        g.drawString(infoString, width - infoBounds.width.toInt() - 10, height - 30)
     }
 
     private fun viewer(g: Graphics) {
@@ -122,9 +120,7 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
         g.color = magenta
         val timeString =
-            "Indexed Lines: ${
-                State.indexedLines.get().format()
-            } Query: ${State.searchTime.get().nanoseconds}"
+            "Indexed Lines: ${State.indexedLines.get().format()} Query: ${State.searchTime.get().nanoseconds}"
         val stringBounds = g.fontMetrics.getStringBounds(timeString, g)
         g.drawString(timeString, width - stringBounds.width.toInt() - 10, height - 10)
     }
@@ -152,9 +148,7 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
         g.color = magenta
         val timeString =
-            "Kafka time in days:${State.kafkaDays.get()} Indexed Lines: ${
-                State.indexedLines.get().format()
-            } Query: ${State.searchTime.get().nanoseconds}"
+            "Kafka time in days:${State.kafkaDays.get()} Indexed Lines: ${State.indexedLines.get().format()} Query: ${State.searchTime.get().nanoseconds}"
         val stringBounds = g.fontMetrics.getStringBounds(timeString, g)
         g.drawString(timeString, width - stringBounds.width.toInt() - 10, height - 10)
     }
@@ -184,7 +178,17 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
                 KeyEvent.VK_G -> {
                     if (State.mode != Mode.kafkaLag) {
                         State.mode = Mode.kafkaLag
-                        kafkaChannel.put(ListLag)
+                        Channels.kafkaChannel.put(ListLag)
+                    } else {
+                        componentMap[State.mode]?.forEach { it.keyPressed(e) }
+                        State.mode = Mode.viewer
+                    }
+                    repaint()
+                }
+
+                KeyEvent.VK_I -> {
+                    if (State.mode != Mode.logGroups) {
+                        State.mode = Mode.logGroups
                     } else {
                         componentMap[State.mode]?.forEach { it.keyPressed(e) }
                         State.mode = Mode.viewer
@@ -255,7 +259,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
     }
 }
 
-
 private fun buildViewer(panel: SlidePanel) {
     val inputTextLine =
         InputTextLine(panel, 0, 30, panel.width, 30) {
@@ -264,7 +267,7 @@ private fun buildViewer(panel: SlidePanel) {
                     it,
                     length = State.length.get(),
                     offset = State.offset.get(),
-                    levels = State.levels
+                    levels = State.levels.get()
                 )
             )
         }
@@ -324,6 +327,23 @@ private fun buildKafkaLagView(panel: SlidePanel) {
     ) { }
 }
 
+private fun buildLogGroupsView(panel: SlidePanel) {
+    panel.componentMap.getOrPut(Mode.logGroups) { mutableListOf() } += LogGroupsView(
+        panel,
+        0,
+        0,
+        panel.width,
+        panel.height - 30
+    )
+    panel.componentMap.getOrPut(Mode.logGroups) { mutableListOf() } += InputTextLine(
+        panel,
+        0,
+        30,
+        panel.width,
+        30
+    ) { }
+}
+
 object State {
     val onMac: Boolean
     val changedAt = AtomicLong(0)
@@ -332,7 +352,7 @@ object State {
     val searchTime = AtomicLong(0)
     val length = AtomicInteger(0)
     val offset = AtomicInteger(0)
-    val levels = LogLevel.entries.toMutableSet()
+    val levels = AtomicReference(LogLevel.entries.toMutableSet())
     var mode = Mode.viewer
 
     init {
@@ -345,10 +365,11 @@ enum class Mode {
     viewer,
     podSelect,
     kafkaSelect,
-    kafkaLag
+    kafkaLag,
+    logGroups
 }
 
-enum class LogLevel{
+enum class LogLevel {
     INFO, WARN, DEBUG, ERROR, UNKNOWN;
     companion object {
         fun of(value: String?): LogLevel {

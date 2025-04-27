@@ -1,8 +1,10 @@
+import app.Domain
 import java.util.*
 
 data class LogLineForStorage(
     val timestamp: Long,
     val logLevel: LogLevel,
+    val domain: Domain,
 )
 
 data class LogLineForStorageFinal(
@@ -45,14 +47,14 @@ sealed class MultiToken {
 data class PositionInfo(
     val signature: Signature,
     val posInGrouped: Int,
-    val logLine: LogLineForStorage
+    val logLine: Domain
 )
 
 
 data class FinalizedPositionInfo(
     val block: Int,
     val posInGrouped: List<Int>,
-    val logLine: LogLineForStorageFinal
+    val logLine: Domain?
 )
 
 class DrainTree {
@@ -76,12 +78,20 @@ class DrainTree {
         }
 
         private fun mapToToken(s: String): Token {
-            return try {
-                val uuid = UUID.fromString(s)
-                Token.UUIDValue(uuid)
-            } catch (e: IllegalArgumentException) {
+            return if (isPotentialUUID(s)) {
+                try {
+                    val uuid = UUID.fromString(s)
+                    Token.UUIDValue(uuid)
+                } catch (e: IllegalArgumentException) {
+                    s.toLongOrNull()?.let { Token.Number(it) } ?: Token.StringValue(s)
+                }
+            } else {
                 s.toLongOrNull()?.let { Token.Number(it) } ?: Token.StringValue(s)
             }
+        }
+
+        private fun isPotentialUUID(s: String): Boolean {
+            return s.length == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
         }
 
         private fun getStringFromToken(token: Token): String = when (token) {
@@ -135,10 +145,7 @@ class DrainTree {
                     posInGrouped = posInGrouped.mapIndexed { index, token ->
                         uniques[index][token] ?: throw IllegalStateException("Token not found")
                     },
-                    logLine = LogLineForStorageFinal(
-                        timestamp = posInfo.logLine.timestamp,
-                        logLevel = posInfo.logLine.logLevel,
-                    )
+                    logLine = posInfo.logLine
                 )
             }
 
@@ -174,7 +181,7 @@ class DrainTree {
         }
     }
 
-    fun logClusters(): List<Triple<Long, String, Byte>> {
+    fun logClusters(): List<LogCluster> {
         return if (finalizedPositionInfo.isEmpty()) {
             val (finalized, tokenStorage) = mergeGroupedTokens()
             getLogClusters(generateMultiTokens(tokenStorage), finalized)
@@ -186,12 +193,12 @@ class DrainTree {
     private fun getLogClusters(
         logStorage: List<List<MultiToken>>,
         positionInfo: List<FinalizedPositionInfo>
-    ): List<Triple<Long, String, Byte>> {
+    ): List<LogCluster> {
         val matches = LongArray(logStorage.size)
         val severityNumbers = ByteArray(logStorage.size)
         positionInfo.forEach {
             matches[it.block]++
-            severityNumbers[it.block] = it.logLine.logLevel.ordinal.toByte()
+            severityNumbers[it.block] = it.logLine!!.level.ordinal.toByte()
         }
 
         val result = logStorage.map { vec ->
@@ -210,14 +217,14 @@ class DrainTree {
         }
 
         return matches.indices.map { i ->
-            Triple(matches[i], result[i], severityNumbers[i])
+            LogCluster(matches[i]+1,  LogLevel.entries[severityNumbers[i].toInt()],result[i])
         }
     }
 
-    fun add(logLine: LogLineInn): Int {
-        val line = logLine.body
+    fun add(logLine: Domain): Int {
+        val line = logLine.message
         val tokens = line.split(" ").map { mapToToken(it) }
-        val signature = generateSignature(tokens, logLine.logLevel)
+        val signature = generateSignature(tokens, logLine.level)
         val entry = grouped.getOrPut(signature) { ArrayList() }
         entry.add(tokens)
         val positionIndices = positionInfoHashMap.getOrPut(signature) { ArrayList() }
@@ -226,44 +233,33 @@ class DrainTree {
             PositionInfo(
                 signature = signature,
                 posInGrouped = entry.size - 1,
-                logLine = LogLineForStorage(
-                    timestamp = logLine.timeUnixMillis,
-                    logLevel = logLine.logLevel
+                logLine = logLine
                 )
             )
-        )
+
         return positionInfo.size - 1
     }
 
-    fun get(index: Int): LogLinePart {
+    fun get(index: Int): Domain {
         return if (finalizedPositionInfo.isEmpty()) {
             val positionInfo = positionInfo[index]
-            LogLinePart(
-                timestamp = positionInfo.logLine.timestamp,
-                level = positionInfo.logLine.logLevel,
-                body = grouped[positionInfo.signature]!![positionInfo.posInGrouped].joinToString(" ") {
-                    when (it) {
-                        is Token.StringValue -> it.value
-                        is Token.UUIDValue -> it.value.toString()
-                        is Token.Number -> it.value.toString()
-                    }
-                },
-            )
+//            val message = grouped[positionInfo.signature]!![positionInfo.posInGrouped].joinToString(" ") {
+//                when (it) {
+//                    is Token.StringValue -> it.value
+//                    is Token.UUIDValue -> it.value.toString()
+//                    is Token.Number -> it.value.toString()
+//                }
+//            }
+            positionInfo.logLine
         } else {
-            val finalized = finalizedPositionInfo[index]
-            val vec = tokenStorage[finalized.block]
-            val body = finalized.posInGrouped.mapIndexed { i, pos ->
-                when (val token = vec[i]) {
-                    is MultiToken.StringValue -> token.values[pos]
-                    is MultiToken.UUIDValue -> token.values[pos].toString()
-                    is MultiToken.Number -> token.values[pos].toString()
-                }
-            }.joinToString(" ")
-            LogLinePart(
-                timestamp = finalized.logLine.timestamp,
-                level = finalized.logLine.logLevel,
-                body = body,
-            )
+//            val message = finalizedPositionInfo[index].posInGrouped.mapIndexed { i, pos ->
+//                when (val token = tokenStorage[finalizedPositionInfo[index].block][i]) {
+//                    is MultiToken.StringValue -> token.values[pos]
+//                    is MultiToken.UUIDValue -> token.values[pos].toString()
+//                    is MultiToken.Number -> token.values[pos].toString()
+//                }
+//            }.joinToString(" ")
+            finalizedPositionInfo[index].logLine!!
         }
     }
 
@@ -291,10 +287,7 @@ class DrainTree {
             FinalizedPositionInfo(
                 block = 0,
                 posInGrouped = emptyList(),
-                logLine = LogLineForStorageFinal(
-                    timestamp = 0,
-                    logLevel = LogLevel.UNKNOWN
-                )
+                logLine = null
             )
         }
 
@@ -308,17 +301,5 @@ class DrainTree {
     }
 }
 
-// Placeholder for LogLineInn (since original definition is not provided)
-data class LogLineInn(
-    val serviceName: String,
-    val body: String,
-    val timeUnixMillis: Long,
-    val logLevel: LogLevel,
-    val attributes: List<Pair<String, String>>,
-    val severityText: Level
-)
 
-// Placeholder for Level enum
-enum class Level {
-    TRACE, DEBUG, INFO, WARN, ERROR
-}
+data class LogCluster(val count: Long, val level: LogLevel, val block: String)

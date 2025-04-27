@@ -80,7 +80,7 @@ class Kube {
                 .firstOrNull { it.metadata.name == pod }?.metadata?.namespace ?: return@launch
 
             getLogSequencePrev(pod, podNamespacePair).forEach {
-                Channels.popChannel.send(AddToIndex(it, pod))
+                Channels.popChannel.send(AddToIndex(it, pod,true))
             }
 
             while (notStopping.get()) {
@@ -92,7 +92,7 @@ class Kube {
                             if (line.isNullOrBlank()) {
                                 notStopping.set(false)
                             }
-                            Channels.popChannel.send(AddToIndex(line, pod))
+                            Channels.popChannel.send(AddToIndex(line, pod,true))
 
                         }
                     }

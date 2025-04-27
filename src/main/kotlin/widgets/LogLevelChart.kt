@@ -118,8 +118,6 @@ class LogLevelChart(
         }
     }
 
-    /** Returns the currently selected log levels. */
-    fun getSelectedLevels(): Set<LogLevel> = State.levels
 
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
         lock.lock()
@@ -173,7 +171,7 @@ class LogLevelChart(
 
             var currentHeight = 0
             levels.forEach { level ->
-                if (level in State.levels) {
+                if (level in State.levels.get()) {
                     val count = timePoint.counts.getOrDefault(level, 0)
                     if (count > 0) {
                         val barHeight = ((count.toFloat() / currentScaleMax) * (height - 80)).toInt().coerceAtLeast(1)
@@ -222,7 +220,7 @@ class LogLevelChart(
         levels.forEachIndexed { index, level ->
             val boxX = startX + (index * labelWidth)
             val boxY = 15
-            val isSelected = level in State.levels
+            val isSelected = level in State.levels.get()
 
             if (isSelected) {
                 color = getLevelColor(level).let { Color(it.red, it.green, it.blue, 40) }
@@ -251,8 +249,13 @@ class LogLevelChart(
 
     override fun mouseClicked(e: MouseEvent) {
         levelRectangles.entries.find { it.value.contains(e.point) }?.key?.let { level ->
-            if (level in State.levels && State.levels.size > 1) State.levels.remove(level)
-            else State.levels.add(level)
+            if (level in State.levels.get() && State.levels.get().size > 1) {
+                val logLevels = State.levels.get()
+                logLevels.remove(level)
+                State.levels.set(
+                    logLevels
+                )
+            } else State.levels.get().add(level)
             onLevelsChanged?.invoke()
         }
     }

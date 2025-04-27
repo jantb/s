@@ -1,6 +1,9 @@
 package app
 
+import DrainTree
+import LogCluster
 import LogLevel
+import State
 import deserializeJsonToObject
 import parallelSortWith
 import util.Index
@@ -11,24 +14,53 @@ import java.time.OffsetDateTime
 const val cap = 512
 
 class ValueStore : Serializable {
-    private val levelIndexes = mutableMapOf<LogLevel, MutableList<Index<Domain>>>()
+    private val levelIndexes = mutableMapOf<LogLevel, MutableList<Pair<Index<Int>, DrainTree>>>()
     var size = 0
 
+    fun getLogClusters(): List<LogCluster> = State.levels.get().flatMap {
+        levelIndexes[it]?.flatMap { (_, clusters) ->
+            clusters.logClusters()
+        } ?: emptyList()
+    }.groupBy { it.level to it.block }
+        .map { (key, group) ->
+            val (level, block) = key
+            val totalCount = group.sumOf { it.count }
+            LogCluster(totalCount, level, block)
+        }
 
-    fun put(seq: Long, v: String, indexIdentifier: String) {
-        getLogJson(v, indexIdentifier, seq)?.let {
-            size++
-            State.indexedLines.addAndGet(1)
-            // Add to level-specific index
-            val level = it.level
+    fun put(seq: Long, v: String, indexIdentifier: String, app: Boolean) {
+        when (app) {
+            true -> getLogJson(v, indexIdentifier, seq)?.let {
+                size++
+                State.indexedLines.addAndGet(1)
+                // Add to level-specific index
+                val level = it.level
 
-
-            val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index()) }
-            if (levelIndexList.last().size >= cap) {
-                levelIndexList.last().convertToHigherRank()
-                levelIndexList.add(Index())
+                val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index<Int>() to DrainTree()) }
+                if (levelIndexList.last().first.size >= cap) {
+                    levelIndexList.last().first.convertToHigherRank()
+                    levelIndexList.last().second.final()
+                    levelIndexList.add(Index<Int>() to DrainTree())
+                }
+                levelIndexList.last().first.add(levelIndexList.last().second.add(it), it.toString())
             }
-            levelIndexList.last().add(it)
+
+            false -> getLogJson(v, indexIdentifier, seq)?.let {
+                size++
+                State.indexedLines.addAndGet(1)
+                // Add to level-specific index
+                val level = it.level
+
+
+                val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index<Int>() to DrainTree()) }
+                if (levelIndexList.last().first.size >= cap) {
+                    levelIndexList.last().first.convertToHigherRank()
+                    levelIndexList.last().second.final()
+                    levelIndexList.add(Index<Int>() to DrainTree())
+                }
+
+                levelIndexList.last().first.add(levelIndexList.last().second.add(it), it.toString())
+            }
         }
     }
 
@@ -53,21 +85,23 @@ class ValueStore : Serializable {
         }
     }
 
-    suspend fun search(query: String, length: Int, offsetLock: Long, levels: Set<LogLevel>): List<Domain> {
+    suspend fun search(query: String, length: Int, offsetLock: Long): List<Domain> {
         val q = getQuery(query)
 
         // If levels are specified, search only those level indexes
         val results = mutableListOf<Domain>()
 
         // Search each specified level
-        for (level in levels) {
+        val logLevels = State.levels.get().toSet()
+        for (level in logLevels) {
             val levelIndexList = levelIndexes[level] ?: continue
 
             // Search the live index for this level
             if (levelIndexList.isNotEmpty()) {
-                val liveResults = levelIndexList.last().searchMustInclude(q.filteredQueryList) {
-                    it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
-                }.take(length).toList()
+                val liveResults = levelIndexList.last().first.searchMustInclude(q.filteredQueryList) {
+                    val domain = levelIndexList.last().second.get(it)
+                    domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)
+                }.take(length).map { levelIndexList.last().second.get(it) }.toList()
 
                 results.addAll(liveResults)
 
@@ -75,9 +109,10 @@ class ValueStore : Serializable {
                 if (liveResults.size < length) {
                     val rankedResults = levelIndexList.dropLast(1).reversed().asSequence()
                         .flatMap { index ->
-                            index.searchMustInclude(q.filteredQueryList) {
-                                it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
-                            }.take(length - liveResults.size)
+                            index.first.searchMustInclude(q.filteredQueryList) {
+                                val domain = index.second.get(it)
+                                domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)
+                            }.take(length - liveResults.size).map { index.second.get(it) }
                         }.take(length - liveResults.size)
                         .toList()
 

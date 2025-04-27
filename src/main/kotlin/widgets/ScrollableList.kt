@@ -391,8 +391,6 @@ class ScrollableList(
         State.offset.set(indexOffset)
         State.length.set(length)
 
-        // Get selected levels from the chart
-        val selectedLevels = logLevelChart.getSelectedLevels()
 
         // Include selected levels in the search query
         Channels.searchChannel.trySendBlocking(
@@ -400,7 +398,7 @@ class ScrollableList(
                 query = inputTextLine.text,
                 offset = indexOffset,
                 length = length,
-                levels = selectedLevels
+                levels = State.levels.get(),
             )
         )
     }

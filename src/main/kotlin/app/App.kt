@@ -2,12 +2,14 @@
 
 package app
 
+import LogCluster
 import LogLevel
 import State.changedAt
 import State.indexedLines
 import State.searchTime
 import app.Channels.cmdGuiChannel
 import app.Channels.popChannel
+import app.Channels.refreshChannel
 import app.Channels.searchChannel
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -22,7 +24,6 @@ import merge
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.ExperimentalTime
 import kotlin.time.measureTimedValue
@@ -38,11 +39,12 @@ class App : CoroutineScope {
                 when (val msg = select {
                     searchChannel.onReceive { it }
                     popChannel.onReceive { it }
+                    refreshChannel.onReceive { it }
                 }) {
                     is AddToIndex -> {
                         seq++
                         valueStores.computeIfAbsent(msg.indexIdentifier) { ValueStore() }
-                            .put(seq, msg.value, msg.indexIdentifier)
+                            .put(seq, msg.value, msg.indexIdentifier, msg.app)
                         changedAt.set(System.nanoTime())
                     }
 
@@ -55,6 +57,9 @@ class App : CoroutineScope {
                         if (remove != null) {
                             indexedLines.addAndGet(-remove.size)
                         }
+                    }
+                    is RefreshLogGroups ->{
+                        cmdGuiChannel.put(LogClusterList(valueStores.values.map { it.getLogClusters() }.flatten()))
                     }
 
                     is QueryChanged -> {
@@ -71,8 +76,7 @@ class App : CoroutineScope {
                                 it.value.search(
                                     query = msg.query,
                                     length = msg.length + msg.offset,
-                                    offsetLock = offsetLock,
-                                    levels = msg.levels
+                                    offsetLock = offsetLock
                                 ).asSequence()
                             }.merge(descending = true).drop(msg.offset).take(msg.length).toList().reversed()
                         }
@@ -82,8 +86,7 @@ class App : CoroutineScope {
                                     it.value.search(
                                         query = msg.query,
                                         length = msg.length + msg.offset + 10_000,
-                                        offsetLock = offsetLock,
-                                        levels = msg.levels
+                                        offsetLock = offsetLock
                                     ).asSequence()
                                 }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList()
 
@@ -107,6 +110,7 @@ object Channels {
     val kafkaSelectChannel = LinkedBlockingDeque<KafkaSelectMessage>(1)
     val popChannel = Channel<CmdMessage>(capacity = BUFFERED)
     val searchChannel = Channel<QueryChanged>(capacity = CONFLATED)
+    val refreshChannel = Channel<CmdMessage>(1)
 }
 
 sealed class PodsMessage
@@ -128,9 +132,11 @@ object ClearIndex : CmdMessage()
 
 class ClearNamedIndex(val name: String) : CmdMessage()
 
-class AddToIndex(val value: String, val indexIdentifier: String = UUID.randomUUID().toString()) :
-    CmdMessage()
+class AddToIndex(val value: String, val indexIdentifier: String = UUID.randomUUID().toString(), val app: Boolean) : CmdMessage()
+data object RefreshLogGroups : CmdMessage()
 
 sealed class CmdGuiMessage
 class ResultChanged(val result: List<Domain>, val chartResult: List<Domain> = emptyList()) : CmdGuiMessage()
 class KafkaLagInfo(val lagInfo: List<kafka.Kafka.LagInfo>) : CmdGuiMessage()
+class LogClusterList(val clusters: List<LogCluster>) : CmdGuiMessage()
+

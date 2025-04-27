@@ -256,7 +256,7 @@ class Kafka {
                         Channels.popChannel.send(
                             AddToIndex(
                                 "${Instant.ofEpochMilli(consumerRecord.timestamp())} $message",
-                                consumerRecord.topic()
+                                consumerRecord.topic(), false
                             )
                         )
                     }

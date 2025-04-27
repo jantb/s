@@ -15,15 +15,15 @@ class Index<T : Comparable<T>>(
     var size: Int = 0
     private var cacheKey: List<List<String>>? = null
     private var cacheValue: List<T>? = null
-    fun add(t: T) {
+    fun add(t: T, s :String) {
         require(!isHigherRank) {
             "Can not add values to a higher rank index"
         }
-        if (t.toString().isBlank()) {
+        if (s.isBlank()) {
             return
         }
 
-        val grams = t.toString().grams()
+        val grams = s.grams()
 
         val shardSize = Integer.numberOfTrailingZeros(estimate(grams.size, probability))
         shardArray[shardSize]?.add(grams, t) ?: run {
