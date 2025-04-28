@@ -112,7 +112,7 @@ object Channels {
     val kafkaSelectChannel = LinkedBlockingDeque<KafkaSelectMessage>(1)
     val popChannel = Channel<CmdMessage>(capacity = BUFFERED)
     val searchChannel = Channel<QueryChanged>(capacity = CONFLATED)
-    val refreshChannel = Channel<CmdMessage>(1)
+    val refreshChannel = Channel<CmdMessage>(CONFLATED)
 }
 
 sealed class PodsMessage

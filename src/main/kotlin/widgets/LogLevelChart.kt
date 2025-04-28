@@ -177,7 +177,7 @@ class LogLevelChart(
                         val barHeight = ((count.toFloat() / currentScaleMax) * (height - 80)).toInt().coerceAtLeast(1)
                         color = getLevelColor(level)
                         fillRect(
-                            xPosBase, height - 40 - currentHeight - barHeight, timeSlotWidth.toInt() - 1, barHeight
+                            xPosBase, height - 35 - currentHeight - barHeight, timeSlotWidth.toInt() - 1, barHeight
                         )
                         currentHeight += barHeight
                     }
