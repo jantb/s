@@ -111,7 +111,7 @@ class Kafka {
 
                     is ListLag -> {
                         val lagInfo = listLag(adminClient)
-                        Channels.cmdGuiChannel.put(KafkaLagInfo(lagInfo))
+                        Channels.kafkaCmdGuiChannel.put(KafkaLagInfo(lagInfo))
                     }
 
                     is ListenToTopic -> {

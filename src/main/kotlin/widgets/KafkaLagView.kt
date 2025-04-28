@@ -4,10 +4,9 @@ import ComponentOwn
 import SlidePanel
 import State
 import app.*
-import app.Channels.cmdGuiChannel
+import app.Channels.kafkaCmdGuiChannel
 import app.Channels.kafkaChannel
 import kafka.Kafka
-import kotlinx.coroutines.channels.trySendBlocking
 import util.UiColors
 import util.Styles
 import java.awt.Font
@@ -17,7 +16,6 @@ import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
-import kotlin.math.abs
 
 class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int) : ComponentOwn(),
     KeyListener,
@@ -41,7 +39,7 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
         val thread = Thread {
             while (true) {
                 try {
-                    when (val msg = cmdGuiChannel.take()) {
+                    when (val msg = kafkaCmdGuiChannel.take()) {
                         is KafkaLagInfo -> {
                             lagInfo.set(msg.lagInfo)
                             SwingUtilities.invokeLater {

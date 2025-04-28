@@ -19,6 +19,7 @@ import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
+import java.time.Instant
 import kotlin.math.absoluteValue
 
 class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: Int, y: Int, width: Int, height: Int) :
@@ -53,7 +54,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
     fun setLogJson(domain: Domain) {
         this.domain = domain
         this.text.clear()
-        this.text.addText(domain.timestamp.toString(), color = UiColors.teal)
+        this.text.addText(Instant.ofEpochMilli(domain.timestamp).toString(), color = UiColors.teal)
 
         this.text.addText(" ", color = UiColors.defaultText)
         if (domain.topic == "") {

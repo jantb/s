@@ -7,7 +7,8 @@ import LogLevel
 import State.changedAt
 import State.indexedLines
 import State.searchTime
-import app.Channels.cmdGuiChannel
+import app.Channels.kafkaCmdGuiChannel
+import app.Channels.logClusterCmdGuiChannel
 import app.Channels.popChannel
 import app.Channels.refreshChannel
 import app.Channels.searchChannel
@@ -59,7 +60,7 @@ class App : CoroutineScope {
                         }
                     }
                     is RefreshLogGroups ->{
-                        cmdGuiChannel.put(LogClusterList(valueStores.values.map { it.getLogClusters() }.flatten()))
+                        logClusterCmdGuiChannel.put(LogClusterList(valueStores.values.map { it.getLogClusters() }.flatten()))
                     }
 
                     is QueryChanged -> {
@@ -92,7 +93,7 @@ class App : CoroutineScope {
 
                         searchTime.set(listResults.duration.inWholeNanoseconds)
 
-                        cmdGuiChannel.put(ResultChanged(listResults.value, chartResults))
+                        kafkaCmdGuiChannel.put(ResultChanged(listResults.value, chartResults))
                     }
                 }
             }
@@ -104,7 +105,8 @@ class App : CoroutineScope {
 }
 
 object Channels {
-    val cmdGuiChannel = LinkedBlockingDeque<CmdGuiMessage>(1)
+    val kafkaCmdGuiChannel = LinkedBlockingDeque<CmdGuiMessage>(1)
+    val logClusterCmdGuiChannel = LinkedBlockingDeque<CmdGuiMessage>(1)
     val podsChannel = LinkedBlockingDeque<PodsMessage>(1)
     val kafkaChannel = LinkedBlockingDeque<KafkaMessage>(1)
     val kafkaSelectChannel = LinkedBlockingDeque<KafkaSelectMessage>(1)

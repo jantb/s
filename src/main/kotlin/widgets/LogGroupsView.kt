@@ -5,7 +5,8 @@ import LogCluster
 import LogLevel
 import SlidePanel
 import State
-import app.Channels.cmdGuiChannel
+import app.Channels.kafkaCmdGuiChannel
+import app.Channels.logClusterCmdGuiChannel
 import app.Channels.refreshChannel
 import app.LogClusterList
 import app.RefreshLogGroups
@@ -43,7 +44,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         val thread = Thread {
             while (true) {
                 try {
-                    when (val msg = cmdGuiChannel.take()) {
+                    when (val msg = logClusterCmdGuiChannel.take()) {
                         is LogClusterList -> {
                             logClusters.set(msg.clusters)
                             SwingUtilities.invokeLater {

@@ -15,7 +15,6 @@ import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.ReentrantLock
 
 class ScrollableList(
     private val panel: SlidePanel,
@@ -77,7 +76,7 @@ class ScrollableList(
     private fun start() {
         val thread = Thread {
             while (true) {
-                when (val msg = Channels.cmdGuiChannel.take()) {
+                when (val msg = Channels.kafkaCmdGuiChannel.take()) {
                     is ResultChanged -> {
                         // Use the chart result for the chart if available, otherwise use the regular result
                         // Update the chart with the chart data
