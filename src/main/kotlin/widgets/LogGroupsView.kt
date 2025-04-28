@@ -9,7 +9,6 @@ import app.Channels.cmdGuiChannel
 import app.Channels.refreshChannel
 import app.LogClusterList
 import app.RefreshLogGroups
-import kotlinx.coroutines.runBlocking
 import util.Styles
 import util.UiColors
 import java.awt.Font
@@ -113,7 +112,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         g2d.color = UiColors.selection
         g2d.fillRect(hideButtonRect.x, hideButtonRect.y, hideButtonRect.width, hideButtonRect.height)
         g2d.color = UiColors.defaultText
-        val hideButtonText = if (hideLowSeverity) "Show All Severities" else "Hide Low Severity"
+        val hideButtonText = if (hideLowSeverity) "Show All Levels" else "Hide Low Level"
         g2d.drawString(hideButtonText, hideButtonRect.x + 10, hideButtonRect.y + 15)
 
         // Sort button
@@ -135,8 +134,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
 
         // Measure column header widths
         val fontMetrics = g2d.fontMetrics
-        val columnHeaders = listOf("Count", "Message Pattern", "Severity")
-        val sampleData = logClusters.get().take(visibleLines)
+        val columnHeaders = listOf("Count", "Message Pattern", "Level")
+        val sampleData = logClusters.get()
 
         val columnWidths = columnHeaders.mapIndexed { index, header ->
             val maxDataWidth = sampleData.maxOfOrNull {

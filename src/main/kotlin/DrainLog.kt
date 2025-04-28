@@ -58,11 +58,11 @@ data class FinalizedPositionInfo(
 )
 
 class DrainTree {
-    private var tokenStorage: MutableList<List<MultiToken>> = ArrayList()
     private var grouped: MutableMap<Signature, MutableList<List<Token>>> = HashMap()
     private var positionInfo: MutableList<PositionInfo> = ArrayList()
     private var positionInfoHashMap: MutableMap<Signature, MutableList<Int>> = HashMap()
     private var finalizedPositionInfo: MutableList<FinalizedPositionInfo> = ArrayList()
+    private var logClusters: MutableList<LogCluster> = mutableListOf()
 
     companion object {
         private fun generateSignature(tokens: List<Token>, logLevel: LogLevel): Signature {
@@ -182,11 +182,11 @@ class DrainTree {
     }
 
     fun logClusters(): List<LogCluster> {
-        return if (finalizedPositionInfo.isEmpty()) {
+        return if (logClusters.isEmpty()) {
             val (finalized, tokenStorage) = mergeGroupedTokens()
             getLogClusters(generateMultiTokens(tokenStorage), finalized)
         } else {
-            getLogClusters(tokenStorage, finalizedPositionInfo)
+            logClusters
         }
     }
 
@@ -268,8 +268,7 @@ class DrainTree {
         positionInfo.clear()
         grouped.clear()
         positionInfoHashMap.clear()
-        this.finalizedPositionInfo = finalizedInfo.toMutableList()
-        this.tokenStorage = generateMultiTokens(tokenStorage).toMutableList()
+        this.logClusters.addAll(   getLogClusters(generateMultiTokens(tokenStorage), finalizedInfo))
     }
 
     private fun mergeGroupedTokens(): Pair<List<FinalizedPositionInfo>, List<List<List<Token>>>> {
