@@ -135,15 +135,17 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
 
         // Measure column header widths
         val fontMetrics = g2d.fontMetrics
-        val columnHeaders = listOf("Count", "Message Pattern", "Level")
+        val columnHeaders = listOf("Count", "Level", "IndexId", "Message Pattern")
+
         val sampleData = logClusters.get()
 
         val columnWidths = columnHeaders.mapIndexed { index, header ->
             val maxDataWidth = sampleData.maxOfOrNull {
                 when (index) {
                     0 -> fontMetrics.stringWidth(it.count.toString())
-                    1 -> fontMetrics.stringWidth(it.block)
-                    2 -> fontMetrics.stringWidth(it.level.name)
+                    1 -> fontMetrics.stringWidth(it.level.name)
+                    2 -> fontMetrics.stringWidth(it.indexIdentifier ?: "")
+                    3 -> fontMetrics.stringWidth(it.block)
                     else -> 0
                 }
             } ?: 0
@@ -165,7 +167,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         // Filter out low severity logs (DEBUG and INFO) if flag is set
         if (hideLowSeverity) {
             currentClusters = currentClusters.filter {
-                it.level != LogLevel.DEBUG && it.level != LogLevel.INFO
+                it.level != LogLevel.DEBUG && it.level != LogLevel.INFO && it.level != LogLevel.UNKNOWN
             }
         }
 
@@ -189,8 +191,9 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
 
             val values = listOf(
                 cluster.count.toString(),
-                cluster.block,
-                cluster.level.name
+                cluster.level.name,
+                cluster.indexIdentifier ?: "",
+                cluster.block
             )
 
             // Draw each value in its column

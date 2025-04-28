@@ -352,7 +352,11 @@ object State {
     val searchTime = AtomicLong(0)
     val length = AtomicInteger(0)
     val offset = AtomicInteger(0)
-    val levels = AtomicReference(LogLevel.entries.toMutableSet())
+    val levels = AtomicReference(run{
+        val logLevels = LogLevel.entries.toMutableSet()
+        logLevels.remove(LogLevel.UNKNOWN)
+        logLevels
+    })
     var mode = Mode.viewer
 
     init {

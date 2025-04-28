@@ -57,7 +57,7 @@ data class FinalizedPositionInfo(
     val logLine: Domain?
 )
 
-class DrainTree {
+class DrainTree(val indexIdentifier: String ="") {
     private var grouped: MutableMap<Signature, MutableList<List<Token>>> = HashMap()
     private var positionInfo: MutableList<PositionInfo> = ArrayList()
     private var positionInfoHashMap: MutableMap<Signature, MutableList<Int>> = HashMap()
@@ -217,7 +217,7 @@ class DrainTree {
         }
 
         return matches.indices.map { i ->
-            LogCluster(matches[i]+1,  LogLevel.entries[severityNumbers[i].toInt()],result[i])
+            LogCluster(matches[i]+1,  LogLevel.entries[severityNumbers[i].toInt()],result[i], indexIdentifier)
         }
     }
 
@@ -301,4 +301,4 @@ class DrainTree {
 }
 
 
-data class LogCluster(val count: Long, val level: LogLevel, val block: String)
+data class LogCluster(val count: Long, val level: LogLevel, val block: String, val indexIdentifier: String) {}

@@ -17,16 +17,19 @@ class ValueStore : Serializable {
     private val levelIndexes = mutableMapOf<LogLevel, MutableList<Pair<Index<Domain>, DrainTree>>>()
     var size = 0
 
-    fun getLogClusters(): List<LogCluster> = State.levels.get().flatMap {
-        levelIndexes[it]?.flatMap { (_, clusters) ->
-            clusters.logClusters()
+    fun getLogClusters(): List<LogCluster> = State.levels.get().flatMap { level ->
+        levelIndexes[level]?.flatMap { (index, drainTree) ->
+            drainTree.logClusters().map { cluster ->
+                cluster.copy(indexIdentifier = drainTree.indexIdentifier)
+            }
         } ?: emptyList()
-    }.groupBy { it.level to it.block }
+    }.groupBy { it.level to it.block  }
         .map { (key, group) ->
             val (level, block) = key
             val totalCount = group.sumOf { it.count }
-            LogCluster(totalCount, level, block)
+            LogCluster(totalCount, level, block, group.first().indexIdentifier)
         }
+
 
     fun put(seq: Long, v: String, indexIdentifier: String, app: Boolean) {
         when (app) {
@@ -36,11 +39,11 @@ class ValueStore : Serializable {
                 // Add to level-specific index
                 val level = it.level
 
-                val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index<Domain>() to DrainTree()) }
+                val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
                 if (levelIndexList.last().first.size >= cap) {
                     levelIndexList.last().first.convertToHigherRank()
                     levelIndexList.last().second.final()
-                    levelIndexList.add(Index<Domain>() to DrainTree())
+                    levelIndexList.add(Index<Domain>() to DrainTree(indexIdentifier))
                 }
                 levelIndexList.last().second.add(it)
                 levelIndexList.last().first.add(it)
@@ -53,11 +56,11 @@ class ValueStore : Serializable {
                 val level = it.level
 
 
-                val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index<Domain>() to DrainTree()) }
+                val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
                 if (levelIndexList.last().first.size >= cap) {
                     levelIndexList.last().first.convertToHigherRank()
                     levelIndexList.last().second.final()
-                    levelIndexList.add(Index<Domain>() to DrainTree())
+                    levelIndexList.add(Index<Domain>() to DrainTree(indexIdentifier))
                 }
                 levelIndexList.last().second.add(it)
                 levelIndexList.last().first.add(it)
