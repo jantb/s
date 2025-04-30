@@ -128,7 +128,7 @@ class KafkaSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, hei
             open = !open
             if (open) {
                 Channels.kafkaChannel.put(UnListenToTopics)
-                Channels.popChannel.trySendBlocking(ClearIndex)
+           //     Channels.popChannel.trySendBlocking(ClearIndex)
                 val listTopics = ListTopics()
                 Channels.kafkaChannel.put(listTopics)
                 Channels.kafkaChannel.put(ListLag)

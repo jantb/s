@@ -200,7 +200,7 @@ class Kafka {
         //  Channels.cmdChannel.put(ClearIndex)
         notStopping.set(true)
         scope.launch {
-            Channels.popChannel.send(ClearIndex)
+          //  Channels.popChannel.send(ClearIndex)
             val map =
                 kafkaConsumer.listTopics().filter { topics.contains(it.key) }.map { it.value }.flatten()
                     .map { TopicPartition(it.topic(), it.partition()) }

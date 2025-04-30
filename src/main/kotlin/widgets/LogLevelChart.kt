@@ -184,7 +184,14 @@ class LogLevelChart(
                 }
             }
         }
+// Draw average MPS
+        val totalMessages = timePoints.sumOf { it.counts.values.sum() }
+        val durationSecs = Duration.between(startTime, endTime).seconds.coerceAtLeast(1)
+        val avgMps = totalMessages.toFloat() / durationSecs
 
+        color = Color.LIGHT_GRAY
+        font = Font("Monospaced", Font.PLAIN, 12)
+        drawString("Avg MPS: %.2f".format(avgMps), width - 120, 25)
         drawLegend(levels)
     }
 

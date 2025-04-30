@@ -129,7 +129,7 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
         // Measure column header widths
         val fontMetrics = g2d.fontMetrics
         val columnHeaders = listOf("Group ID", "Topic", "Partition", "Current Offset", "End Offset", "Lag")
-        val sampleData = lagInfo.get().take(visibleLines) // limit to visible for perf
+        val sampleData = lagInfo.get()
 
         val columnWidths = columnHeaders.mapIndexed { index, header ->
             val maxDataWidth = sampleData.maxOfOrNull {
