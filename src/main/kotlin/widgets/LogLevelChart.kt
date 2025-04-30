@@ -245,6 +245,7 @@ class LogLevelChart(
         LogLevel.DEBUG -> UiColors.defaultText
         LogLevel.ERROR -> UiColors.red
         LogLevel.UNKNOWN -> Color.GRAY
+        LogLevel.KAFKA -> UiColors.teal
     }
 
     override fun mouseClicked(e: MouseEvent) {

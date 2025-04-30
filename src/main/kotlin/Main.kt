@@ -374,7 +374,7 @@ enum class Mode {
 }
 
 enum class LogLevel {
-    INFO, WARN, DEBUG, ERROR, UNKNOWN;
+    INFO, WARN, DEBUG, ERROR, UNKNOWN, KAFKA;
     companion object {
         fun of(value: String?): LogLevel {
             if (value == null) return UNKNOWN

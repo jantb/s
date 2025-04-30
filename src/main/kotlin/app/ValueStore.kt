@@ -52,17 +52,12 @@ class ValueStore : Serializable {
             false -> getLogJson(v, indexIdentifier, seq)?.let {
                 size++
                 State.indexedLines.addAndGet(1)
-                // Add to level-specific index
-                val level = it.level
 
-
-                val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
+                val levelIndexList = levelIndexes.getOrPut(LogLevel.KAFKA) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
                 if (levelIndexList.last().first.size >= cap) {
                     levelIndexList.last().first.convertToHigherRank()
-                    levelIndexList.last().second.final()
                     levelIndexList.add(Index<Domain>() to DrainTree(indexIdentifier))
                 }
-                levelIndexList.last().second.add(it)
                 levelIndexList.last().first.add(it)
             }
         }
@@ -171,27 +166,13 @@ class ValueStore : Serializable {
         queryListNot: List<String>,
         domain: Domain
     ): Boolean {
-        val contains =
-            if (queryList.isEmpty() && queryListNot.isEmpty()) {
-                true
-            } else if (queryList.isEmpty()) {
-                queryListNot.none {
-                    domain.toString().contains(
-                        it,
-                        true
-                    )
-                }
-            } else if (queryListNot.isEmpty()) {
-                queryList.all { domain.toString().contains(it, true) }
-            } else {
-                queryList.all { domain.toString().contains(it, true) } && queryListNot.none {
-                    domain.toString().contains(
-                        it,
-                        true
-                    )
-                }
-            }
-        return contains
+        val domainStr = domain.toString()
+        return when {
+            queryList.isEmpty() && queryListNot.isEmpty() -> true
+            queryList.isEmpty() -> queryListNot.none { domainStr.contains(it, ignoreCase = true) }
+            queryListNot.isEmpty() -> queryList.all { domainStr.contains(it, ignoreCase = true) } &&
+                    queryListNot.none { domainStr.contains(it, ignoreCase = true) }
+            else -> queryList.all { domainStr.contains(it, ignoreCase = true) }
+        }
     }
-
 }
