@@ -17,16 +17,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class ScrollableList(
-    private val panel: SlidePanel,
-    x: Int,
-    y: Int,
-    width: Int,
-    height: Int,
-    private val inputTextLine: InputTextLine
-) : ComponentOwn(),
-    KeyListener,
-    MouseListener, MouseWheelListener,
-    MouseMotionListener {
+    private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int, private val inputTextLine: InputTextLine
+) : ComponentOwn(), KeyListener, MouseListener, MouseWheelListener, MouseMotionListener {
     private var selectedTextRange: IntRange? = null
     private var highlightWordMouseOver: IntRange? = null
     private var indexOffset = 0
@@ -36,12 +28,7 @@ class ScrollableList(
 
     // Chart for log levels
     private val logLevelChart = LogLevelChart(
-        x = x,
-        y = 0,
-        width = width,
-        height = 100,
-        onLevelsChanged = { updateResults() }
-    )
+        x = x, y = 0, width = width, height = 100, onLevelsChanged = { updateResults() })
     private var chartHeight = 100
 
     init {
@@ -80,9 +67,7 @@ class ScrollableList(
                     is ResultChanged -> {
                         // Use the chart result for the chart if available, otherwise use the regular result
                         // Update the chart with the chart data
-                        if (msg.chartResult.isNotEmpty()) (
-                                logLevelChart.updateChart(msg.chartResult)
-                                )
+                        if (msg.chartResult.isNotEmpty()) (logLevelChart.updateChart(msg.chartResult))
                         // Update the scrollable list with the regular result
                         updateResults(msg.result)
                     }
@@ -108,9 +93,7 @@ class ScrollableList(
                 this.height = height
             }
             this.image = BufferedImage(
-                width.coerceIn(1..Int.MAX_VALUE),
-                this.height.coerceIn(1..Int.MAX_VALUE),
-                BufferedImage.TYPE_INT_RGB
+                width.coerceIn(1..Int.MAX_VALUE), this.height.coerceIn(1..Int.MAX_VALUE), BufferedImage.TYPE_INT_RGB
             )
             this.g2d = this.image.createGraphics()
             this.image
@@ -176,10 +159,9 @@ class ScrollableList(
     }
 
     private fun paintLineItem() {
-        lineList
-            .forEach {
-                g2d.drawImage(it.display(it.width, it.height, it.x, it.y), it.x, it.y, it.width, it.height, null)
-            }
+        lineList.forEach {
+            g2d.drawImage(it.display(it.width, it.height, it.x, it.y), it.x, it.y, it.width, it.height, null)
+        }
     }
 
 
@@ -191,32 +173,28 @@ class ScrollableList(
         when (e.keyCode) {
             KeyEvent.VK_PAGE_UP -> {
                 indexOffset += (height) / maxCharBounds.height.toInt()
-                indexOffset =
-                    ensureIndexOffset(indexOffset)
+                indexOffset = ensureIndexOffset(indexOffset)
                 updateResults()
                 setFollow()
             }
 
             KeyEvent.VK_UP -> {
                 indexOffset += 1
-                indexOffset =
-                    ensureIndexOffset(indexOffset)
+                indexOffset = ensureIndexOffset(indexOffset)
                 updateResults()
                 setFollow()
             }
 
             KeyEvent.VK_PAGE_DOWN -> {
                 indexOffset -= (height) / maxCharBounds.height.toInt()
-                indexOffset =
-                    ensureIndexOffset(indexOffset)
+                indexOffset = ensureIndexOffset(indexOffset)
                 updateResults()
                 setFollow()
             }
 
             KeyEvent.VK_DOWN -> {
                 indexOffset -= 1
-                indexOffset =
-                    ensureIndexOffset(indexOffset)
+                indexOffset = ensureIndexOffset(indexOffset)
                 updateResults()
                 setFollow()
             }

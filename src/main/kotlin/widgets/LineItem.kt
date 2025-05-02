@@ -87,8 +87,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(
             domain.application,
-            color = UiColors.visibleColors[domain.indexIdentifier.hashCode()
-                .toInt().absoluteValue % UiColors.visibleColors.size]
+            color = UiColors.visibleColors[domain.indexIdentifier.hashCode().absoluteValue % UiColors.visibleColors.size]
         )
         this.text.addText(domain.partition, color = UiColors.magenta)
 
