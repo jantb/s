@@ -101,10 +101,6 @@ class ScrollableList(
             this.x = x
             this.y = y
 
-            // Update chart dimensions
-            logLevelChart.width = width
-            logLevelChart.x = x
-
             // Make chart height proportional to window height (20% of total height, minimum 80 pixels)
             chartHeight = (height * 0.2).toInt().coerceAtLeast(80)
 

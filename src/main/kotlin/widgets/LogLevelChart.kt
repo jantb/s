@@ -184,7 +184,7 @@ class LogLevelChart(
                 }
             }
         }
-// Draw average MPS
+
         val totalMessages = timePoints.sumOf { it.counts.values.sum() }
         val durationSecs = Duration.between(startTime, endTime).seconds.coerceAtLeast(1)
         val avgMps = totalMessages.toFloat() / durationSecs
