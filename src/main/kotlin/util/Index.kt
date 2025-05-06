@@ -393,7 +393,7 @@ object GramHasher {
         }
 
         // Handle short strings (≤ 3 valid chars)
-        if (validCount <= 3) {
+        if (validCount < 3) {
             // Pad with zeros if fewer than 3 chars
             while (pos < 3) {
                 shortHash = shortHash shl 6
