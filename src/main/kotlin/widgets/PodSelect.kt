@@ -105,9 +105,6 @@ class PodSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, heigh
       }
       ((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_P -> {
         Channels.podsChannel.put(UnListenToPods)
-        runBlocking {
-          Channels.popChannel.send(ClearIndex)
-        }
         val listPods = ListPods()
         Channels.podsChannel.put(listPods)
         items.clear()

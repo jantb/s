@@ -49,9 +49,6 @@ class App : CoroutineScope {
                         changedAt.set(System.nanoTime())
                     }
 
-                    is ClearIndex -> {
-                        valueStores.clear()
-                    }
 
                     is ClearNamedIndex -> {
                         val remove = valueStores.remove(msg.name)
@@ -130,7 +127,6 @@ class KafkaSelectChangedText(val text: String) : KafkaSelectMessage()
 object UnListenToTopics : KafkaMessage()
 sealed class CmdMessage
 class QueryChanged(val query: String, val length: Int, val offset: Int, val levels: Set<LogLevel>) : CmdMessage()
-object ClearIndex : CmdMessage()
 
 class ClearNamedIndex(val name: String) : CmdMessage()
 
