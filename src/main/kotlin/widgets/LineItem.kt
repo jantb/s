@@ -103,7 +103,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
 
         this.text.addText(" ", color = UiColors.defaultText)
         this.text.addText(domain.message, color = UiColors.defaultText)
-        this.text.addText(domain.errorMessage, color = UiColors.defaultText)
+        this.text.addText(domain.errorMessage?:"", color = UiColors.defaultText)
         this.text.addText(domain.offset, color = UiColors.orange)
 
         this.text.addText(" ", color = UiColors.defaultText)

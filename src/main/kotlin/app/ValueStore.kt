@@ -23,7 +23,7 @@ class ValueStore : Serializable {
                 cluster.copy(indexIdentifier = drainTree.indexIdentifier)
             }
         } ?: emptyList()
-    }.groupBy { it.level to it.block  }
+    }.groupBy { it.level to it.block }
         .map { (key, group) ->
             val (level, block) = key
             val totalCount = group.sumOf { it.count }
@@ -39,7 +39,8 @@ class ValueStore : Serializable {
                 // Add to level-specific index
                 val level = it.level
 
-                val levelIndexList = levelIndexes.getOrPut(level) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
+                val levelIndexList =
+                    levelIndexes.getOrPut(level) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
                 if (levelIndexList.last().first.size >= cap) {
                     levelIndexList.last().first.convertToHigherRank()
                     levelIndexList.last().second.final()
@@ -53,7 +54,8 @@ class ValueStore : Serializable {
                 size++
                 State.indexedLines.addAndGet(1)
 
-                val levelIndexList = levelIndexes.getOrPut(LogLevel.KAFKA) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
+                val levelIndexList =
+                    levelIndexes.getOrPut(LogLevel.KAFKA) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
                 if (levelIndexList.last().first.size >= cap) {
                     levelIndexList.last().first.convertToHigherRank()
                     levelIndexList.add(Index<Domain>() to DrainTree(indexIdentifier))
@@ -172,7 +174,9 @@ class ValueStore : Serializable {
             queryList.isEmpty() -> queryListNot.none { domainStr.contains(it, ignoreCase = true) }
             queryListNot.isEmpty() -> queryList.all { domainStr.contains(it, ignoreCase = true) } &&
                     queryListNot.none { domainStr.contains(it, ignoreCase = true) }
+
             else -> queryList.all { domainStr.contains(it, ignoreCase = true) }
         }
     }
 }
+

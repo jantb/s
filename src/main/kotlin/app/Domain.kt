@@ -17,7 +17,7 @@ data class Domain(
     @JsonAlias("correlation.id", "X-Correlation-Id") val correlationId: String = "",
     @JsonAlias("request.id", "X-Request-Id") val requestId: String = "",
     @JsonAlias("message", "msg") var message: String = "",
-    @JsonAlias("error.message") val errorMessage: String = "",
+    @JsonAlias("error.message") val errorMessage: String? = "",
     @JsonAlias("log.level", "level") val level: LogLevel = LogLevel.UNKNOWN,
     @JsonAlias("application", "service.name") val application: String = "",
     @JsonAlias("error.type") val stacktraceType: String = "",
