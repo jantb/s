@@ -14,12 +14,11 @@ class Index<T : Comparable<T>>(
     private var isHigherRank: Boolean = false
     var size: Int = 0
     private var cacheKey: List<List<String>>? = null
-    private var cacheValue: List<T>? = null
-    fun add(t: T) {
+    fun add(t: T, s: String) {
         require(!isHigherRank) {
             "Can not add values to a higher rank index"
         }
-        val string = t.toString()
+        val string = s
         if (string.isBlank()) {
             return
         }
@@ -36,33 +35,33 @@ class Index<T : Comparable<T>>(
         size++
     }
 
-    fun searchMustInclude(valueListList: List<List<String>>, function: (T) -> Boolean): List<T> {
-        if (isHigherRank && valueListList == cacheKey) {
-            cacheValue?.let { return it }
-        }
-        // Must include all the strings in each of the lists
-        val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
+        fun<R> searchMustInclude(valueListList: List<List<String>>, predicateAndMapper: (T) -> Pair<Boolean, R>): List<R> {
+            // Must include all the strings in each of the lists
+            val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
-        val result =
-            shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending() }.merge(descending = true)
-                .filter { function(it) }.toList()
+            val result =
+                shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending() }.merge(descending = true)
+                    .map {
+                        predicateAndMapper(it) }
+                    .filter { it.first }
+                    .map { it.second }
+                    .toList()
 
-        if (isHigherRank) {
-            // save result in cache if higher rank
-            cacheKey = valueListList
-            cacheValue = result
+            if (isHigherRank) {
+                // save result in cache if higher rank
+                cacheKey = valueListList
+            }
+            return result
         }
-        return result
+
+        fun convertToHigherRank() {
+            require(!isHigherRank) {
+                "Can not convert an already converted higher rank"
+            }
+            isHigherRank = true
+            shardArray.forEach { it?.convertToHigherRankRows(goalCardinality) }
+        }
     }
-
-    fun convertToHigherRank() {
-        require(!isHigherRank) {
-            "Can not convert an already converted higher rank"
-        }
-        isHigherRank = true
-        shardArray.forEach { it?.convertToHigherRankRows(goalCardinality) }
-    }
-}
 
 class Shard<T>(
     m: Int,
@@ -392,7 +391,7 @@ object GramHasher {
             }
         }
 
-        // Handle short strings (≤ 3 valid chars)
+        // Handle short strings (< 3 valid chars)
         if (validCount < 3) {
             // Pad with zeros if fewer than 3 chars
             while (pos < 3) {

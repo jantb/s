@@ -14,7 +14,7 @@ import java.time.OffsetDateTime
 const val cap = 512
 
 class ValueStore : Serializable {
-    private val levelIndexes = mutableMapOf<LogLevel, MutableList<Pair<Index<Domain>, DrainTree>>>()
+    private val levelIndexes = mutableMapOf<LogLevel, MutableList<Pair<Index<Int>, DrainTree>>>()
     var size = 0
 
     fun getLogClusters(): List<LogCluster> = State.levels.get().flatMap { level ->
@@ -33,52 +33,56 @@ class ValueStore : Serializable {
 
     fun put(seq: Long, v: String, indexIdentifier: String, app: Boolean) {
         when (app) {
-            true -> getLogJson(v, indexIdentifier, seq)?.let {
+            true -> getLogJson(v, indexIdentifier, seq,true)?.let {
                 size++
                 State.indexedLines.addAndGet(1)
                 // Add to level-specific index
                 val level = it.level
 
                 val levelIndexList =
-                    levelIndexes.getOrPut(level) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
+                    levelIndexes.getOrPut(level) { mutableListOf(Index<Int>() to DrainTree(indexIdentifier)) }
                 if (levelIndexList.last().first.size >= cap) {
                     levelIndexList.last().first.convertToHigherRank()
                     levelIndexList.last().second.final()
-                    levelIndexList.add(Index<Domain>() to DrainTree(indexIdentifier))
+                    levelIndexList.add(Index<Int>() to DrainTree(indexIdentifier))
                 }
-                levelIndexList.last().second.add(it)
-                levelIndexList.last().first.add(it)
+                val drainIndex = levelIndexList.last().second.add(it)
+                levelIndexList.last().first.add(drainIndex, it.toString())
             }
 
-            false -> getLogJson(v, indexIdentifier, seq)?.let {
+            false -> getLogJson(v, indexIdentifier, seq, false)?.let {
                 size++
                 State.indexedLines.addAndGet(1)
 
                 val levelIndexList =
-                    levelIndexes.getOrPut(LogLevel.KAFKA) { mutableListOf(Index<Domain>() to DrainTree(indexIdentifier)) }
+                    levelIndexes.getOrPut(LogLevel.KAFKA) { mutableListOf(Index<Int>() to DrainTree(indexIdentifier)) }
                 if (levelIndexList.last().first.size >= cap) {
                     levelIndexList.last().first.convertToHigherRank()
-                    levelIndexList.add(Index<Domain>() to DrainTree(indexIdentifier))
+                    levelIndexList.add(Index<Int>() to DrainTree(indexIdentifier))
                 }
-                levelIndexList.last().first.add(it)
+                val drainIndex = levelIndexList.last().second.add(it)
+                levelIndexList.last().first.add(drainIndex, it.toString())
             }
         }
     }
 
-    private fun getLogJson(v: String, indexIdentifier: String, seq: Long): Domain? {
+    private fun getLogJson(v: String, indexIdentifier: String, seq: Long, pod :Boolean): Domain? {
         return try {
             val domain = v.substringAfter(" ").deserializeJsonToObject<Domain>()
             domain.indexIdentifier = indexIdentifier
             domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant().toEpochMilli()
             domain.seq = seq
-            domain.init()
+            domain.parseTimestamp()
+            if(!pod){
+                domain.level = LogLevel.KAFKA
+            }
             domain
         } catch (e: Exception) {
             val domain = Domain(seq = seq, message = v.substringAfter(" "), application = indexIdentifier)
             domain.indexIdentifier = indexIdentifier
             try {
                 domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant().toEpochMilli()
-                domain.init()
+                domain.parseTimestamp()
             } catch (e: Exception) {
                 return null
             }
@@ -99,8 +103,10 @@ class ValueStore : Serializable {
 
             // Search the live index for this level
             if (levelIndexList.isNotEmpty()) {
-                val liveResults = levelIndexList.last().first.searchMustInclude(q.filteredQueryList) {
-                    it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
+                val (index, drain) = levelIndexList.last()
+                val liveResults = index.searchMustInclude(q.filteredQueryList) {
+                    val domain = drain.get(it)
+                    (domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)) to domain
                 }.take(length).toList()
 
                 results.addAll(liveResults)
@@ -108,9 +114,10 @@ class ValueStore : Serializable {
                 // If we need more results, search the ranked indexes for this level
                 if (liveResults.size < length) {
                     val rankedResults = levelIndexList.dropLast(1).reversed().asSequence()
-                        .flatMap { index ->
-                            index.first.searchMustInclude(q.filteredQueryList) {
-                                it.seq <= offsetLock && contains(q.queryList, q.queryListNot, it)
+                        .flatMap { (index, drain) ->
+                            index.searchMustInclude(q.filteredQueryList) {
+                                val domain = drain.get(it)
+                                (domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)) to domain
                             }.take(length - liveResults.size)
                         }.take(length - liveResults.size)
                         .toList()

@@ -16,7 +16,7 @@ class IndexTest {
         val key = "key"
         val value = "value"
 
-        index.add( value)
+        index.add( value, value)
 
         assertEquals(1, index.size)
     }
@@ -27,12 +27,12 @@ class IndexTest {
         val key = "key"
         val value = "value"
 
-        index.add( value)
+        index.add( value,value)
 
         assertEquals(1, index.size)
 
         val searchMustInclude = index.searchMustInclude(listOf(listOf("val"))) {
-            true
+            true to it
         }.toList()
         assertEquals(1, searchMustInclude.size)
     }
@@ -45,13 +45,13 @@ class IndexTest {
         val value = "a"
         val value2 = "b"
 
-        index.add( value)
-        index.add( value2)
+        index.add( value, value)
+        index.add( value2, value2)
 
         assertEquals(2, index.size)
 
         val searchMustInclude = index.searchMustInclude(listOf(listOf("a"))) {
-            true
+            true to it
         }.toList()
         assertEquals(1, searchMustInclude.size)
     }
@@ -67,7 +67,7 @@ class IndexTest {
             for (key in 1..itemCount) {
                 val value = UUID.randomUUID().toString()
 
-                index.add(value)
+                index.add(value, value)
 
                 map.add(value)
             }
@@ -78,7 +78,7 @@ class IndexTest {
         val timeTakenSearch = measureTime {
             for ( value in map) {
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
-                    it == value
+                    (  it == value )to it
                 }
                 if (value in searchMustInclude) {
                     found++
@@ -100,7 +100,7 @@ class IndexTest {
             for (key in 0..<itemCount) {
                 val value = UUID.randomUUID().toString()
 
-                index.add(value)
+                index.add(value, value)
 
                 map.add(value)
             }
@@ -110,7 +110,7 @@ class IndexTest {
         val timeTakenSearch1 = measureTime {
             map.forEach() {  value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))){
-                    it == value
+                    (it == value) to it
                 }
                 if (value in searchMustInclude) {
                     found++
@@ -127,7 +127,7 @@ class IndexTest {
        val timeTakenSearch = measureTime {
             map.forEach { value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
-                    it == value
+                    (it == value) to it
                 }
                 if (value in searchMustInclude) {
                     found++

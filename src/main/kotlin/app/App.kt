@@ -83,10 +83,10 @@ class App : CoroutineScope {
                                 valueStores.map {
                                     it.value.search(
                                         query = msg.query,
-                                        length = msg.length + msg.offset + 10_000,
+                                        length = msg.length + msg.offset + 20_000,
                                         offsetLock = offsetLock
                                     ).asSequence()
-                                }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList()
+                                }.merge(descending = true).drop(msg.offset).take(msg.length + 20_000).toList()
 
                         searchTime.set(listResults.duration.inWholeNanoseconds)
 

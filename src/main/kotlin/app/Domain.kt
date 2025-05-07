@@ -11,14 +11,14 @@ import java.time.Instant
 import java.util.UUID
 data class Domain(
     val id: UUID = UUID.randomUUID(),
-    var seq :Long ,
+    var seq :Long,
     var indexIdentifier: String = "",
     @JsonProperty("@timestamp") val timestampString: String = "",
     @JsonAlias("correlation.id", "X-Correlation-Id") val correlationId: String = "",
     @JsonAlias("request.id", "X-Request-Id") val requestId: String = "",
     @JsonAlias("message", "msg") var message: String = "",
     @JsonAlias("error.message") val errorMessage: String? = "",
-    @JsonAlias("log.level", "level") val level: LogLevel = LogLevel.UNKNOWN,
+    @JsonAlias("log.level", "level") var level: LogLevel = LogLevel.UNKNOWN,
     @JsonAlias("application", "service.name") val application: String = "",
     @JsonAlias("error.type") val stacktraceType: String = "",
     @JsonAlias("stack_trace", "error.stack_trace") val stacktrace: String = "",
@@ -35,13 +35,16 @@ data class Domain(
     var timestamp: Long = 0
     private var searchableString = ""
 
-    init {
-        try {
-            this.timestamp = Instant.parse(timestampString).toEpochMilli()
-        } catch (e: Exception) {
-            this.timestamp = 0
+    fun parseTimestamp(): Domain {
+        if (timestamp == 0L && timestampString.isNotBlank()) {
+            timestamp = try {
+                Instant.parse(timestampString).toEpochMilli()
+            } catch (e: Exception) {
+                0L
+            }
         }
-        this.init()
+        init()
+        return this
     }
 
     override fun compareTo(other: Domain): Int {

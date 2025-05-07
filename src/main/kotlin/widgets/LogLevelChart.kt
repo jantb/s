@@ -268,7 +268,6 @@ class LogLevelChart(
         }
     }
 
-    // Unused overrides omitted for brevity
     override fun repaint(componentOwn: ComponentOwn) {}
     override fun keyTyped(e: KeyEvent) {}
     override fun keyPressed(e: KeyEvent) {}

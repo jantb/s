@@ -265,7 +265,7 @@ class DrainTree(val indexIdentifier: String ="") {
 
     fun final() {
         val (finalizedInfo, tokenStorage) = mergeGroupedTokens()
-        positionInfo.clear()
+    //    positionInfo.clear()
         grouped.clear()
         positionInfoHashMap.clear()
         this.logClusters.addAll(   getLogClusters(generateMultiTokens(tokenStorage), finalizedInfo))
