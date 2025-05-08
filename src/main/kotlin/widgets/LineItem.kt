@@ -15,7 +15,6 @@ import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
-import javax.swing.JFrame
 import kotlin.math.absoluteValue
 
 class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: Int, y: Int, width: Int, height: Int) :
@@ -189,8 +188,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
                 QueryChanged(
                     text.getHighlightedText(),
                     length = State.length.get(),
-                    offset = State.offset.get(),
-                    levels = State.levels.get()
+                    offset = State.offset.get()
                 )
             )
         }

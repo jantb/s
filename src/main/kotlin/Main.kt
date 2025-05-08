@@ -1,6 +1,5 @@
 import app.App
 import app.Channels
-import app.Channels.kafkaChannel
 import app.KafkaSelectChangedText
 import app.ListLag
 import app.QueryChanged
@@ -8,6 +7,7 @@ import kafka.Kafka
 import kotlinx.coroutines.channels.trySendBlocking
 import kube.Kube
 import util.UiColors.magenta
+import web.WebServer
 import widgets.*
 import java.awt.Graphics
 import java.awt.MouseInfo
@@ -30,40 +30,49 @@ import kotlin.system.exitProcess
 import kotlin.time.Duration.Companion.nanoseconds
 
 
-fun main() {
-    if (State.onMac) {
+fun main(args: Array<String>) {
+    val useWebUI = args.contains("--web")
+    State.useWebUI = useWebUI
+    
+    if (State.onMac && !useWebUI) {
         System.setProperty("apple.awt.application.appearance", "dark")
     }
 
     App().start()
     Kube()
     Kafka()
-    SwingUtilities.invokeLater {
-        val frame = JFrame("Search")
-        frame.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
-        val icon = ImageIcon(ClassLoader.getSystemResource("ontop.png")).image
+    
+    if (useWebUI) {
+        println("Starting web UI on port 8080")
+        WebServer().start()
+    } else {
+        SwingUtilities.invokeLater {
+            val frame = JFrame("Search")
+            frame.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
+            val icon = ImageIcon(ClassLoader.getSystemResource("ontop.png")).image
 
-        frame.iconImage = icon
+            frame.iconImage = icon
 
-        val panel = SlidePanel()
-        buildViewer(panel)
-        buildPodSelect(panel)
-        buildKafkaSelect(panel)
-        buildKafkaLagView(panel)
-        buildLogGroupsView(panel)
-        frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
-        frame.contentPane.add(panel)
-        frame.pack()
-        frame.setSize(1920, 1280)
+            val panel = SlidePanel()
+            buildViewer(panel)
+            buildPodSelect(panel)
+            buildKafkaSelect(panel)
+            buildKafkaLagView(panel)
+            buildLogGroupsView(panel)
+            frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
+            frame.contentPane.add(panel)
+            frame.pack()
+            frame.setSize(1920, 1280)
 
-        val mousePoint: Point = MouseInfo.getPointerInfo().location
+            val mousePoint: Point = MouseInfo.getPointerInfo().location
 
-        val frameX = mousePoint.x - frame.width / 2
-        val frameY = mousePoint.y - frame.height / 2
+            val frameX = mousePoint.x - frame.width / 2
+            val frameY = mousePoint.y - frame.height / 2
 
-        frame.setLocation(frameX, frameY)
+            frame.setLocation(frameX, frameY)
 
-        frame.isVisible = true
+            frame.isVisible = true
+        }
     }
 }
 
@@ -266,8 +275,7 @@ private fun buildViewer(panel: SlidePanel) {
                 QueryChanged(
                     it,
                     length = State.length.get(),
-                    offset = State.offset.get(),
-                    levels = State.levels.get()
+                    offset = State.offset.get()
                 )
             )
         }
@@ -358,6 +366,7 @@ object State {
         logLevels
     })
     var mode = Mode.viewer
+    var useWebUI = false
 
     init {
         val props = System.getProperties()

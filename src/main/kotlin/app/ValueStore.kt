@@ -4,8 +4,6 @@ import DrainTree
 import LogCluster
 import LogLevel
 import State
-import kotlinx.datetime.Instant
-import kotlinx.serialization.json.Json
 import parallelSortWith
 import util.Index
 import java.util.concurrent.atomic.AtomicLong
@@ -94,7 +92,6 @@ class ValueStore {
 
         // Sort and limit the results
         return results.parallelSortWith(compareByDescending { it.timestamp }).take(length)
-
     }
 
     data class Query(

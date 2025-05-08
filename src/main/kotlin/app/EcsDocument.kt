@@ -11,7 +11,7 @@ data class EcsDocument (
     @SerialName("log.level") val logLevel: LogLevel,
     @SerialName("process.thread.name") val threadName: String,
     @SerialName("service.name") val serviceName: String,
-    @SerialName("service.version") val serviceVersion: String,
+    @SerialName("service.version") val serviceVersion: String = "",
     @SerialName("log.logger") val logger: String,
     val message: String,
     @SerialName("correlation.id") val correlationId: String? = null,

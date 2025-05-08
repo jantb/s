@@ -369,9 +369,8 @@ class ScrollableList(
         Channels.searchChannel.trySendBlocking(
             QueryChanged(
                 query = inputTextLine.text,
-                offset = indexOffset,
                 length = length,
-                levels = State.levels.get(),
+                offset = indexOffset,
             )
         )
     }

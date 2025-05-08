@@ -5,7 +5,6 @@ import LogCluster
 import LogLevel
 import SlidePanel
 import State
-import app.Channels.kafkaCmdGuiChannel
 import app.Channels.logClusterCmdGuiChannel
 import app.Channels.refreshChannel
 import app.LogClusterList

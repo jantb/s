@@ -22,6 +22,12 @@ dependencies {
     implementation("io.confluent:kafka-avro-serializer:7.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
+    implementation("io.ktor:ktor-server-core:3.1.3")
+    implementation("io.ktor:ktor-server-netty:3.1.3")
+    implementation("io.ktor:ktor-server-websockets:3.1.3")
+    implementation("io.ktor:ktor-server-content-negotiation:3.1.3")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.3")
+    implementation("io.ktor:ktor-server-html-builder:3.1.3")
     runtimeOnly("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.8.1")
     testImplementation(kotlin("test"))
 }
