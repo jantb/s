@@ -1,4 +1,5 @@
 import app.Domain
+import app.DomainLine
 import java.util.*
 
 data class LogLineForStorage(
@@ -47,14 +48,14 @@ sealed class MultiToken {
 data class PositionInfo(
     val signature: Signature,
     val posInGrouped: Int,
-    val logLine: Domain
+    val logLine: DomainLine
 )
 
 
 data class FinalizedPositionInfo(
     val block: Int,
     val posInGrouped: List<Int>,
-    val logLine: Domain?
+    val logLine: DomainLine?
 )
 
 class DrainTree(val indexIdentifier: String ="") {
@@ -221,7 +222,7 @@ class DrainTree(val indexIdentifier: String ="") {
         }
     }
 
-    fun add(logLine: Domain): Int {
+    fun add(logLine: DomainLine): Int {
         val line = logLine.message
         val tokens = line.split(" ").map { mapToToken(it) }
         val signature = generateSignature(tokens, logLine.level)
@@ -240,7 +241,7 @@ class DrainTree(val indexIdentifier: String ="") {
         return positionInfo.size - 1
     }
 
-    fun get(index: Int): Domain {
+    fun get(index: Int): DomainLine {
         return if (finalizedPositionInfo.isEmpty()) {
             val positionInfo = positionInfo[index]
 //            val message = grouped[positionInfo.signature]!![positionInfo.posInGrouped].joinToString(" ") {

@@ -8,9 +8,7 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize
 import kafka.RawJsonDeserializer
 import kafka.RawJsonSerializer
 import java.time.Instant
-import java.util.UUID
 data class Domain(
-    val id: UUID = UUID.randomUUID(),
     var seq :Long,
     var indexIdentifier: String = "",
     @JsonProperty("@timestamp") val timestampString: String = "",

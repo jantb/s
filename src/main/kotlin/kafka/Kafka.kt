@@ -1,17 +1,19 @@
 package kafka
 
+import LogLevel
 import State
+import State.offset
 import app.*
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.databind.*
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-import com.fasterxml.jackson.databind.annotation.JsonSerialize
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient
 import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient
 import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig
 import io.confluent.kafka.serializers.KafkaAvroDeserializer
 import kotlinx.coroutines.*
+import kotlinx.datetime.Instant
+import kotlinx.serialization.json.Json
 import org.apache.kafka.clients.admin.AdminClient
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.consumer.ConsumerRecords
@@ -19,14 +21,13 @@ import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.serialization.ByteArrayDeserializer
+import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.kafka.common.serialization.StringSerializer
-import serializeToJson
 import util.ConfigLoader
 import java.io.IOException
 import java.time.Duration
-import java.time.Instant
 import java.time.OffsetDateTime
-import java.time.ZoneId
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -56,10 +57,10 @@ class Kafka {
             configs["sasl.jaas.config"] =
                 "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"$confluentId\" password=\"$confluentSecret\";"
         }
-            configs[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG] =
-                org.apache.kafka.common.serialization.StringDeserializer::class.java.name
-            configs[ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG] =
-                org.apache.kafka.common.serialization.ByteArrayDeserializer::class.java.name
+        configs[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG] =
+            StringDeserializer::class.java.name
+        configs[ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG] =
+            ByteArrayDeserializer::class.java.name
 
         if (schemaRegistryId.isBlank()) {
             configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] = schemaRegistryRest
@@ -200,7 +201,7 @@ class Kafka {
         //  Channels.cmdChannel.put(ClearIndex)
         notStopping.set(true)
         scope.launch {
-          //  Channels.popChannel.send(ClearIndex)
+            //  Channels.popChannel.send(ClearIndex)
             val map =
                 kafkaConsumer.listTopics().filter { topics.contains(it.key) }.map { it.value }.flatten()
                     .map { TopicPartition(it.topic(), it.partition()) }
@@ -215,7 +216,6 @@ class Kafka {
             offsetsForTimes.forEach {
                 kafkaConsumer.seek(it.key, it.value?.offset() ?: endOffsets[it.key]!!)
             }
-
 
             while (notStopping.get()) {
                 try {
@@ -233,30 +233,31 @@ class Kafka {
                                 val avroRecord = avroDeserializer.deserialize(consumerRecord.topic(), rawBytes)
                                 avroRecord.toString()
                             } catch (e: Exception) {
-                                try {
-                                    String(rawBytes)
-                                } catch (e: Exception) {
-                                    rawBytes.toString()
-                                }
+                                String(rawBytes)
                             }
 
                             else -> "null"
                         }
 
-                        val message = Message(
-                            offset = consumerRecord.offset().toInt(),
+                        val kafkaLineDomain = KafkaLineDomain(
+                            seq = seq.getAndAdd(1),
+                            level = LogLevel.KAFKA,
+                            timestamp = consumerRecord.timestamp(),
+                            key = consumerRecord.key(),
+                            message = value,
+                            indexIdentifier = consumerRecord.topic(),
+                            offset = consumerRecord.offset(),
                             partition = consumerRecord.partition(),
+                            topic = consumerRecord.topic(),
                             headers = consumerRecord.headers().toList()
                                 .joinToString(" | ") { it.key() + " : " + it.value().toString(Charsets.UTF_8) },
-                            z = value, timestamp = OffsetDateTime.ofInstant(
-                                Instant.ofEpochMilli(consumerRecord.timestamp()),
-                                ZoneId.systemDefault()
-                            ), key = consumerRecord.key() ?: "", topic = consumerRecord.topic()
-                        ).serializeToJson()
+                            correlationId = consumerRecord.headers().toList().associate { it.key() to it.value() }["X-Correlation-Id"]?.let { String(it) },
+                            requestId = consumerRecord.headers().toList().associate { it.key() to it.value() }["X-Request-Id"]?.let { String(it) },
+                            compositeEventId = "${consumerRecord.topic()}#${consumerRecord.partition()}#${consumerRecord.offset()}",
+                        )
                         Channels.popChannel.send(
-                            AddToIndex(
-                                "${Instant.ofEpochMilli(consumerRecord.timestamp())} $message",
-                                consumerRecord.topic(), false
+                            AddToIndexDomainLine(
+                                kafkaLineDomain
                             )
                         )
                     }
@@ -269,17 +270,6 @@ class Kafka {
         return notStopping
     }
 }
-
-class Message(
-    val topic: String,
-    val key: String,
-    val timestamp: OffsetDateTime,
-    val partition: Int,
-    val offset: Int,
-    val headers: String,
-    val level: String = "UNKNOWN", // Explicitly set level to UNKNOWN for Kafka messages
-    @JsonDeserialize(using = RawJsonDeserializer::class) @JsonSerialize(using = RawJsonSerializer::class) val z: String,
-)
 
 class RawJsonDeserializer : JsonDeserializer<String>() {
     @Throws(IOException::class)

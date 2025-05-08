@@ -17,11 +17,11 @@ repositories {
 dependencies {
     implementation("io.fabric8:kubernetes-client:7.1.0")
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.14")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.apache.kafka:kafka-clients:3.9.0")
     implementation("io.confluent:kafka-avro-serializer:7.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
     runtimeOnly("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.8.1")
     testImplementation(kotlin("test"))
 }

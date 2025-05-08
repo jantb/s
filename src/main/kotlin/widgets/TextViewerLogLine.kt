@@ -1,6 +1,6 @@
 package widgets
 
-import app.Domain
+import app.LogLineDomain
 import util.Styles
 import util.UiColors
 import java.awt.*
@@ -10,7 +10,7 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.*
 
-class TextViewer(title: String = "", text: String, domain: Domain?) : JFrame() {
+class TextViewerLogLine(title: String = "", domain: LogLineDomain?) : JFrame() {
 
     private var textAreaFontSize = 12
 
@@ -31,64 +31,64 @@ class TextViewer(title: String = "", text: String, domain: Domain?) : JFrame() {
         }
 
         domain?.let { log ->
-            addField("Timestamp", log.timestampString, fieldsPanel, constraints)
-            addField("CorrelationId", log.correlationId, fieldsPanel, constraints)
-            addField("RequestId", log.requestId, fieldsPanel, constraints)
-            addField("Message", log.message, fieldsPanel, constraints)
-            addField("Error Message", log.errorMessage?:"", fieldsPanel, constraints)
-            addField("Level", log.level.name, fieldsPanel, constraints)
-            addField("Application", log.indexIdentifier, fieldsPanel, constraints)
-            addField("Stacktrace Type", log.stacktraceType, fieldsPanel, constraints)
-            addField("Topic", log.topic, fieldsPanel, constraints)
-            addField("Key", log.key, fieldsPanel, constraints)
-            addField("Partition", log.partition, fieldsPanel, constraints)
-            addField("Offset", log.offset, fieldsPanel, constraints)
-            addField("Headers", log.headers, fieldsPanel, constraints)
-        }
-        // Create the main body text area
-        val textArea = JTextArea(text).apply {
-            addMouseWheelListener { e ->
-                if (e.isControlDown || e.isMetaDown) {
-                    textAreaFontSize += -e.wheelRotation
-                    if (textAreaFontSize <  8) textAreaFontSize = 8
-                    font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
-                } else {
-                    parent.dispatchEvent(
-                        MouseWheelEvent(
-                            parent,
-                            e.id,
-                            e.getWhen(),
-                            e.getModifiersEx(),
-                            e.x,
-                            e.y,
-                            e.clickCount,
-                            e.isPopupTrigger,
-                            e.scrollType,
-                            e.scrollAmount,
-                            e.wheelRotation
-                        )
-                    )
-                }
+            addField("Timestamp", log.timestamp.toString(), fieldsPanel, constraints)
+            log.correlationId?.let {
+                addField("CorrelationId", it, fieldsPanel, constraints)
+            }
+            log.requestId?.let {
+                addField("RequestId", it, fieldsPanel, constraints)
+            }
+            log.errorMessage?.let {
+                addField("Error Message", it, fieldsPanel, constraints)
             }
 
-            isEditable = false
-            lineWrap = true
-            font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
-            foreground = UiColors.defaultText
-            background = UiColors.background
+            addField("Level", log.level.name, fieldsPanel, constraints)
+            addField("Application", "${log.serviceName}:${log.serviceVersion}", fieldsPanel, constraints)
+
+            val textArea =
+                JTextArea(log.message + " " + (log.errorMessage ?: "") + " " + (log.stacktrace ?: "")).apply {
+                    addMouseWheelListener { e ->
+                        if (e.isControlDown || e.isMetaDown) {
+                            textAreaFontSize += -e.wheelRotation
+                            if (textAreaFontSize < 8) textAreaFontSize = 8
+                            font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
+                        } else {
+                            parent.dispatchEvent(
+                                MouseWheelEvent(
+                                    parent,
+                                    e.id,
+                                    e.getWhen(),
+                                    e.getModifiersEx(),
+                                    e.x,
+                                    e.y,
+                                    e.clickCount,
+                                    e.isPopupTrigger,
+                                    e.scrollType,
+                                    e.scrollAmount,
+                                    e.wheelRotation
+                                )
+                            )
+                        }
+                    }
+
+                    isEditable = false
+                    lineWrap = true
+                    font = Font(Styles.normalFont, Font.PLAIN, textAreaFontSize)
+                    foreground = UiColors.defaultText
+                    background = UiColors.background
+                }
+
+            val scrollPane = JScrollPane(textArea)
+            scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+            scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+
+            layout = BorderLayout()
+
+            topPanel.add(fieldsPanel, BorderLayout.CENTER)
+            topPanel.add(createAlwaysOnTopToggleButton(), BorderLayout.EAST)
+            add(topPanel, BorderLayout.NORTH)
+            add(scrollPane, BorderLayout.CENTER)
         }
-
-        val scrollPane = JScrollPane(textArea)
-        scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
-        scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
-
-        layout = BorderLayout()
-
-        topPanel.add(fieldsPanel, BorderLayout.CENTER)
-        topPanel.add(createAlwaysOnTopToggleButton(), BorderLayout.EAST)
-        add(topPanel, BorderLayout.NORTH)
-        add(scrollPane, BorderLayout.CENTER)
-
         addWindowListener(object : WindowAdapter() {
             override fun windowClosing(windowEvent: WindowEvent) {
                 dispose()

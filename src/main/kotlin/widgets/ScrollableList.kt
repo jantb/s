@@ -376,7 +376,7 @@ class ScrollableList(
         )
     }
 
-    private fun updateResults(result: List<Domain>) {
+    private fun updateResults(result: List<DomainLine>) {
         val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
             0
         } else {

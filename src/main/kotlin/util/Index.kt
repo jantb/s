@@ -18,12 +18,11 @@ class Index<T : Comparable<T>>(
         require(!isHigherRank) {
             "Can not add values to a higher rank index"
         }
-        val string = s
-        if (string.isBlank()) {
+        if (s.isBlank()) {
             return
         }
 
-        val grams = string.grams()
+        val grams = s.grams()
 
         val shardSize = Integer.numberOfTrailingZeros(estimate(grams.size, probability))
         shardArray[shardSize]?.add(grams, t) ?: run {

@@ -3,13 +3,9 @@ package widgets
 import ColoredText
 import ComponentOwn
 import State
-import app.Channels
-import app.Domain
-import app.PublishToTopic
-import app.QueryChanged
-import deserializeJsonToObject
+import app.*
 import kotlinx.coroutines.channels.trySendBlocking
-import serializeToJsonPP
+import kotlinx.datetime.Instant
 import util.Styles
 import util.UiColors
 import java.awt.Font
@@ -19,7 +15,7 @@ import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
-import java.time.Instant
+import javax.swing.JFrame
 import kotlin.math.absoluteValue
 
 class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: Int, y: Int, width: Int, height: Int) :
@@ -30,7 +26,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
     private var maxCharBounds: Rectangle2D
     private var mouseposX = 0
     private var mouseposY = 0
-    private var domain: Domain? = null
+    private var domain: DomainLine? = null
 
     init {
         this.x = x
@@ -51,69 +47,72 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         }
     }
 
-    fun setLogJson(domain: Domain) {
-        this.domain = domain
+    fun setLogJson(domainLine: DomainLine) {
+        this.domain = domainLine
         this.text.clear()
-        this.text.addText(Instant.ofEpochMilli(domain.timestamp).toString(), color = UiColors.teal)
+        this.text.addText(Instant.fromEpochMilliseconds(domainLine.timestamp).toString(), color = UiColors.teal)
 
         this.text.addText(" ", color = UiColors.defaultText)
-        if (domain.topic == "") {
-            this.text.addText(
-                domain.level.name, color = when (domain.level) {
-                    LogLevel.INFO -> {
-                        UiColors.green
-                    }
 
-                    LogLevel.WARN -> {
-                        UiColors.orange
-                    }
-
-                    LogLevel.DEBUG -> {
-                        UiColors.defaultText
-                    }
-
-                    LogLevel.ERROR -> {
-                        UiColors.red
-                    }
-
-                    else -> {
-                        UiColors.defaultText
-                    }
+        when (domainLine) {
+            is LogLineDomain -> {
+                this.text.addText(
+                    domainLine.level.name, color = getLevelColor(domainLine.level)
+                )
+                this.text.addText(" ", color = UiColors.defaultText)
+                this.text.addText(
+                    domainLine.indexIdentifier,
+                    color = UiColors.visibleColors[domainLine.indexIdentifier.hashCode().absoluteValue % UiColors.visibleColors.size]
+                )
+                domainLine.correlationId?.let {
+                    this.text.addText(" ", color = UiColors.defaultText)
+                    this.text.addText(it, color = UiColors.defaultText)
                 }
-            )
+                domainLine.requestId?.let {
+                    this.text.addText(" ", color = UiColors.defaultText)
+                    this.text.addText(it, color = UiColors.defaultText)
+                }
+
+                this.text.addText(" ", color = UiColors.defaultText)
+                this.text.addText(
+                    domainLine.logger,
+                    color = UiColors.green
+                )
+
+                this.text.addText(" ", color = UiColors.defaultText)
+                this.text.addText(domainLine.message.take(1000), color = UiColors.defaultText)
+                domainLine.errorMessage?.let {
+                    this.text.addText(" ", color = UiColors.defaultText)
+                    this.text.addText(it, color = UiColors.defaultText)
+                }
+
+                domainLine.stacktrace?.let {
+                    this.text.addText(" ", color = UiColors.defaultText)
+                    this.text.addText(it, color = UiColors.defaultText)
+                }
+            }
+
+            is KafkaLineDomain -> {
+                this.text.addText(
+                    domainLine.level.name, color = getLevelColor(domainLine.level)
+                )
+                this.text.addText(" ", color = UiColors.defaultText)
+                this.text.addText(
+                    domainLine.topic,
+                    color = UiColors.visibleColors[domainLine.indexIdentifier.hashCode().absoluteValue % UiColors.visibleColors.size]
+                )
+                domainLine.correlationId?.let {
+                    this.text.addText(" ", color = UiColors.defaultText)
+                    this.text.addText(it, color = UiColors.defaultText)
+                }
+                domainLine.requestId?.let {
+                    this.text.addText(" ", color = UiColors.defaultText)
+                    this.text.addText(it, color = UiColors.defaultText)
+                }
+                this.text.addText(" ", color = UiColors.defaultText)
+                this.text.addText(domainLine.message, color = UiColors.defaultText)
+            }
         }
-        this.text.addText(domain.topic, color = UiColors.green)
-
-        this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(
-            domain.application,
-            color = UiColors.visibleColors[domain.indexIdentifier.hashCode().absoluteValue % UiColors.visibleColors.size]
-        )
-        this.text.addText(domain.partition, color = UiColors.magenta)
-
-        if (domain.correlationId != "") {
-            this.text.addText(" ", color = UiColors.defaultText)
-            this.text.addText(domain.correlationId, color = UiColors.orange)
-        }
-
-        if (domain.requestId != "") {
-            this.text.addText(" ", color = UiColors.defaultText)
-            this.text.addText(domain.requestId, color = UiColors.orange)
-        }
-
-        this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(domain.message, color = UiColors.defaultText)
-        this.text.addText(domain.errorMessage?:"", color = UiColors.defaultText)
-        this.text.addText(domain.offset, color = UiColors.orange)
-
-        this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(domain.headers, color = UiColors.magenta)
-
-
-        this.text.addText(" ", color = UiColors.defaultText)
-        this.text.addText(domain.stacktraceType, color = UiColors.defaultText)
-        this.text.addText(domain.stacktrace, color = UiColors.defaultText)
-        this.text.addText("${domain.key} ${domain.data}", color = UiColors.defaultText)
 
         if (this.text.highlight) {
             this.text.highlightRange =
@@ -170,22 +169,18 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
 
     override fun mouseClicked(e: MouseEvent) {
         if (e.isShiftDown && !e.isControlDown && e.clickCount == 1) {
-            val textViewer = TextViewer(
-                title = domain?.application ?: "", text = if (domain != null && domain!!.data.isNotBlank()) {
-                    domain!!.data.deserializeJsonToObject<Any>().serializeToJsonPP()
-                } else {
-                    text.text
-                }, domain
-            )
-            textViewer.isVisible = true
-        } else if (e.isShiftDown && e.isControlDown && e.clickCount == 1) {
-            Channels.kafkaChannel.put(
-                PublishToTopic(
-                    topic = domain!!.topic,
-                    key = domain!!.key,
-                    value = domain!!.data
-                )
-            )
+            val textViewerLogLine =
+                when (domain) {
+                    is KafkaLineDomain -> TextViewerKafkaLine(
+                        title = "Inspect", domain as KafkaLineDomain,
+                    )
+                    is LogLineDomain -> TextViewerLogLine(
+                        title = "Inspect", domain as LogLineDomain,
+                    )
+                    null -> throw IllegalStateException()
+                }
+            textViewerLogLine.isVisible = true
+
         } else if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {
             inputTextLine.text = text.getHighlightedText()
             inputTextLine.cursorIndex = inputTextLine.text.length

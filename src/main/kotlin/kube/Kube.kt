@@ -1,12 +1,11 @@
-@file:OptIn(FlowPreview::class)
-
 package kube
 
 import app.*
 import io.fabric8.kubernetes.client.KubernetesClientBuilder
 import io.fabric8.kubernetes.client.dsl.LogWatch
-import io.fabric8.kubernetes.client.utils.internal.PodOperationUtil.watchLog
 import kotlinx.coroutines.*
+import kotlinx.datetime.Instant
+import kotlinx.serialization.json.Json
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
@@ -80,7 +79,9 @@ class Kube {
                 .firstOrNull { it.metadata.name == pod }?.metadata?.namespace ?: return@launch
 
             getLogSequencePrev(pod, podNamespacePair).forEach {
-                Channels.popChannel.send(AddToIndex(it, pod,true))
+                getLogJson(it, seq = seq.getAndAdd(1), indexIdentifier = pod)?.let {
+                    Channels.popChannel.send(AddToIndexDomainLine(it))
+                }
             }
 
             while (notStopping.get()) {
@@ -92,7 +93,9 @@ class Kube {
                             if (line.isNullOrBlank()) {
                                 notStopping.set(false)
                             }
-                            Channels.popChannel.send(AddToIndex(line, pod,true))
+                            getLogJson(line, seq = seq.getAndAdd(1), indexIdentifier = pod)?.let {
+                                Channels.popChannel.send(AddToIndexDomainLine(it))
+                            }
 
                         }
                     }
@@ -102,6 +105,31 @@ class Kube {
             }
         }
         return notStopping
+    }
+}
+private val json = Json { ignoreUnknownKeys = true }
+
+private fun getLogJson(v: String, seq: Long, indexIdentifier: String): DomainLine? {
+    val index = v.indexOf(' ')
+    val timestamp = if (index != -1) v.substring(0, index) else v
+    val message = if (index != -1) v.substring(index + 1) else ""
+    return try {
+        val ecsDocument = json.decodeFromString<EcsDocument>(message)
+        LogLineDomain(seq = seq, indexIdentifier = indexIdentifier, ecsDocument = ecsDocument)
+    } catch (e: Exception) {
+        kotlin.runCatching {
+            LogLineDomain(
+                seq,
+                timestamp = Instant.parse(timestamp).toEpochMilliseconds(),
+                level = LogLevel.UNKNOWN,
+                threadName = "",
+                serviceName = "",
+                serviceVersion = "",
+                logger = "",
+                message = message,
+                indexIdentifier = indexIdentifier,
+            )
+        }.getOrNull()
     }
 }
 

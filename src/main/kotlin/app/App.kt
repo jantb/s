@@ -22,7 +22,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kube.PodUnit
 import merge
-import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
 import kotlin.coroutines.CoroutineContext
@@ -34,7 +33,6 @@ class App : CoroutineScope {
 
         launch(CoroutineName("indexUpdaterScheduler")) {
             val valueStores = mutableMapOf<String, ValueStore>()
-            var seq = 0L
             var offsetLock = 0L
             while (true) {
                 when (val msg = select {
@@ -42,13 +40,12 @@ class App : CoroutineScope {
                     popChannel.onReceive { it }
                     refreshChannel.onReceive { it }
                 }) {
-                    is AddToIndex -> {
-                        seq++
-                        valueStores.computeIfAbsent(msg.indexIdentifier) { ValueStore() }
-                            .put(seq, msg.value, msg.indexIdentifier, msg.app)
+
+                    is AddToIndexDomainLine -> {
+                        valueStores.computeIfAbsent(msg.domainLine.indexIdentifier) { ValueStore() }
+                            .put(msg.domainLine)
                         changedAt.set(System.nanoTime())
                     }
-
 
                     is ClearNamedIndex -> {
                         val remove = valueStores.remove(msg.name)
@@ -63,7 +60,7 @@ class App : CoroutineScope {
                     is QueryChanged -> {
                         if (msg.offset > 0) {
                             if (offsetLock == Long.MAX_VALUE) {
-                                offsetLock = seq
+                                offsetLock = seq.get()
                             }
                         } else {
                             offsetLock = Long.MAX_VALUE
@@ -83,15 +80,16 @@ class App : CoroutineScope {
                                 valueStores.map {
                                     it.value.search(
                                         query = msg.query,
-                                        length = msg.length + msg.offset + 20_000,
+                                        length = msg.length + msg.offset + 10_000,
                                         offsetLock = offsetLock
                                     ).asSequence()
-                                }.merge(descending = true).drop(msg.offset).take(msg.length + 20_000).toList()
+                                }.merge(descending = true).drop(msg.offset).take(msg.length + 10_000).toList()
 
                         searchTime.set(listResults.duration.inWholeNanoseconds)
 
                         kafkaCmdGuiChannel.put(ResultChanged(listResults.value, chartResults))
                     }
+
                 }
             }
         }
@@ -130,11 +128,11 @@ class QueryChanged(val query: String, val length: Int, val offset: Int, val leve
 
 class ClearNamedIndex(val name: String) : CmdMessage()
 
-class AddToIndex(val value: String, val indexIdentifier: String = UUID.randomUUID().toString(), val app: Boolean) : CmdMessage()
+class AddToIndexDomainLine(val domainLine: DomainLine) : CmdMessage()
 data object RefreshLogGroups : CmdMessage()
 
 sealed class CmdGuiMessage
-class ResultChanged(val result: List<Domain>, val chartResult: List<Domain> = emptyList()) : CmdGuiMessage()
+class ResultChanged(val result: List<DomainLine>, val chartResult: List<DomainLine> = emptyList()) : CmdGuiMessage()
 class KafkaLagInfo(val lagInfo: List<kafka.Kafka.LagInfo>) : CmdGuiMessage()
 class LogClusterList(val clusters: List<LogCluster>) : CmdGuiMessage()
 

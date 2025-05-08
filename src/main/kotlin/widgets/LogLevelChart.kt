@@ -4,6 +4,10 @@ import ComponentOwn
 import LogLevel
 import State
 import app.Domain
+import app.DomainLine
+import kotlinx.datetime.*
+import kotlinx.datetime.format.DateTimeComponents
+import kotlinx.datetime.format.DateTimeFormat
 import util.UiColors
 import java.awt.BasicStroke
 import java.awt.Color
@@ -20,6 +24,10 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.nanoseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.DurationUnit
 
 /**
  * A component that displays a bar chart of log levels over time.
@@ -30,12 +38,12 @@ class LogLevelChart(
 ) : ComponentOwn() {
 
     // Data structure for log counts at a specific time
-    private data class TimePoint(val time: Instant, val counts: MutableMap<LogLevel, Int> = mutableMapOf())
+    private data class TimePoint(val time: kotlinx.datetime.Instant, val counts: MutableMap<LogLevel, Int> = mutableMapOf())
 
     // Chart state
     private val timePoints = mutableListOf<TimePoint>()
-    private var startTime: Instant = Instant.now()
-    private var endTime: Instant = Instant.now()
+    private var startTime: kotlinx.datetime.Instant = Clock.System.now()
+    private var endTime: kotlinx.datetime.Instant = Clock.System.now()
     private var currentScaleMax = 100 // Stable scale for bar heights and gridlines
     private var scaleLastChangedTime = Instant.now()
     private var pendingScaleMax = 0 // For delayed scale increases
@@ -59,29 +67,28 @@ class LogLevelChart(
     }
 
     /** Updates the chart with new log data. */
-    fun updateChart(logs: List<Domain>) {
+    fun updateChart(logs: List<DomainLine>) {
         if (logs.isEmpty()) return
 
         lock.lock()
         try {
             // Set time range (assuming logs are ordered oldest to newest)
-            startTime = logs.lastOrNull()?.timestamp?.let { Instant.ofEpochMilli(it) } ?: Instant.now()
-            endTime = logs.firstOrNull()?.timestamp?.let { Instant.ofEpochMilli(it) } ?: Instant.now()
-            if (startTime == endTime) endTime = startTime.plus(1, ChronoUnit.MINUTES)
+            startTime = logs.lastOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
+            endTime =  logs.firstOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) }?: Clock.System.now()
+            if (startTime == endTime) endTime = startTime.plus(1.minutes)
 
-            val timeInterval = Duration.between(startTime, endTime).dividedBy(width.toLong() / widthDivision)
-            val intervalNanos = timeInterval.toNanos()
-
+            val durationTotal = startTime.until(endTime, DateTimeUnit.NANOSECOND).nanoseconds
+            val intervalNanos = durationTotal.inWholeNanoseconds / (width.toLong() / widthDivision)
             // Recreate time points
             timePoints.clear()
             (0 until width.toLong() / widthDivision).forEach { i ->
-                timePoints.add(TimePoint(startTime.plus(timeInterval.multipliedBy(i))))
+                timePoints.add(TimePoint(startTime.plus(intervalNanos,DateTimeUnit.NANOSECOND)))
             }
 
             // Assign logs to time points efficiently
             logs.forEach { domain ->
                 val level = domain.level
-                val durationSinceStart = Duration.between(startTime, Instant.ofEpochMilli(domain.timestamp)).toNanos()
+                val durationSinceStart = startTime.until(kotlinx.datetime.Instant.fromEpochMilliseconds(domain.timestamp), DateTimeUnit.NANOSECOND).nanoseconds.toLong(DurationUnit.NANOSECONDS)
                 val index = if (intervalNanos > 0) {
                     (durationSinceStart / intervalNanos).toInt().coerceIn(0, timePoints.size - 1)
                 } else 0
@@ -166,7 +173,7 @@ class LogLevelChart(
             if (index % 25 == 0 || index == timePoints.size - 1) {
                 font = Font("Monospaced", Font.PLAIN, 12)
                 color = Color.GRAY
-                drawString(timeFormatter.format(timePoint.time), xPosBase, height - 15)
+                drawString(timeFormatter.format(timePoint.time.toJavaInstant()), xPosBase, height - 15)
             }
 
             var currentHeight = 0
@@ -186,7 +193,7 @@ class LogLevelChart(
         }
 
         val totalMessages = timePoints.sumOf { it.counts.values.sum() }
-        val durationSecs = Duration.between(startTime, endTime).seconds.coerceAtLeast(1)
+        val durationSecs = startTime.until(endTime,DateTimeUnit.SECOND).seconds.toInt(DurationUnit.SECONDS).coerceAtLeast(1)
         val avgMps = totalMessages.toFloat() / durationSecs
 
         color = Color.LIGHT_GRAY
@@ -245,15 +252,7 @@ class LogLevelChart(
         }
     }
 
-    private fun getLevelColor(level: LogLevel): Color = when (level) {
 
-        LogLevel.INFO -> UiColors.green
-        LogLevel.WARN -> UiColors.orange
-        LogLevel.DEBUG -> UiColors.defaultText
-        LogLevel.ERROR -> UiColors.red
-        LogLevel.UNKNOWN -> Color.GRAY
-        LogLevel.KAFKA -> UiColors.teal
-    }
 
     override fun mouseClicked(e: MouseEvent) {
         levelRectangles.entries.find { it.value.contains(e.point) }?.key?.let { level ->
@@ -285,4 +284,14 @@ class LogLevelChart(
     override fun mouseWheelMoved(e: MouseWheelEvent) {}
     override fun mouseDragged(e: MouseEvent) {}
     override fun mouseMoved(e: MouseEvent) {}
+}
+
+ fun getLevelColor(level: LogLevel): Color = when (level) {
+
+    LogLevel.INFO -> UiColors.green
+    LogLevel.WARN -> UiColors.orange
+    LogLevel.DEBUG -> UiColors.defaultText
+    LogLevel.ERROR -> UiColors.red
+    LogLevel.UNKNOWN -> Color.GRAY
+    LogLevel.KAFKA -> UiColors.teal
 }

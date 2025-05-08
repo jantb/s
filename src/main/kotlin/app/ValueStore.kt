@@ -4,16 +4,16 @@ import DrainTree
 import LogCluster
 import LogLevel
 import State
-import deserializeJsonToObject
+import kotlinx.datetime.Instant
+import kotlinx.serialization.json.Json
 import parallelSortWith
 import util.Index
-import java.io.Serializable
-import java.time.OffsetDateTime
+import java.util.concurrent.atomic.AtomicLong
 
 
 const val cap = 512
-
-class ValueStore : Serializable {
+val seq  =  AtomicLong(0)
+class ValueStore {
     private val levelIndexes = mutableMapOf<LogLevel, MutableList<Pair<Index<Int>, DrainTree>>>()
     var size = 0
 
@@ -30,71 +30,36 @@ class ValueStore : Serializable {
             LogCluster(totalCount, level, block, group.first().indexIdentifier)
         }
 
-
-    fun put(seq: Long, v: String, indexIdentifier: String, app: Boolean) {
-        when (app) {
-            true -> getLogJson(v, indexIdentifier, seq,true)?.let {
-                size++
-                State.indexedLines.addAndGet(1)
-                // Add to level-specific index
-                val level = it.level
-
-                val levelIndexList =
-                    levelIndexes.getOrPut(level) { mutableListOf(Index<Int>() to DrainTree(indexIdentifier)) }
-                if (levelIndexList.last().first.size >= cap) {
-                    levelIndexList.last().first.convertToHigherRank()
-                    levelIndexList.last().second.final()
-                    levelIndexList.add(Index<Int>() to DrainTree(indexIdentifier))
-                }
-                val drainIndex = levelIndexList.last().second.add(it)
-                levelIndexList.last().first.add(drainIndex, it.toString())
-            }
-
-            false -> getLogJson(v, indexIdentifier, seq, false)?.let {
-                size++
-                State.indexedLines.addAndGet(1)
-
-                val levelIndexList =
-                    levelIndexes.getOrPut(LogLevel.KAFKA) { mutableListOf(Index<Int>() to DrainTree(indexIdentifier)) }
-                if (levelIndexList.last().first.size >= cap) {
-                    levelIndexList.last().first.convertToHigherRank()
-                    levelIndexList.add(Index<Int>() to DrainTree(indexIdentifier))
-                }
-                val drainIndex = levelIndexList.last().second.add(it)
-                levelIndexList.last().first.add(drainIndex, it.toString())
-            }
-        }
+    fun put(domainLine: DomainLine) {
+        indexDomainLine(domainLine)
     }
 
-    private fun getLogJson(v: String, indexIdentifier: String, seq: Long, pod :Boolean): Domain? {
-        return try {
-            val domain = v.substringAfter(" ").deserializeJsonToObject<Domain>()
-            domain.indexIdentifier = indexIdentifier
-            domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant().toEpochMilli()
-            domain.seq = seq
-            domain.parseTimestamp()
-            if(!pod){
-                domain.level = LogLevel.KAFKA
+    private fun indexDomainLine(it: DomainLine) {
+        size++
+        State.indexedLines.addAndGet(1)
+
+        val level = it.level
+
+        val levelIndexList =
+            levelIndexes.getOrPut(level) { mutableListOf(Index<Int>() to DrainTree(it.indexIdentifier)) }
+        run {
+            val (index, drain) = levelIndexList.last()
+            if (index.size >= cap) {
+                index.convertToHigherRank()
+                drain.final()
+                levelIndexList.add(Index<Int>() to DrainTree(it.indexIdentifier))
             }
-            domain
-        } catch (e: Exception) {
-            val domain = Domain(seq = seq, message = v.substringAfter(" "), application = indexIdentifier)
-            domain.indexIdentifier = indexIdentifier
-            try {
-                domain.timestamp = OffsetDateTime.parse(v.substringBefore(" ")).toInstant().toEpochMilli()
-                domain.parseTimestamp()
-            } catch (e: Exception) {
-                return null
-            }
-            domain
         }
+        val (index, drain) = levelIndexList.last()
+        val drainIndex = drain.add(it)
+        index.add(drainIndex, it.toString())
     }
 
-    suspend fun search(query: String, length: Int, offsetLock: Long): List<Domain> {
+    suspend fun search(query: String, length: Int, offsetLock: Long): List<DomainLine> {
         val q = getQuery(query)
 
         // If levels are specified, search only those level indexes
-        val results = mutableListOf<Domain>()
+        val results = mutableListOf<DomainLine>()
 
         // Search each specified level
         val logLevels = State.levels.get().toSet()
@@ -106,7 +71,7 @@ class ValueStore : Serializable {
                 val (index, drain) = levelIndexList.last()
                 val liveResults = index.searchMustInclude(q.filteredQueryList) {
                     val domain = drain.get(it)
-                    (domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)) to domain
+                    (domain.seq <= offsetLock && domain.contains(q.queryList, q.queryListNot)) to domain
                 }.take(length).toList()
 
                 results.addAll(liveResults)
@@ -117,7 +82,7 @@ class ValueStore : Serializable {
                         .flatMap { (index, drain) ->
                             index.searchMustInclude(q.filteredQueryList) {
                                 val domain = drain.get(it)
-                                (domain.seq <= offsetLock && contains(q.queryList, q.queryListNot, domain)) to domain
+                                (domain.seq <= offsetLock && domain.contains(q.queryList, q.queryListNot)) to domain
                             }.take(length - liveResults.size)
                         }.take(length - liveResults.size)
                         .toList()
@@ -168,22 +133,6 @@ class ValueStore : Serializable {
             queryList = queryList,
             filteredQueryList = listOf(queryList.filter { it.isNotBlank() })
         )
-    }
-
-    private fun contains(
-        queryList: List<String>,
-        queryListNot: List<String>,
-        domain: Domain
-    ): Boolean {
-        val domainStr = domain.toString()
-        return when {
-            queryList.isEmpty() && queryListNot.isEmpty() -> true
-            queryList.isEmpty() -> queryListNot.none { domainStr.contains(it, ignoreCase = true) }
-            queryListNot.isEmpty() -> queryList.all { domainStr.contains(it, ignoreCase = true) } &&
-                    queryListNot.none { domainStr.contains(it, ignoreCase = true) }
-
-            else -> queryList.all { domainStr.contains(it, ignoreCase = true) }
-        }
     }
 }
 
