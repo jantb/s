@@ -16,7 +16,7 @@ import kotlinx.serialization.Serializable
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 
-class WebServer(private val port: Int = 8080) {
+class WebServer(private val port: Int = 9999) {
     private val clients = ConcurrentHashMap<String, WebSocketSession>()
     private val clientPods = ConcurrentHashMap<String, MutableSet<String>>()
     private val json = kotlinx.serialization.json.Json {
@@ -40,8 +40,7 @@ class WebServer(private val port: Int = 8080) {
             }
 
             routing {
-                // Static resources - serve the index.html file
-                staticResources("/", "static", "static/index.html")
+                staticResources("/", "static", "index.html")
 
                 // WebSocket endpoint for log streaming
                 webSocket("/logs") {
@@ -49,7 +48,6 @@ class WebServer(private val port: Int = 8080) {
                     clients[clientId] = this
                     clientPods[clientId] = mutableSetOf()
                     val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
 
                     try {
                         // Send a welcome message to verify connection
@@ -158,7 +156,7 @@ class WebServer(private val port: Int = 8080) {
                                                 val message = json.decodeFromString<ClientMessage>(frame.readText())
                                                 when (message.action) {
                                                     "listPods" -> {
-                                                        val listPods = app.ListPods()
+                                                        val listPods = ListPods()
                                                         Channels.podsChannel.put(listPods)
                                                         val pods = listPods.result.get()
                                                         val podMaps = pods.map { pod ->
@@ -175,13 +173,13 @@ class WebServer(private val port: Int = 8080) {
                                                     }
                                                     "listenPod" -> {
                                                         message.podName?.let {
-                                                            Channels.podsChannel.put(app.ListenToPod(it))
+                                                            Channels.podsChannel.put(ListenToPod(it))
                                                             clientPods[clientId]?.add(it)
                                                         }
                                                     }
                                                     "unlistenPod" -> {
                                                         message.podName?.let {
-                                                            Channels.podsChannel.put(app.UnListenToPod(it))
+                                                            Channels.podsChannel.put(UnListenToPod(it))
                                                             clientPods[clientId]?.remove(it)
                                                         }
                                                     }
@@ -208,9 +206,6 @@ class WebServer(private val port: Int = 8080) {
                                             }
                                         }
                                         is Frame.Close -> {
-                                            val closeReason = (frame as? CloseReason)?.let {
-                                                "code=${it.code}, reason=${it.message}"
-                                            } ?: "unknown"
                                             break // Exit the loop to trigger cleanup
                                         }
                                         else -> {
@@ -236,7 +231,7 @@ class WebServer(private val port: Int = 8080) {
 
                             // Stop listening to any pods this client was monitoring
                             clientPods[clientId]?.forEach { podName ->
-                                Channels.podsChannel.put(app.UnListenToPod(podName))
+                                Channels.podsChannel.put(UnListenToPod(podName))
                             }
                             clientPods.remove(clientId)
                         } catch (e: Exception) {

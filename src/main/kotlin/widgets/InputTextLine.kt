@@ -40,7 +40,7 @@ class InputTextLine(
         this.y = y
         this.height = height
         this.width = width
-        scheduler.scheduleAtFixedRate({ panel.repaint() }, 0, 500, TimeUnit.MILLISECONDS);
+        scheduler.scheduleAtFixedRate({ panel.repaint() }, 0, 500, TimeUnit.MILLISECONDS)
     }
 
     private var rowHeight = 12

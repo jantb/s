@@ -108,7 +108,7 @@ class IndexTest {
         println("Time taken to add $itemCount elements: $timeTaken")
         var found = 0
         val timeTakenSearch1 = measureTime {
-            map.forEach() {  value ->
+            map.forEach { value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))){
                     (it == value) to it
                 }

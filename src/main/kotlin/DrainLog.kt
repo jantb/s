@@ -302,4 +302,4 @@ class DrainTree(val indexIdentifier: String ="") {
 }
 
 
-data class LogCluster(val count: Long, val level: LogLevel, val block: String, val indexIdentifier: String) {}
+data class LogCluster(val count: Long, val level: LogLevel, val block: String, val indexIdentifier: String)

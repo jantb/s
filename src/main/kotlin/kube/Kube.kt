@@ -117,7 +117,7 @@ private fun getLogJson(v: String, seq: Long, indexIdentifier: String): DomainLin
         val ecsDocument = json.decodeFromString<EcsDocument>(message)
         LogLineDomain(seq = seq, indexIdentifier = indexIdentifier, ecsDocument = ecsDocument)
     } catch (e: Exception) {
-        kotlin.runCatching {
+        runCatching {
             LogLineDomain(
                 seq,
                 timestamp = Instant.parse(timestamp).toEpochMilliseconds(),

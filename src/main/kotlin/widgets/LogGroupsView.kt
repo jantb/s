@@ -143,7 +143,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                 when (index) {
                     0 -> fontMetrics.stringWidth(it.count.toString())
                     1 -> fontMetrics.stringWidth(it.level.name)
-                    2 -> fontMetrics.stringWidth(it.indexIdentifier ?: "")
+                    2 -> fontMetrics.stringWidth(it.indexIdentifier)
                     3 -> fontMetrics.stringWidth(it.block)
                     else -> 0
                 }
@@ -191,7 +191,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             val values = listOf(
                 cluster.count.toString(),
                 cluster.level.name,
-                cluster.indexIdentifier ?: "",
+                cluster.indexIdentifier,
                 cluster.block
             )
 

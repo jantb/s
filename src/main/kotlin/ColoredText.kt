@@ -1,9 +1,8 @@
 import util.UiColors
 import java.awt.Color
 import java.awt.Graphics2D
-import javax.swing.text.html.HTML.Tag.P
 
-class ColoredText() {
+class ColoredText {
     private var textList = mutableListOf<String>()
     var text = ""
     private val colorList = mutableListOf<Color>()
