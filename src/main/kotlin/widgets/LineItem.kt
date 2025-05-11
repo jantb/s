@@ -250,7 +250,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
     }
 
     fun getWordRangeAtIndex(input: String, charIndex: Int): IntRange? {
-        val words = input.split(" ", "\"") // Split the string into words based on space delimiter
+        val words = input.split(" ", "\"")
 
         var currentCharIndex = 0
         for (word in words) {

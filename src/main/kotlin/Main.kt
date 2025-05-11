@@ -9,10 +9,7 @@ import kube.Kube
 import util.UiColors.magenta
 import web.WebServer
 import widgets.*
-import java.awt.Font
-import java.awt.Graphics
-import java.awt.MouseInfo
-import java.awt.Point
+import java.awt.*
 import java.awt.event.KeyEvent
 import java.awt.event.KeyListener
 import java.awt.event.MouseEvent
@@ -50,10 +47,13 @@ fun main(args: Array<String>) {
         SwingUtilities.invokeLater {
             val frame = JFrame("Search")
             frame.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
-            val icon = ImageIcon(ClassLoader.getSystemResource("ontop.png")).image
-
+            val icon = ImageIcon(ClassLoader.getSystemResource("logo.png")).image
             frame.iconImage = icon
 
+            val applicationClass = Class.forName("com.apple.eawt.Application")
+            val applicationInstance = applicationClass.getDeclaredConstructor().newInstance()
+            val setDockIconMethod = applicationClass.getMethod("setDockIconImage", Image::class.java)
+            setDockIconMethod.invoke(applicationInstance, icon)
             val panel = SlidePanel()
             buildViewer(panel)
             buildPodSelect(panel)
