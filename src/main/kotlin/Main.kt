@@ -9,6 +9,7 @@ import kube.Kube
 import util.UiColors.magenta
 import web.WebServer
 import widgets.*
+import java.awt.Font
 import java.awt.Graphics
 import java.awt.MouseInfo
 import java.awt.Point
@@ -82,6 +83,7 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
     var timer = 0L
 
     init {
+        font = Font("JetBrains Mono", Font.PLAIN, 12)
         addKeyListener(this)
         addMouseListener(this)
         addMouseWheelListener(this)

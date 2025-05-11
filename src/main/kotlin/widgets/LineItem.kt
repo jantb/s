@@ -34,6 +34,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         this.width = width
         this.image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
         this.g2d = this.image.createGraphics()
+        this.g2d.font = loadFontFromResources((height / 1.2).toInt().coerceIn(1..100).toFloat())
         maxCharBounds = g2d.fontMetrics.getMaxCharBounds(g2d)
     }
 
@@ -127,6 +128,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
                 BufferedImage.TYPE_INT_RGB
             )
             this.g2d = this.image.createGraphics()
+            this.g2d.font = loadFontFromResources((height / 1.2).toInt().coerceIn(1..100).toFloat())
             this.height = height.coerceIn(1..Int.MAX_VALUE)
             this.width = width
             this.x = x
@@ -135,7 +137,6 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
         maxCharBounds = g2d.fontMetrics.getMaxCharBounds(g2d)
         g2d.color = if (mouseInside) UiColors.selectionLine else UiColors.background
         g2d.fillRect(0, 0, width, height)
-        g2d.font = Font(Styles.normalFont, Font.PLAIN, (height / 1.2).toInt().coerceIn(1..100))
         paintText()
 
         return image

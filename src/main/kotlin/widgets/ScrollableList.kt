@@ -10,9 +10,11 @@ import util.UiColors
 import java.awt.EventQueue
 import java.awt.Font
 import java.awt.Graphics2D
+import java.awt.GraphicsEnvironment
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -123,14 +125,13 @@ class ScrollableList(
                     )
                 }
             }
-
+            g2d.font =  loadFontFromResources(rowHeight.toFloat())
             indexOffset = 0
             updateResults()
         }
         //Clear
         g2d.color = UiColors.background
         g2d.fillRect(0, 0, width, height)
-        g2d.font = Font(Styles.normalFont, Font.PLAIN, rowHeight)
         maxCharBounds = g2d.fontMetrics.getMaxCharBounds(g2d)
 
         // Draw the chart
@@ -407,4 +408,10 @@ class ScrollableList(
     }
 
     private fun mouseInside(e: MouseEvent, it: ComponentOwn) = e.x in it.x..it.width && e.y in it.y..(it.y + it.height)
+}
+ fun loadFontFromResources(size: Float = 14f): Font {
+    val stream = ClassLoader.getSystemResourceAsStream("JetBrainsMono-Regular.ttf")
+        ?: error("Font not found at JetBrainsMono-Regular.ttf")
+    val baseFont = Font.createFont(Font.TRUETYPE_FONT, stream)
+    return baseFont.deriveFont(size)
 }
