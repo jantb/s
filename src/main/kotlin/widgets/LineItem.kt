@@ -150,7 +150,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
             val x = 0
             val y = maxCharBounds.height.toInt() - g2d.fontMetrics.maxDescent
             text.highlight = mouseInside && text.highlightRange != null
-            text.print(x, y, g2d)
+            text.print(x, y, g2d, width)
         }
     }
 
