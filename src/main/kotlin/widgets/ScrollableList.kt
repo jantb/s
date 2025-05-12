@@ -50,6 +50,7 @@ class ScrollableList(
     private var selectedLineIndex = 0
 
     private var rowHeight = 12
+    private var rowHeightCurrent = 12
     private lateinit var image: BufferedImage
     private lateinit var g2d: Graphics2D
 
@@ -85,7 +86,7 @@ class ScrollableList(
 
     private var lineList = listOf<LineItem>()
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
-        if (this.width != width || this.height != height || this.x != x || this.y != y) {
+        if (this.width != width || this.height != height ||rowHeight != rowHeightCurrent|| this.x != x || this.y != y) {
             if (::g2d.isInitialized) {
                 this.g2d.dispose()
             }
@@ -105,7 +106,7 @@ class ScrollableList(
 
             // Make chart height proportional to window height (20% of total height, minimum 80 pixels)
             chartHeight = (height * 0.2).toInt().coerceAtLeast(80)
-
+            rowHeightCurrent = rowHeight
             if (::maxCharBounds.isInitialized) {
                 val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
                     0

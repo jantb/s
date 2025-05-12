@@ -395,5 +395,12 @@ enum class LogLevel {
                 UNKNOWN
             }
         }
+        fun fromOrdinal(ordinal: Int): LogLevel {
+            return try {
+                values()[ordinal]
+            } catch (e: IndexOutOfBoundsException) {
+                UNKNOWN
+            }
+        }
     }
 }

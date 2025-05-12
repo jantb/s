@@ -1,5 +1,8 @@
 import app.Domain
 import app.DomainLine
+import app.KafkaLineDomain
+import app.LogLineDomain
+import util.VarInt
 import java.util.*
 
 data class LogLineForStorage(
@@ -12,6 +15,7 @@ data class LogLineForStorageFinal(
     val timestamp: Long,
     val logLevel: LogLevel,
 )
+
 data class LogLinePart(
     val timestamp: Long,
     val level: LogLevel,
@@ -37,33 +41,47 @@ sealed class Token {
     data class Number(val value: Long) : Token()
 }
 
-
 sealed class MultiToken {
     data class StringValue(val values: List<String>) : MultiToken()
     data class UUIDValue(val values: List<UUID>) : MultiToken()
     data class Number(val values: List<Long>) : MultiToken() // Simplified; assumes T64 is a list of numbers
 }
 
-
 data class PositionInfo(
     val signature: Signature,
     val posInGrouped: Int,
-    val logLine: DomainLine
+    val domainLineType: DomainLineType,
+    val indexes: VarInt = VarInt(),
+    val domainLine: DomainLine
 )
 
+enum class DomainLineType {
+    LOG, KAFKA
+}
 
 data class FinalizedPositionInfo(
     val block: Int,
     val posInGrouped: List<Int>,
-    val logLine: DomainLine?
+    val domainLineType: DomainLineType,
+    val domainLine: DomainLine?,
+    val indexes: VarInt = VarInt()
 )
 
-class DrainTree(val indexIdentifier: String ="") {
+class DrainTree(val indexIdentifier: String = "") {
+    private lateinit var multiTokens: List<List<MultiToken>>
     private var grouped: MutableMap<Signature, MutableList<List<Token>>> = HashMap()
     private var positionInfo: MutableList<PositionInfo> = ArrayList()
     private var positionInfoHashMap: MutableMap<Signature, MutableList<Int>> = HashMap()
-    private var finalizedPositionInfo: MutableList<FinalizedPositionInfo> = ArrayList()
+    private var finalizedPositionInfo: List<FinalizedPositionInfo> = ArrayList()
     private var logClusters: MutableList<LogCluster> = mutableListOf()
+
+    private val seqStore = VarInt()
+    private val logLevelStore = VarInt()
+    private val timestampStore = VarInt()
+    private val offsetStore = VarInt()
+    private val partitionStore = VarInt()
+    private val numberTokenStore = VarInt()
+    private val stringInterner = StringInterner()
 
     companion object {
         private fun generateSignature(tokens: List<Token>, logLevel: LogLevel): Signature {
@@ -78,16 +96,24 @@ class DrainTree(val indexIdentifier: String ="") {
             return Signature(typeSequence)
         }
 
-        private fun mapToToken(s: String): Token {
+        private fun mapToToken(s: String, numberStore: VarInt): Token {
             return if (isPotentialUUID(s)) {
                 try {
                     val uuid = UUID.fromString(s)
                     Token.UUIDValue(uuid)
                 } catch (e: IllegalArgumentException) {
-                    s.toLongOrNull()?.let { Token.Number(it) } ?: Token.StringValue(s)
+                    s.toLongOrNull()?.let {
+                        // Store the Long value in VarInt and return a Number token with the index
+                        val index = numberStore.add(it).toLong()
+                        Token.Number(index)
+                    } ?: Token.StringValue(s)
                 }
             } else {
-                s.toLongOrNull()?.let { Token.Number(it) } ?: Token.StringValue(s)
+                s.toLongOrNull()?.let {
+                    // Store the Long value in VarInt and return a Number token with the index
+                    val index = numberStore.add(it).toLong()
+                    Token.Number(index)
+                } ?: Token.StringValue(s)
             }
         }
 
@@ -95,10 +121,10 @@ class DrainTree(val indexIdentifier: String ="") {
             return s.length == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
         }
 
-        private fun getStringFromToken(token: Token): String = when (token) {
+        private fun getStringFromToken(token: Token, numberStore: VarInt): String = when (token) {
             is Token.StringValue -> token.value
             is Token.UUIDValue -> token.value.toString()
-            is Token.Number -> token.value.toString()
+            is Token.Number -> numberStore.get(token.value.toInt()).toString()
         }
 
         private fun generateMultiTokens(tokenStorage: List<List<List<Token>>>): List<List<MultiToken>> {
@@ -124,7 +150,8 @@ class DrainTree(val indexIdentifier: String ="") {
         private fun mergeVectorOfTokens(
             vectorOfTokens: List<List<Token>>,
             positionInfos: List<PositionInfo>,
-            block: Int
+            block: Int,
+            numberStore: VarInt
         ): Pair<List<FinalizedPositionInfo>, List<List<Token>>> {
             val uniques: List<MutableMap<Token, Int>> = vectorOfTokens.first().map { HashMap() }
             vectorOfTokens.forEach { vec ->
@@ -146,7 +173,9 @@ class DrainTree(val indexIdentifier: String ="") {
                     posInGrouped = posInGrouped.mapIndexed { index, token ->
                         uniques[index][token] ?: throw IllegalStateException("Token not found")
                     },
-                    logLine = posInfo.logLine
+                    domainLineType = posInfo.domainLineType,
+                    indexes = posInfo.indexes,
+                    domainLine = posInfo.domainLine,
                 )
             }
 
@@ -162,7 +191,12 @@ class DrainTree(val indexIdentifier: String ="") {
                     mergedVecs.add(
                         listOf(
                             Token.StringValue(
-                                "${getStringFromToken(last.first())} ${getStringFromToken(tokenVec.first())}"
+                                "${getStringFromToken(last.first(), numberStore)} ${
+                                    getStringFromToken(
+                                        tokenVec.first(),
+                                        numberStore
+                                    )
+                                }"
                             )
                         )
                     )
@@ -199,7 +233,7 @@ class DrainTree(val indexIdentifier: String ="") {
         val severityNumbers = ByteArray(logStorage.size)
         positionInfo.forEach {
             matches[it.block]++
-            severityNumbers[it.block] = it.logLine!!.level.ordinal.toByte()
+            severityNumbers[it.block] = logLevelStore.get(it.indexes.get(1).toInt()).toByte()
         }
 
         val result = logStorage.map { vec ->
@@ -218,13 +252,13 @@ class DrainTree(val indexIdentifier: String ="") {
         }
 
         return matches.indices.map { i ->
-            LogCluster(matches[i]+1,  LogLevel.entries[severityNumbers[i].toInt()],result[i], indexIdentifier)
+            LogCluster(matches[i] + 1, LogLevel.entries[severityNumbers[i].toInt()], result[i], indexIdentifier)
         }
     }
 
     fun add(logLine: DomainLine): Int {
         val line = logLine.message
-        val tokens = line.split(" ").map { mapToToken(it) }
+        val tokens = line.split(" ").map { mapToToken(it, numberTokenStore) } // Pass numberTokenStore
         val signature = generateSignature(tokens, logLine.level)
         val entry = grouped.getOrPut(signature) { ArrayList() }
         entry.add(tokens)
@@ -234,9 +268,42 @@ class DrainTree(val indexIdentifier: String ="") {
             PositionInfo(
                 signature = signature,
                 posInGrouped = entry.size - 1,
-                logLine = logLine
-                )
-            )
+                domainLineType = when (logLine) {
+                    is KafkaLineDomain -> DomainLineType.KAFKA
+                    is LogLineDomain -> DomainLineType.LOG
+                },
+                domainLine = logLine,
+            ).also {
+//                it.indexes.add(seqStore.add(logLine.seq).toLong())
+//                it.indexes.add(logLevelStore.add(logLine.level.ordinal.toLong()).toLong())
+//                it.indexes.add(timestampStore.add(logLine.timestamp).toLong())
+//                it.indexes.add(stringInterner.intern(logLine.indexIdentifier).toLong())
+//                when (logLine) {
+//                    is KafkaLineDomain -> {
+//                        it.indexes.add(stringInterner.intern(logLine.topic).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.key).toLong())
+//                        it.indexes.add(offsetStore.add(logLine.offset).toLong())
+//                        it.indexes.add(partitionStore.add(logLine.partition.toLong()).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.headers).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.correlationId).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.requestId).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.compositeEventId).toLong())
+//                    }
+//
+//                    is LogLineDomain -> {
+//                        it.indexes.add(stringInterner.intern(logLine.threadName).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.serviceName).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.serviceVersion).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.logger).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.correlationId).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.requestId).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.errorMessage).toLong())
+//                        it.indexes.add(stringInterner.intern(logLine.stacktrace).toLong())
+//                    }
+//                }
+
+            }
+        )
 
         return positionInfo.size - 1
     }
@@ -244,6 +311,7 @@ class DrainTree(val indexIdentifier: String ="") {
     fun get(index: Int): DomainLine {
         return if (finalizedPositionInfo.isEmpty()) {
             val positionInfo = positionInfo[index]
+          return positionInfo.domainLine
 //            val message = grouped[positionInfo.signature]!![positionInfo.posInGrouped].joinToString(" ") {
 //                when (it) {
 //                    is Token.StringValue -> it.value
@@ -251,25 +319,96 @@ class DrainTree(val indexIdentifier: String ="") {
 //                    is Token.Number -> it.value.toString()
 //                }
 //            }
-            positionInfo.logLine
+//            return when (positionInfo.domainLineType) {
+//                DomainLineType.LOG -> {
+//                    LogLineDomain(
+//                        seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
+//                        level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
+//                        timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
+//                        message = message,
+//                        indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
+//                        threadName = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
+//                        serviceName = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
+//                        serviceVersion = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
+//                        logger = stringInterner.get(positionInfo.indexes.get(6).toInt())!!,
+//                        correlationId = stringInterner.get(positionInfo.indexes.get(7).toInt()),
+//                        requestId = stringInterner.get(positionInfo.indexes.get(8).toInt()),
+//                        errorMessage = stringInterner.get(positionInfo.indexes.get(9).toInt()),
+//                        stacktrace = stringInterner.get(positionInfo.indexes.get(10).toInt()),
+//                    )
+//                }
+//
+//                DomainLineType.KAFKA -> {
+//                    KafkaLineDomain(
+//                        seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
+//                        level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
+//                        timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
+//                        message = message,
+//                        indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
+//                        topic = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
+//                        key = stringInterner.get(positionInfo.indexes.get(4).toInt()),
+//                        offset = offsetStore.get(positionInfo.indexes.get(5).toInt()),
+//                        partition = partitionStore.get(positionInfo.indexes.get(6).toInt()).toInt(),
+//                        headers = stringInterner.get(positionInfo.indexes.get(7).toInt())!!,
+//                        correlationId = stringInterner.get(positionInfo.indexes.get(8).toInt())!!,
+//                        requestId = stringInterner.get(positionInfo.indexes.get(9).toInt())!!,
+//                        compositeEventId = stringInterner.get(positionInfo.indexes.get(10).toInt())!!,
+//                    )
+//                }
+//            }
         } else {
+            val positionInfo = finalizedPositionInfo[index]
+           return positionInfo.domainLine!!
+//
 //            val message = finalizedPositionInfo[index].posInGrouped.mapIndexed { i, pos ->
-//                when (val token = tokenStorage[finalizedPositionInfo[index].block][i]) {
+//                when (val token = multiTokens[finalizedPositionInfo[index].block][i]) {
 //                    is MultiToken.StringValue -> token.values[pos]
 //                    is MultiToken.UUIDValue -> token.values[pos].toString()
 //                    is MultiToken.Number -> token.values[pos].toString()
 //                }
 //            }.joinToString(" ")
-            finalizedPositionInfo[index].logLine!!
+//            return when (positionInfo.domainLineType) {
+//                DomainLineType.LOG -> LogLineDomain(
+//                    seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
+//                    level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
+//                    timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
+//                    message = message,
+//                    indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
+//                    threadName = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
+//                    serviceName = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
+//                    serviceVersion = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
+//                    logger = stringInterner.get(positionInfo.indexes.get(6).toInt())!!,
+//                    correlationId = stringInterner.get(positionInfo.indexes.get(7).toInt()),
+//                    requestId = stringInterner.get(positionInfo.indexes.get(8).toInt()),
+//                    errorMessage = stringInterner.get(positionInfo.indexes.get(9).toInt()),
+//                    stacktrace = stringInterner.get(positionInfo.indexes.get(10).toInt()),
+//                )
+//
+//                DomainLineType.KAFKA -> KafkaLineDomain(
+//                    seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
+//                    level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
+//                    timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
+//                    message = message,
+//                    indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
+//                    topic = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
+//                    key = stringInterner.get(positionInfo.indexes.get(4).toInt()),
+//                    offset = offsetStore.get(positionInfo.indexes.get(5).toInt()),
+//                    partition = partitionStore.get(positionInfo.indexes.get(6).toInt()).toInt(),
+//                    headers = stringInterner.get(positionInfo.indexes.get(7).toInt())!!,
+//                    correlationId = stringInterner.get(positionInfo.indexes.get(8).toInt())!!,
+//                    requestId = stringInterner.get(positionInfo.indexes.get(9).toInt())!!,
+//                    compositeEventId = stringInterner.get(positionInfo.indexes.get(10).toInt())!!,
+//                )
+//            }
         }
     }
 
     fun final() {
         val (finalizedInfo, tokenStorage) = mergeGroupedTokens()
-    //    positionInfo.clear()
-        grouped.clear()
         positionInfoHashMap.clear()
-        this.logClusters.addAll(   getLogClusters(generateMultiTokens(tokenStorage), finalizedInfo))
+        this.multiTokens = generateMultiTokens(tokenStorage)
+        this.finalizedPositionInfo = finalizedInfo
+        this.logClusters.addAll(getLogClusters(multiTokens, finalizedInfo))
     }
 
     private fun mergeGroupedTokens(): Pair<List<FinalizedPositionInfo>, List<List<List<Token>>>> {
@@ -278,7 +417,12 @@ class DrainTree(val indexIdentifier: String ="") {
 
         grouped.entries.forEachIndexed { block, (signature, vectorOfTokens) ->
             val positionsForSignature = positionInfoHashMap[signature]!!.map { positionInfo[it] }
-            val (finalPos, uniqueVec) = mergeVectorOfTokens(vectorOfTokens, positionsForSignature, block)
+            val (finalPos, uniqueVec) = mergeVectorOfTokens(
+                vectorOfTokens,
+                positionsForSignature,
+                block,
+                numberTokenStore
+            )
             finalPositions.addAll(finalPos)
             uniqueTokens.add(uniqueVec)
         }
@@ -287,7 +431,9 @@ class DrainTree(val indexIdentifier: String ="") {
             FinalizedPositionInfo(
                 block = 0,
                 posInGrouped = emptyList(),
-                logLine = null
+                domainLineType = DomainLineType.LOG,
+                indexes = VarInt(),
+                domainLine = null
             )
         }
 
@@ -301,5 +447,20 @@ class DrainTree(val indexIdentifier: String ="") {
     }
 }
 
+class StringInterner {
+    private val strings = mutableListOf<String?>()
+    private val indexMap = mutableMapOf<String?, Int>()
+
+    fun intern(string: String?): Int {
+        return indexMap.getOrPut(string) {
+            strings.add(string)
+            strings.size - 1
+        }
+    }
+
+    fun get(index: Int): String? {
+        return strings[index]
+    }
+}
 
 data class LogCluster(val count: Long, val level: LogLevel, val block: String, val indexIdentifier: String)
