@@ -34,17 +34,16 @@ class Index<T : Comparable<T>>(
         size++
     }
 
-        fun<R> searchMustInclude(valueListList: List<List<String>>, predicateAndMapper: (T) -> Pair<Boolean, R>): List<R> {
+        fun<R> searchMustInclude(valueListList: List<List<String>>, predicateAndMapper: (T) -> Pair<Boolean, R>): Sequence<R> {
             // Must include all the strings in each of the lists
             val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
             val result =
-                shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending() }.merge(descending = true)
+                shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending() }.merge()
                     .map {
                         predicateAndMapper(it) }
                     .filter { it.first }
                     .map { it.second }
-                    .toList()
 
             if (isHigherRank) {
                 // save result in cache if higher rank
