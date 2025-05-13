@@ -4,18 +4,15 @@ import ComponentOwn
 import SlidePanel
 import State
 import app.*
-import kotlinx.coroutines.channels.trySendBlocking
-import kotlinx.coroutines.runBlocking
 import round
-import util.UiColors
 import util.Styles
+import util.UiColors
 import java.awt.Font
 import java.awt.Graphics2D
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
 import kotlin.math.abs
-import kotlin.text.get
 
 class PodSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int) : ComponentOwn(),
   KeyListener,

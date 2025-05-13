@@ -13,7 +13,7 @@ const val cap = 512
 val seq = AtomicLong(0)
 
 class ValueStore {
-    private val levelIndexes = mutableMapOf<LogLevel, MutableList<Pair<Index<Int>, DrainTree>>>()
+    private val levelIndexes = mutableMapOf<LogLevel, MutableList<Pair<Index<DomainLine>, DrainTree>>>()
     var size = 0
 
     fun getLogClusters(): List<LogCluster> = State.levels.get().flatMap { level ->
@@ -40,54 +40,33 @@ class ValueStore {
         val level = it.level
 
         val levelIndexList =
-            levelIndexes.getOrPut(level) { mutableListOf(Index<Int>() to DrainTree(it.indexIdentifier)) }
+            levelIndexes.getOrPut(level) { mutableListOf(Index<DomainLine>() to DrainTree(it.indexIdentifier)) }
         run {
             val (index, drain) = levelIndexList.last()
             if (index.size >= cap) {
                 index.convertToHigherRank()
                 drain.final()
-                levelIndexList.add(Index<Int>() to DrainTree(it.indexIdentifier))
+                levelIndexList.add(Index<DomainLine>() to DrainTree(it.indexIdentifier))
             }
         }
         val (index, drain) = levelIndexList.last()
-        val drainIndex = drain.add(it)
-        index.add(drainIndex, it.toString())
+         drain.add(it)
+        index.add(it, it.toString())
     }
 
     fun search(query: String, offsetLock: Long): Sequence<DomainLine> {
         val q = getQuery(query)
 
-        // If levels are specified, search only those level indexes
-        val results = mutableListOf<Sequence<DomainLine>>()
-
         // Search each specified level
-        val logLevels = State.levels.get().toSet()
-        for (level in logLevels) {
-            val levelIndexList = levelIndexes[level] ?: continue
-
-            // Search the live index for this level
-            if (levelIndexList.isNotEmpty()) {
-                val (index, drain) = levelIndexList.last()
-                val liveResults = index.searchMustInclude(q.filteredQueryList) {
-                    val domain = drain.get(it)
-                    (domain.seq <= offsetLock && domain.contains(q.queryList, q.queryListNot)) to domain
-                }
-
-                results.add(liveResults)
-
-                // If we need more results, search the ranked indexes for this level
-                val rankedResults = levelIndexList.dropLast(1).reversed().asSequence()
-                    .flatMap { (index, drain) ->
-                        index.searchMustInclude(q.filteredQueryList) {
-                            val domain = drain.get(it)
-                            (domain.seq <= offsetLock && domain.contains(q.queryList, q.queryListNot)) to domain
-                        }
+        return State.levels.get().toSet().mapNotNull { level ->
+            levelIndexes[level]?.reversed()
+                ?.map { (index, drain) ->
+                    index.searchMustInclude(q.filteredQueryList) {
+                        val contains = it.contains(q.queryList, q.queryListNot)
+                        (it.seq <= offsetLock && contains) to it
                     }
-                results.add(rankedResults)
-            }
-        }
-        // Sort and limit the results
-        return results.merge()
+                }?.merge()
+        }.merge()
     }
 
     data class Query(

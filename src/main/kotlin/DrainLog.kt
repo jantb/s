@@ -1,9 +1,9 @@
-import app.Domain
 import app.DomainLine
 import app.KafkaLineDomain
 import app.LogLineDomain
 import util.VarInt
 import java.util.*
+
 data class Signature(
     val typeSequence: List<Byte> = emptyList()
 ) {
@@ -33,8 +33,7 @@ data class PositionInfo(
     val signature: Signature,
     val posInGrouped: Int,
     val domainLineType: DomainLineType,
-    val indexes: VarInt = VarInt(),
-    val domainLine: DomainLine?
+    val logLevel: LogLevel
 )
 
 enum class DomainLineType {
@@ -45,7 +44,7 @@ data class FinalizedPositionInfo(
     val block: Int,
     val posInGrouped: List<Int>,
     val domainLineType: DomainLineType,
-    val domainLine: DomainLine?,
+    val logLevel: LogLevel,
     val indexes: VarInt = VarInt()
 )
 
@@ -58,13 +57,6 @@ class DrainTree(val indexIdentifier: String = "") {
     private var logClusters: MutableList<LogCluster> = mutableListOf()
     private val store = false
 
-    private val seqStore = VarInt()
-    private val logLevelStore = VarInt()
-    private val timestampStore = VarInt()
-    private val offsetStore = VarInt()
-    private val partitionStore = VarInt()
-    private val numberTokenStore = VarInt()
-    private val stringInterner = StringInterner()
 
     companion object {
         private fun generateSignature(tokens: List<Token>, logLevel: LogLevel): Signature {
@@ -79,7 +71,7 @@ class DrainTree(val indexIdentifier: String = "") {
             return Signature(typeSequence)
         }
 
-        private fun mapToToken(s: String, numberStore: VarInt): Token {
+        private fun mapToToken(s: String): Token {
             return if (isPotentialUUID(s)) {
                 try {
                     val uuid = UUID.fromString(s)
@@ -87,15 +79,13 @@ class DrainTree(val indexIdentifier: String = "") {
                 } catch (e: IllegalArgumentException) {
                     s.toLongOrNull()?.let {
                         // Store the Long value in VarInt and return a Number token with the index
-                        val index = numberStore.add(it).toLong()
-                        Token.Number(index)
+                        Token.Number(it)
                     } ?: Token.StringValue(s)
                 }
             } else {
                 s.toLongOrNull()?.let {
                     // Store the Long value in VarInt and return a Number token with the index
-                    val index = numberStore.add(it).toLong()
-                    Token.Number(index)
+                    Token.Number(it)
                 } ?: Token.StringValue(s)
             }
         }
@@ -104,10 +94,10 @@ class DrainTree(val indexIdentifier: String = "") {
             return s.length == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
         }
 
-        private fun getStringFromToken(token: Token, numberStore: VarInt): String = when (token) {
+        private fun getStringFromToken(token: Token): String = when (token) {
             is Token.StringValue -> token.value
             is Token.UUIDValue -> token.value.toString()
-            is Token.Number -> numberStore.get(token.value.toInt()).toString()
+            is Token.Number -> token.value.toInt().toString()
         }
 
         private fun generateMultiTokens(tokenStorage: List<List<List<Token>>>): List<List<MultiToken>> {
@@ -134,7 +124,6 @@ class DrainTree(val indexIdentifier: String = "") {
             vectorOfTokens: List<List<Token>>,
             positionInfos: List<PositionInfo>,
             block: Int,
-            numberStore: VarInt
         ): Pair<List<FinalizedPositionInfo>, List<List<Token>>> {
             val uniques: List<MutableMap<Token, Int>> = vectorOfTokens.first().map { HashMap() }
             vectorOfTokens.forEach { vec ->
@@ -157,8 +146,7 @@ class DrainTree(val indexIdentifier: String = "") {
                         uniques[index][token] ?: throw IllegalStateException("Token not found")
                     },
                     domainLineType = posInfo.domainLineType,
-                    indexes = posInfo.indexes,
-                    domainLine = posInfo.domainLine,
+                    logLevel = posInfo.logLevel,
                 )
             }
 
@@ -174,10 +162,9 @@ class DrainTree(val indexIdentifier: String = "") {
                     mergedVecs.add(
                         listOf(
                             Token.StringValue(
-                                "${getStringFromToken(last.first(), numberStore)} ${
+                                "${getStringFromToken(last.first())} ${
                                     getStringFromToken(
                                         tokenVec.first(),
-                                        numberStore
                                     )
                                 }"
                             )
@@ -216,7 +203,7 @@ class DrainTree(val indexIdentifier: String = "") {
         val severityNumbers = ByteArray(logStorage.size)
         positionInfo.forEach {
             matches[it.block]++
-            severityNumbers[it.block] = logLevelStore.get(it.indexes.get(1).toInt()).toByte()
+            severityNumbers[it.block] = it.logLevel.ordinal.toByte()
         }
 
         val result = logStorage.map { vec ->
@@ -241,7 +228,7 @@ class DrainTree(val indexIdentifier: String = "") {
 
     fun add(logLine: DomainLine): Int {
         val line = logLine.message
-        val tokens = line.split(" ").map { mapToToken(it, numberTokenStore) } // Pass numberTokenStore
+        val tokens = line.split(" ").map { mapToToken(it) }
         val signature = generateSignature(tokens, logLine.level)
         val entry = grouped.getOrPut(signature) { ArrayList() }
         entry.add(tokens)
@@ -255,147 +242,17 @@ class DrainTree(val indexIdentifier: String = "") {
                     is KafkaLineDomain -> DomainLineType.KAFKA
                     is LogLineDomain -> DomainLineType.LOG
                 },
-                domainLine = if(store)null else logLine,
-            ).also {
-                it.indexes.add(seqStore.add(logLine.seq).toLong())
-                it.indexes.add(logLevelStore.add(logLine.level.ordinal.toLong()).toLong())
-                it.indexes.add(timestampStore.add(logLine.timestamp).toLong())
-                it.indexes.add(stringInterner.intern(logLine.indexIdentifier).toLong())
-                when (logLine) {
-                    is KafkaLineDomain -> {
-                        it.indexes.add(stringInterner.intern(logLine.topic).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.key).toLong())
-                        it.indexes.add(offsetStore.add(logLine.offset).toLong())
-                        it.indexes.add(partitionStore.add(logLine.partition.toLong()).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.headers).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.correlationId).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.requestId).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.compositeEventId).toLong())
-                    }
-
-                    is LogLineDomain -> {
-                        it.indexes.add(stringInterner.intern(logLine.threadName).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.serviceName).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.serviceVersion).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.logger).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.correlationId).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.requestId).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.errorMessage).toLong())
-                        it.indexes.add(stringInterner.intern(logLine.stacktrace).toLong())
-                    }
-                }
-
-            }
+                logLevel = when (logLine) {
+                    is KafkaLineDomain -> LogLevel.KAFKA
+                    is LogLineDomain -> logLine.level
+                },
+            )
         )
 
         return positionInfo.size - 1
     }
 
-    fun get(index: Int): DomainLine {
-        return if (finalizedPositionInfo.isEmpty()) {
-            val positionInfo = positionInfo[index]
-            if (!store) {
-                return positionInfo.domainLine!!
-            } else {
-                val message = grouped[positionInfo.signature]!![positionInfo.posInGrouped].joinToString(" ") {
-                    when (it) {
-                        is Token.StringValue -> it.value
-                        is Token.UUIDValue -> it.value.toString()
-                        is Token.Number -> it.value.toString()
-                    }
-                }
-                return when (positionInfo.domainLineType) {
-                    DomainLineType.LOG -> {
-                        LogLineDomain(
-                            seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
-                            level = LogLevel.fromOrdinal(
-                                logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()
-                            ),
-                            timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
-                            message = message,
-                            indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
-                            threadName = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
-                            serviceName = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
-                            serviceVersion = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
-                            logger = stringInterner.get(positionInfo.indexes.get(6).toInt())!!,
-                            correlationId = stringInterner.get(positionInfo.indexes.get(7).toInt()),
-                            requestId = stringInterner.get(positionInfo.indexes.get(8).toInt()),
-                            errorMessage = stringInterner.get(positionInfo.indexes.get(9).toInt()),
-                            stacktrace = stringInterner.get(positionInfo.indexes.get(10).toInt()),
-                        )
-                    }
 
-                    DomainLineType.KAFKA -> {
-                        KafkaLineDomain(
-                            seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
-                            level = LogLevel.fromOrdinal(
-                                logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()
-                            ),
-                            timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
-                            message = message,
-                            indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
-                            topic = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
-                            key = stringInterner.get(positionInfo.indexes.get(4).toInt()),
-                            offset = offsetStore.get(positionInfo.indexes.get(5).toInt()),
-                            partition = partitionStore.get(positionInfo.indexes.get(6).toInt()).toInt(),
-                            headers = stringInterner.get(positionInfo.indexes.get(7).toInt())!!,
-                            correlationId = stringInterner.get(positionInfo.indexes.get(8).toInt())!!,
-                            requestId = stringInterner.get(positionInfo.indexes.get(9).toInt())!!,
-                            compositeEventId = stringInterner.get(positionInfo.indexes.get(10).toInt())!!,
-                        )
-                    }
-                }
-            }
-
-        } else {
-            val positionInfo = finalizedPositionInfo[index]
-            if (!store) {
-                return positionInfo.domainLine!!
-            } else {
-                //
-                val message = finalizedPositionInfo[index].posInGrouped.mapIndexed { i, pos ->
-                    when (val token = multiTokens[finalizedPositionInfo[index].block][i]) {
-                        is MultiToken.StringValue -> token.values[pos]
-                        is MultiToken.UUIDValue -> token.values[pos].toString()
-                        is MultiToken.Number -> token.values[pos].toString()
-                    }
-                }.joinToString(" ")
-                return when (positionInfo.domainLineType) {
-                    DomainLineType.LOG -> LogLineDomain(
-                        seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
-                        level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
-                        timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
-                        message = message,
-                        indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
-                        threadName = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
-                        serviceName = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
-                        serviceVersion = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
-                        logger = stringInterner.get(positionInfo.indexes.get(6).toInt())!!,
-                        correlationId = stringInterner.get(positionInfo.indexes.get(7).toInt()),
-                        requestId = stringInterner.get(positionInfo.indexes.get(8).toInt()),
-                        errorMessage = stringInterner.get(positionInfo.indexes.get(9).toInt()),
-                        stacktrace = stringInterner.get(positionInfo.indexes.get(10).toInt()),
-                    )
-
-                    DomainLineType.KAFKA -> KafkaLineDomain(
-                        seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
-                        level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
-                        timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
-                        message = message,
-                        indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
-                        topic = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
-                        key = stringInterner.get(positionInfo.indexes.get(4).toInt()),
-                        offset = offsetStore.get(positionInfo.indexes.get(5).toInt()),
-                        partition = partitionStore.get(positionInfo.indexes.get(6).toInt()).toInt(),
-                        headers = stringInterner.get(positionInfo.indexes.get(7).toInt())!!,
-                        correlationId = stringInterner.get(positionInfo.indexes.get(8).toInt())!!,
-                        requestId = stringInterner.get(positionInfo.indexes.get(9).toInt())!!,
-                        compositeEventId = stringInterner.get(positionInfo.indexes.get(10).toInt())!!,
-                    )
-                }
-            }
-        }
-    }
 
     fun final() {
         val (finalizedInfo, tokenStorage) = mergeGroupedTokens()
@@ -414,8 +271,7 @@ class DrainTree(val indexIdentifier: String = "") {
             val (finalPos, uniqueVec) = mergeVectorOfTokens(
                 vectorOfTokens,
                 positionsForSignature,
-                block,
-                numberTokenStore
+                block
             )
             finalPositions.addAll(finalPos)
             uniqueTokens.add(uniqueVec)
@@ -427,7 +283,7 @@ class DrainTree(val indexIdentifier: String = "") {
                 posInGrouped = emptyList(),
                 domainLineType = DomainLineType.LOG,
                 indexes = VarInt(),
-                domainLine = null
+                logLevel = LogLevel.UNKNOWN,
             )
         }
 
