@@ -14,7 +14,6 @@ class Index<T : Comparable<T>>(
     private var shardArray: Array<Shard<T>?> = Array(32) { null }
     private var isHigherRank: Boolean = false
     var size: Int = 0
-    private var cacheKey: List<List<String>>? = null
     fun add(t: T, s: String) {
         require(!isHigherRank) {
             "Can not add values to a higher rank index"
@@ -46,10 +45,6 @@ class Index<T : Comparable<T>>(
                     .filter { it.first }
                     .map { it.second }
 
-            if (isHigherRank) {
-                // save result in cache if higher rank
-                cacheKey = valueListList
-            }
             return result.sortedDescending()
         }
 

@@ -4,24 +4,6 @@ import app.KafkaLineDomain
 import app.LogLineDomain
 import util.VarInt
 import java.util.*
-
-data class LogLineForStorage(
-    val timestamp: Long,
-    val logLevel: LogLevel,
-    val domain: Domain,
-)
-
-data class LogLineForStorageFinal(
-    val timestamp: Long,
-    val logLevel: LogLevel,
-)
-
-data class LogLinePart(
-    val timestamp: Long,
-    val level: LogLevel,
-    val body: String,
-)
-
 data class Signature(
     val typeSequence: List<Byte> = emptyList()
 ) {
@@ -52,7 +34,7 @@ data class PositionInfo(
     val posInGrouped: Int,
     val domainLineType: DomainLineType,
     val indexes: VarInt = VarInt(),
-    val domainLine: DomainLine
+    val domainLine: DomainLine?
 )
 
 enum class DomainLineType {
@@ -74,6 +56,7 @@ class DrainTree(val indexIdentifier: String = "") {
     private var positionInfoHashMap: MutableMap<Signature, MutableList<Int>> = HashMap()
     private var finalizedPositionInfo: List<FinalizedPositionInfo> = ArrayList()
     private var logClusters: MutableList<LogCluster> = mutableListOf()
+    private val store = false
 
     private val seqStore = VarInt()
     private val logLevelStore = VarInt()
@@ -272,35 +255,35 @@ class DrainTree(val indexIdentifier: String = "") {
                     is KafkaLineDomain -> DomainLineType.KAFKA
                     is LogLineDomain -> DomainLineType.LOG
                 },
-                domainLine = logLine,
+                domainLine = if(store)null else logLine,
             ).also {
-//                it.indexes.add(seqStore.add(logLine.seq).toLong())
-//                it.indexes.add(logLevelStore.add(logLine.level.ordinal.toLong()).toLong())
-//                it.indexes.add(timestampStore.add(logLine.timestamp).toLong())
-//                it.indexes.add(stringInterner.intern(logLine.indexIdentifier).toLong())
-//                when (logLine) {
-//                    is KafkaLineDomain -> {
-//                        it.indexes.add(stringInterner.intern(logLine.topic).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.key).toLong())
-//                        it.indexes.add(offsetStore.add(logLine.offset).toLong())
-//                        it.indexes.add(partitionStore.add(logLine.partition.toLong()).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.headers).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.correlationId).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.requestId).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.compositeEventId).toLong())
-//                    }
-//
-//                    is LogLineDomain -> {
-//                        it.indexes.add(stringInterner.intern(logLine.threadName).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.serviceName).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.serviceVersion).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.logger).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.correlationId).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.requestId).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.errorMessage).toLong())
-//                        it.indexes.add(stringInterner.intern(logLine.stacktrace).toLong())
-//                    }
-//                }
+                it.indexes.add(seqStore.add(logLine.seq).toLong())
+                it.indexes.add(logLevelStore.add(logLine.level.ordinal.toLong()).toLong())
+                it.indexes.add(timestampStore.add(logLine.timestamp).toLong())
+                it.indexes.add(stringInterner.intern(logLine.indexIdentifier).toLong())
+                when (logLine) {
+                    is KafkaLineDomain -> {
+                        it.indexes.add(stringInterner.intern(logLine.topic).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.key).toLong())
+                        it.indexes.add(offsetStore.add(logLine.offset).toLong())
+                        it.indexes.add(partitionStore.add(logLine.partition.toLong()).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.headers).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.correlationId).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.requestId).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.compositeEventId).toLong())
+                    }
+
+                    is LogLineDomain -> {
+                        it.indexes.add(stringInterner.intern(logLine.threadName).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.serviceName).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.serviceVersion).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.logger).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.correlationId).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.requestId).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.errorMessage).toLong())
+                        it.indexes.add(stringInterner.intern(logLine.stacktrace).toLong())
+                    }
+                }
 
             }
         )
@@ -311,95 +294,106 @@ class DrainTree(val indexIdentifier: String = "") {
     fun get(index: Int): DomainLine {
         return if (finalizedPositionInfo.isEmpty()) {
             val positionInfo = positionInfo[index]
-          return positionInfo.domainLine
-//            val message = grouped[positionInfo.signature]!![positionInfo.posInGrouped].joinToString(" ") {
-//                when (it) {
-//                    is Token.StringValue -> it.value
-//                    is Token.UUIDValue -> it.value.toString()
-//                    is Token.Number -> it.value.toString()
-//                }
-//            }
-//            return when (positionInfo.domainLineType) {
-//                DomainLineType.LOG -> {
-//                    LogLineDomain(
-//                        seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
-//                        level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
-//                        timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
-//                        message = message,
-//                        indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
-//                        threadName = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
-//                        serviceName = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
-//                        serviceVersion = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
-//                        logger = stringInterner.get(positionInfo.indexes.get(6).toInt())!!,
-//                        correlationId = stringInterner.get(positionInfo.indexes.get(7).toInt()),
-//                        requestId = stringInterner.get(positionInfo.indexes.get(8).toInt()),
-//                        errorMessage = stringInterner.get(positionInfo.indexes.get(9).toInt()),
-//                        stacktrace = stringInterner.get(positionInfo.indexes.get(10).toInt()),
-//                    )
-//                }
-//
-//                DomainLineType.KAFKA -> {
-//                    KafkaLineDomain(
-//                        seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
-//                        level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
-//                        timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
-//                        message = message,
-//                        indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
-//                        topic = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
-//                        key = stringInterner.get(positionInfo.indexes.get(4).toInt()),
-//                        offset = offsetStore.get(positionInfo.indexes.get(5).toInt()),
-//                        partition = partitionStore.get(positionInfo.indexes.get(6).toInt()).toInt(),
-//                        headers = stringInterner.get(positionInfo.indexes.get(7).toInt())!!,
-//                        correlationId = stringInterner.get(positionInfo.indexes.get(8).toInt())!!,
-//                        requestId = stringInterner.get(positionInfo.indexes.get(9).toInt())!!,
-//                        compositeEventId = stringInterner.get(positionInfo.indexes.get(10).toInt())!!,
-//                    )
-//                }
-//            }
+            if (!store) {
+                return positionInfo.domainLine!!
+            } else {
+                val message = grouped[positionInfo.signature]!![positionInfo.posInGrouped].joinToString(" ") {
+                    when (it) {
+                        is Token.StringValue -> it.value
+                        is Token.UUIDValue -> it.value.toString()
+                        is Token.Number -> it.value.toString()
+                    }
+                }
+                return when (positionInfo.domainLineType) {
+                    DomainLineType.LOG -> {
+                        LogLineDomain(
+                            seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
+                            level = LogLevel.fromOrdinal(
+                                logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()
+                            ),
+                            timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
+                            message = message,
+                            indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
+                            threadName = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
+                            serviceName = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
+                            serviceVersion = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
+                            logger = stringInterner.get(positionInfo.indexes.get(6).toInt())!!,
+                            correlationId = stringInterner.get(positionInfo.indexes.get(7).toInt()),
+                            requestId = stringInterner.get(positionInfo.indexes.get(8).toInt()),
+                            errorMessage = stringInterner.get(positionInfo.indexes.get(9).toInt()),
+                            stacktrace = stringInterner.get(positionInfo.indexes.get(10).toInt()),
+                        )
+                    }
+
+                    DomainLineType.KAFKA -> {
+                        KafkaLineDomain(
+                            seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
+                            level = LogLevel.fromOrdinal(
+                                logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()
+                            ),
+                            timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
+                            message = message,
+                            indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
+                            topic = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
+                            key = stringInterner.get(positionInfo.indexes.get(4).toInt()),
+                            offset = offsetStore.get(positionInfo.indexes.get(5).toInt()),
+                            partition = partitionStore.get(positionInfo.indexes.get(6).toInt()).toInt(),
+                            headers = stringInterner.get(positionInfo.indexes.get(7).toInt())!!,
+                            correlationId = stringInterner.get(positionInfo.indexes.get(8).toInt())!!,
+                            requestId = stringInterner.get(positionInfo.indexes.get(9).toInt())!!,
+                            compositeEventId = stringInterner.get(positionInfo.indexes.get(10).toInt())!!,
+                        )
+                    }
+                }
+            }
+
         } else {
             val positionInfo = finalizedPositionInfo[index]
-           return positionInfo.domainLine!!
-//
-//            val message = finalizedPositionInfo[index].posInGrouped.mapIndexed { i, pos ->
-//                when (val token = multiTokens[finalizedPositionInfo[index].block][i]) {
-//                    is MultiToken.StringValue -> token.values[pos]
-//                    is MultiToken.UUIDValue -> token.values[pos].toString()
-//                    is MultiToken.Number -> token.values[pos].toString()
-//                }
-//            }.joinToString(" ")
-//            return when (positionInfo.domainLineType) {
-//                DomainLineType.LOG -> LogLineDomain(
-//                    seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
-//                    level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
-//                    timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
-//                    message = message,
-//                    indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
-//                    threadName = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
-//                    serviceName = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
-//                    serviceVersion = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
-//                    logger = stringInterner.get(positionInfo.indexes.get(6).toInt())!!,
-//                    correlationId = stringInterner.get(positionInfo.indexes.get(7).toInt()),
-//                    requestId = stringInterner.get(positionInfo.indexes.get(8).toInt()),
-//                    errorMessage = stringInterner.get(positionInfo.indexes.get(9).toInt()),
-//                    stacktrace = stringInterner.get(positionInfo.indexes.get(10).toInt()),
-//                )
-//
-//                DomainLineType.KAFKA -> KafkaLineDomain(
-//                    seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
-//                    level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
-//                    timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
-//                    message = message,
-//                    indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
-//                    topic = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
-//                    key = stringInterner.get(positionInfo.indexes.get(4).toInt()),
-//                    offset = offsetStore.get(positionInfo.indexes.get(5).toInt()),
-//                    partition = partitionStore.get(positionInfo.indexes.get(6).toInt()).toInt(),
-//                    headers = stringInterner.get(positionInfo.indexes.get(7).toInt())!!,
-//                    correlationId = stringInterner.get(positionInfo.indexes.get(8).toInt())!!,
-//                    requestId = stringInterner.get(positionInfo.indexes.get(9).toInt())!!,
-//                    compositeEventId = stringInterner.get(positionInfo.indexes.get(10).toInt())!!,
-//                )
-//            }
+            if (!store) {
+                return positionInfo.domainLine!!
+            } else {
+                //
+                val message = finalizedPositionInfo[index].posInGrouped.mapIndexed { i, pos ->
+                    when (val token = multiTokens[finalizedPositionInfo[index].block][i]) {
+                        is MultiToken.StringValue -> token.values[pos]
+                        is MultiToken.UUIDValue -> token.values[pos].toString()
+                        is MultiToken.Number -> token.values[pos].toString()
+                    }
+                }.joinToString(" ")
+                return when (positionInfo.domainLineType) {
+                    DomainLineType.LOG -> LogLineDomain(
+                        seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
+                        level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
+                        timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
+                        message = message,
+                        indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
+                        threadName = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
+                        serviceName = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
+                        serviceVersion = stringInterner.get(positionInfo.indexes.get(5).toInt())!!,
+                        logger = stringInterner.get(positionInfo.indexes.get(6).toInt())!!,
+                        correlationId = stringInterner.get(positionInfo.indexes.get(7).toInt()),
+                        requestId = stringInterner.get(positionInfo.indexes.get(8).toInt()),
+                        errorMessage = stringInterner.get(positionInfo.indexes.get(9).toInt()),
+                        stacktrace = stringInterner.get(positionInfo.indexes.get(10).toInt()),
+                    )
+
+                    DomainLineType.KAFKA -> KafkaLineDomain(
+                        seq = seqStore.get(positionInfo.indexes.get(0).toInt()),
+                        level = LogLevel.fromOrdinal(logLevelStore.get(positionInfo.indexes.get(1).toInt()).toInt()),
+                        timestamp = timestampStore.get(positionInfo.indexes.get(2).toInt()),
+                        message = message,
+                        indexIdentifier = stringInterner.get(positionInfo.indexes.get(3).toInt())!!,
+                        topic = stringInterner.get(positionInfo.indexes.get(4).toInt())!!,
+                        key = stringInterner.get(positionInfo.indexes.get(4).toInt()),
+                        offset = offsetStore.get(positionInfo.indexes.get(5).toInt()),
+                        partition = partitionStore.get(positionInfo.indexes.get(6).toInt()).toInt(),
+                        headers = stringInterner.get(positionInfo.indexes.get(7).toInt())!!,
+                        correlationId = stringInterner.get(positionInfo.indexes.get(8).toInt())!!,
+                        requestId = stringInterner.get(positionInfo.indexes.get(9).toInt())!!,
+                        compositeEventId = stringInterner.get(positionInfo.indexes.get(10).toInt())!!,
+                    )
+                }
+            }
         }
     }
 
