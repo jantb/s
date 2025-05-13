@@ -69,17 +69,15 @@ class App : CoroutineScope {
                             valueStores.map {
                                 it.value.search(
                                     query = msg.query,
-                                    length = msg.length + msg.offset + 10_000,
                                     offsetLock = offsetLock
                                 )
-                            }.merge().drop(msg.offset).take(msg.length + 10_000).toList()
+                            }.merge().drop(msg.offset)
                         }
 
                         searchTime.set(listResults.duration.inWholeNanoseconds)
 
-                        kafkaCmdGuiChannel.put(ResultChanged(listResults.value.take(msg.offset + msg.length).reversed(), listResults.value))
+                        kafkaCmdGuiChannel.put(ResultChanged(listResults.value.take( msg.length).toList().reversed(), listResults.value.take(10000).toList()))
                     }
-
                 }
             }
         }

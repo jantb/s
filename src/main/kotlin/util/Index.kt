@@ -1,6 +1,7 @@
 package util
 
 import merge
+import sortedByDescending
 import util.Bf.Companion.estimate
 import java.io.Serializable
 import java.util.*
@@ -34,12 +35,12 @@ class Index<T : Comparable<T>>(
         size++
     }
 
-        fun<R> searchMustInclude(valueListList: List<List<String>>, predicateAndMapper: (T) -> Pair<Boolean, R>): Sequence<R> {
+        fun<R:Comparable<R>> searchMustInclude(valueListList: List<List<String>>, predicateAndMapper: (T) -> Pair<Boolean, R>): Sequence<R> {
             // Must include all the strings in each of the lists
             val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
             val result =
-                shardArray.mapNotNull { it?.search(gramsList)?.sortedDescending() }.merge()
+                shardArray.mapNotNull { it?.search(gramsList) }.merge()
                     .map {
                         predicateAndMapper(it) }
                     .filter { it.first }
@@ -49,7 +50,7 @@ class Index<T : Comparable<T>>(
                 // save result in cache if higher rank
                 cacheKey = valueListList
             }
-            return result
+            return result.sortedDescending()
         }
 
         fun convertToHigherRank() {

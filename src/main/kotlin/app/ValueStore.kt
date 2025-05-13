@@ -54,7 +54,7 @@ class ValueStore {
         index.add(drainIndex, it.toString())
     }
 
-    fun search(query: String, length: Int, offsetLock: Long): Sequence<DomainLine> {
+    fun search(query: String, offsetLock: Long): Sequence<DomainLine> {
         val q = getQuery(query)
 
         // If levels are specified, search only those level indexes
@@ -71,7 +71,7 @@ class ValueStore {
                 val liveResults = index.searchMustInclude(q.filteredQueryList) {
                     val domain = drain.get(it)
                     (domain.seq <= offsetLock && domain.contains(q.queryList, q.queryListNot)) to domain
-                }.take(length)
+                }
 
                 results.add(liveResults)
 
@@ -81,14 +81,13 @@ class ValueStore {
                         index.searchMustInclude(q.filteredQueryList) {
                             val domain = drain.get(it)
                             (domain.seq <= offsetLock && domain.contains(q.queryList, q.queryListNot)) to domain
-                        }.take(length)
-                    }.take(length)
+                        }
+                    }
                 results.add(rankedResults)
             }
         }
-
         // Sort and limit the results
-        return results.merge().take(length)
+        return results.merge()
     }
 
     data class Query(
