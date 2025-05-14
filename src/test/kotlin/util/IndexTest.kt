@@ -27,12 +27,12 @@ class IndexTest {
         val key = "key"
         val value = "value"
 
-        index.add( value,value)
+        index.add( value, value)
 
         assertEquals(1, index.size)
 
         val searchMustInclude = index.searchMustInclude(listOf(listOf("val"))) {
-            true to it
+            true
         }.toList()
         assertEquals(1, searchMustInclude.size)
     }
@@ -51,7 +51,7 @@ class IndexTest {
         assertEquals(2, index.size)
 
         val searchMustInclude = index.searchMustInclude(listOf(listOf("a"))) {
-            true to it
+            true
         }.toList()
         assertEquals(1, searchMustInclude.size)
     }
@@ -78,7 +78,7 @@ class IndexTest {
         val timeTakenSearch = measureTime {
             for ( value in map) {
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
-                    (  it == value )to it
+                    it == value
                 }
                 if (value in searchMustInclude) {
                     found++
@@ -92,7 +92,7 @@ class IndexTest {
     @Test
     fun regression_test_higher_rank() {
         val index = Index<String        >()
-        val itemCount = 5_000_00
+        val itemCount = 500_000
 
         val map = mutableSetOf< String>() // For later verification
 
@@ -108,9 +108,9 @@ class IndexTest {
         println("Time taken to add $itemCount elements: $timeTaken")
         var found = 0
         val timeTakenSearch1 = measureTime {
-            map.forEach { value ->
+            map.forEach() {  value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))){
-                    (it == value) to it
+                    it == value
                 }
                 if (value in searchMustInclude) {
                     found++
@@ -127,7 +127,7 @@ class IndexTest {
        val timeTakenSearch = measureTime {
             map.forEach { value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
-                    (it == value) to it
+                    it == value
                 }
                 if (value in searchMustInclude) {
                     found++

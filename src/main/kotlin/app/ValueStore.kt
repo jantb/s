@@ -50,7 +50,7 @@ class ValueStore {
             }
         }
         val (index, drain) = levelIndexList.last()
-         drain.add(it)
+        drain.add(it)
         index.add(it, it.toString())
     }
 
@@ -62,10 +62,9 @@ class ValueStore {
             levelIndexes[level]?.reversed()
                 ?.map { (index, drain) ->
                     index.searchMustInclude(q.filteredQueryList) {
-                        val contains = it.contains(q.queryList, q.queryListNot)
-                        (it.seq <= offsetLock && contains) to it
+                        (it.seq <= offsetLock && it.contains(q.queryList, q.queryListNot))
                     }
-                }?.merge()
+                }?.reduceOrNull { acc, seq -> acc + seq }
         }.merge()
     }
 

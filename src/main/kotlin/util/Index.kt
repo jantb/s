@@ -34,28 +34,25 @@ class Index<T : Comparable<T>>(
         size++
     }
 
-        fun<R:Comparable<R>> searchMustInclude(valueListList: List<List<String>>, predicateAndMapper: (T) -> Pair<Boolean, R>): Sequence<R> {
-            // Must include all the strings in each of the lists
-            val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
+    fun searchMustInclude(valueListList: List<List<String>>, f: (T) -> Boolean): Sequence<T> {
+        // Must include all the strings in each of the lists
+        val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
-            val result =
-                shardArray.mapNotNull { it?.search(gramsList) }.merge()
-                    .map {
-                        predicateAndMapper(it) }
-                    .filter { it.first }
-                    .map { it.second }
+        val result =
+            shardArray.mapNotNull { it?.search(gramsList) }.merge()
+                .filter { f(it) }
 
-            return result.sortedDescending()
-        }
-
-        fun convertToHigherRank() {
-            require(!isHigherRank) {
-                "Can not convert an already converted higher rank"
-            }
-            isHigherRank = true
-            shardArray.forEach { it?.convertToHigherRankRows(goalCardinality) }
-        }
+        return result.sortedDescending()
     }
+
+    fun convertToHigherRank() {
+        require(!isHigherRank) {
+            "Can not convert an already converted higher rank"
+        }
+        isHigherRank = true
+        shardArray.forEach { it?.convertToHigherRankRows(goalCardinality) }
+    }
+}
 
 class Shard<T>(
     m: Int,
