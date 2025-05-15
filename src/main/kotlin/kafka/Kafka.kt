@@ -30,6 +30,8 @@ import java.time.Duration
 import java.time.OffsetDateTime
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 class Kafka {
     val notStopping = AtomicBoolean(false)
@@ -38,6 +40,7 @@ class Kafka {
     private val configs = mutableMapOf<String, Any>()
     private val schemaRegistryClient: SchemaRegistryClient
     private var latch = CountDownLatch(1)
+    private val lock = ReentrantLock()
 
     init {
         val config = ConfigLoader()
@@ -118,17 +121,18 @@ class Kafka {
         }.apply { isDaemon = true }.start()
     }
 
-    private fun listTopics(): List<String> {
-        return kafkaConsumer.listTopics().map { it.key }.sorted()
+    private fun listTopics(): List<String> = lock.withLock {
+        kafkaConsumer.listTopics().map { it.key }.sorted()
     }
 
-    private fun listLag(): List<LagInfo> {
+    private fun listLag(): List<LagInfo> = lock.withLock {
         val lagInfoList = mutableListOf<LagInfo>()
         val groups = adminClient.listConsumerGroups().all().get()
 
         groups.forEach { group ->
             val groupId = group.groupId()
             val consumerOffsets = adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get()
+
             val endOffsets = kafkaConsumer.endOffsets(consumerOffsets.keys)
 
             consumerOffsets.forEach { (tp, offsetMeta) ->
@@ -147,7 +151,7 @@ class Kafka {
             }
         }
 
-        return lagInfoList
+        lagInfoList
     }
 
     @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
@@ -157,29 +161,35 @@ class Kafka {
         notStopping.set(true)
 
         scope.launch {
-            val partitions = kafkaConsumer.listTopics()
-                .filter { it.key in topics }
-                .flatMap { it.value.map { tp -> TopicPartition(tp.topic(), tp.partition()) } }
+            lock.withLock {
+                val partitions = kafkaConsumer.listTopics()
+                    .filter { it.key in topics }
+                    .flatMap { it.value.map { tp -> TopicPartition(tp.topic(), tp.partition()) } }
 
-            kafkaConsumer.assign(partitions)
+                kafkaConsumer.assign(partitions)
 
-            val startOffsets = kafkaConsumer.offsetsForTimes(partitions.associateWith {
-                OffsetDateTime.now().minusDays(State.kafkaDays.get().toLong()).toEpochSecond() * 1000
-            })
+                val startOffsets = kafkaConsumer.offsetsForTimes(partitions.associateWith {
+                    OffsetDateTime.now().minusDays(State.kafkaDays.get().toLong()).toEpochSecond() * 1000
+                })
 
-            partitions.forEach {
-                val startOffset = startOffsets[it]?.offset() ?: kafkaConsumer.endOffsets(listOf(it))[it] ?: 0L
-                kafkaConsumer.seek(it, startOffset)
+                partitions.forEach {
+                    val startOffset = startOffsets[it]?.offset()
+                        ?: kafkaConsumer.endOffsets(listOf(it))[it]
+                        ?: 0L
+                    kafkaConsumer.seek(it, startOffset)
+                }
             }
 
             while (notStopping.get()) {
                 try {
-                    if (kafkaConsumer.assignment().isEmpty()) {
-                        notStopping.set(false)
-                        break
+                    val records: ConsumerRecords<String, ByteArray> = lock.withLock {
+                        if (kafkaConsumer.assignment().isEmpty()) {
+                            notStopping.set(false)
+                            return@withLock ConsumerRecords.empty()
+                        }
+                        kafkaConsumer.poll(Duration.ofMillis(500))
                     }
 
-                    val records: ConsumerRecords<String, ByteArray> = kafkaConsumer.poll(Duration.ofMillis(500))
                     for (record in records) {
                         val value = try {
                             KafkaAvroDeserializer(schemaRegistryClient).deserialize(record.topic(), record.value())
@@ -211,6 +221,7 @@ class Kafka {
                     e.printStackTrace()
                 }
             }
+
             latch.countDown()
         }
     }
