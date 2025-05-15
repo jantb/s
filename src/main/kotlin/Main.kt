@@ -1,7 +1,6 @@
 import app.App
 import app.Channels
 import app.KafkaSelectChangedText
-import app.ListLag
 import app.QueryChanged
 import kafka.Kafka
 import kotlinx.coroutines.channels.trySendBlocking
@@ -10,13 +9,7 @@ import util.UiColors.magenta
 import web.WebServer
 import widgets.*
 import java.awt.*
-import java.awt.event.KeyEvent
-import java.awt.event.KeyListener
-import java.awt.event.MouseEvent
-import java.awt.event.MouseListener
-import java.awt.event.MouseMotionListener
-import java.awt.event.MouseWheelEvent
-import java.awt.event.MouseWheelListener
+import java.awt.event.*
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -31,7 +24,7 @@ import kotlin.time.Duration.Companion.nanoseconds
 fun main(args: Array<String>) {
     val useWebUI = args.contains("--web")
     State.useWebUI = useWebUI
-    
+
     if (State.onMac && !useWebUI) {
         System.setProperty("apple.awt.application.appearance", "dark")
     }
@@ -39,7 +32,7 @@ fun main(args: Array<String>) {
     App().start()
     Kube()
     Kafka()
-    
+
     if (useWebUI) {
         println("Starting web UI on port 8080")
         WebServer().start()
@@ -55,6 +48,7 @@ fun main(args: Array<String>) {
             val setDockIconMethod = applicationClass.getMethod("setDockIconImage", Image::class.java)
             setDockIconMethod.invoke(applicationInstance, icon)
             val panel = SlidePanel()
+
             buildViewer(panel)
             buildPodSelect(panel)
             buildKafkaSelect(panel)
