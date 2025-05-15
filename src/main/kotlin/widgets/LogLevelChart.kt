@@ -3,11 +3,8 @@ package widgets
 import ComponentOwn
 import LogLevel
 import State
-import app.Domain
 import app.DomainLine
 import kotlinx.datetime.*
-import kotlinx.datetime.format.DateTimeComponents
-import kotlinx.datetime.format.DateTimeFormat
 import util.UiColors
 import java.awt.BasicStroke
 import java.awt.Color
@@ -22,7 +19,6 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.nanoseconds
@@ -198,7 +194,10 @@ class LogLevelChart(
 
         color = Color.LIGHT_GRAY
         font = Font("Monospaced", Font.PLAIN, 12)
+        drawString("${timeFormatter.format(startTime.toJavaInstant())} - ${timeFormatter.format(endTime.toJavaInstant())}", 30, 25)
+        drawString("${endTime.minus(startTime)}", 240, 25)
         drawString("Avg MPS: %.2f".format(avgMps), width - 120, 25)
+
         drawLegend(levels)
     }
 
