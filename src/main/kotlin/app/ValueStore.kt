@@ -9,7 +9,7 @@ import util.Index
 import java.util.concurrent.atomic.AtomicLong
 
 
-const val cap = 512
+const val cap = 1024
 val seq = AtomicLong(0)
 
 class ValueStore {
@@ -50,7 +50,9 @@ class ValueStore {
             }
         }
         val (index, drain) = levelIndexList.last()
-        drain.add(it)
+        if (it is LogLineDomain) {
+            drain.add(it)
+        }
         index.add(it, it.toString())
     }
 

@@ -189,7 +189,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
                 KeyEvent.VK_G -> {
                     if (State.mode != Mode.kafkaLag) {
                         State.mode = Mode.kafkaLag
-                        Channels.kafkaChannel.put(ListLag)
                     } else {
                         componentMap[State.mode]?.forEach { it.keyPressed(e) }
                         State.mode = Mode.viewer

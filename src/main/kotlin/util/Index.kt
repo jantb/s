@@ -9,7 +9,7 @@ import kotlin.math.*
 
 class Index<T : Comparable<T>>(
     private val probability: Double = 0.0001,
-    private val goalCardinality: Double = 0.37,
+    private val goalCardinality: Double = 0.1,
 ) : Serializable {
     private var shardArray: Array<Shard<T>?> = Array(32) { null }
     private var isHigherRank: Boolean = false

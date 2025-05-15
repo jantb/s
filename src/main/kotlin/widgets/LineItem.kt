@@ -98,6 +98,10 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
                 )
                 this.text.addText(" ", color = UiColors.defaultText)
                 this.text.addText(
+                    domainLine.compositeEventId, color = UiColors.magenta
+                )
+                this.text.addText(" ", color = UiColors.defaultText)
+                this.text.addText(
                     domainLine.topic,
                     color = UiColors.visibleColors[domainLine.indexIdentifier.hashCode().absoluteValue % UiColors.visibleColors.size]
                 )
@@ -135,7 +139,11 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
             this.y = y
         }
         maxCharBounds = g2d.fontMetrics.getMaxCharBounds(g2d)
-        g2d.color = if (mouseInside) UiColors.selectionLine else UiColors.background
+        g2d.color = when {
+            domain is KafkaLineDomain -> UiColors.backgroundTeal
+            mouseInside -> UiColors.selectionLine
+            else -> UiColors.background
+        }
         g2d.fillRect(0, 0, width, height)
         paintText()
 

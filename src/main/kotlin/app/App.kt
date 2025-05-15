@@ -11,13 +11,11 @@ import app.Channels.logClusterCmdGuiChannel
 import app.Channels.popChannel
 import app.Channels.refreshChannel
 import app.Channels.searchChannel
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kafka.Kafka
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.Channel.Factory.BUFFERED
 import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kube.PodUnit
 import merge
@@ -103,7 +101,7 @@ sealed class KafkaMessage
 sealed class KafkaSelectMessage
 class ListPods(val result: CompletableFuture<List<PodUnit>> = CompletableFuture()) : PodsMessage()
 class ListTopics(val result: CompletableFuture<List<String>> = CompletableFuture()) : KafkaMessage()
-data object ListLag : KafkaMessage()
+data class ListLag(val result: CompletableDeferred<List<Kafka.LagInfo>> = CompletableDeferred()) : KafkaMessage()
 class ListenToPod(val podName: String) : PodsMessage()
 class PublishToTopic(val topic: String, val key: String, val value: String) : KafkaMessage()
 class ListenToTopic(val name: List<String>) : KafkaMessage()

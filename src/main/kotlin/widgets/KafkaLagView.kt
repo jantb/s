@@ -4,9 +4,9 @@ import ComponentOwn
 import SlidePanel
 import State
 import app.*
-import app.Channels.kafkaCmdGuiChannel
 import app.Channels.kafkaChannel
 import kafka.Kafka
+import kafka.Kafka.LagInfo
 import util.UiColors
 import util.Styles
 import java.awt.Font
@@ -14,14 +14,17 @@ import java.awt.Graphics2D
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
+import kotlinx.coroutines.*
 
-class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int) : ComponentOwn(),
-    KeyListener,
-    MouseListener, MouseWheelListener,
-    MouseMotionListener {
-    private val lagInfo = AtomicReference<List<Kafka.LagInfo>>(emptyList())
+class KafkaLagView(
+    private val panel: SlidePanel,
+    x: Int, y: Int, width: Int, height: Int
+) : ComponentOwn(), KeyListener, MouseListener, MouseWheelListener, MouseMotionListener {
+
+    private val lagInfo = AtomicReference<List<LagInfo>>(emptyList())
     private var indexOffset = 0
     private var visibleLines = 0
     private var hideTopicsWithoutLag = false
@@ -29,34 +32,6 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
     private val hideButtonRect = java.awt.Rectangle(0, 0, 200, 20)
     private val sortButtonRect = java.awt.Rectangle(0, 0, 200, 20)
     private val refreshButtonRect = java.awt.Rectangle(0, 0, 200, 20)
-
-    init {
-        this.x = x
-        this.y = y
-        this.height = height
-        this.width = width
-
-        val thread = Thread {
-            while (true) {
-                try {
-                    when (val msg = kafkaCmdGuiChannel.take()) {
-                        is KafkaLagInfo -> {
-                            lagInfo.set(msg.lagInfo)
-                            SwingUtilities.invokeLater {
-                                panel.repaint()
-                            }
-                        }
-                        else -> {}
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-        }
-        thread.isDaemon = true
-        thread.start()
-    }
-
     private var selectedLineIndex = 0
     private var rowHeight = 12
     private lateinit var image: BufferedImage
@@ -64,6 +39,31 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
     private var mouseposX = 0
     private var mouseposY = 0
     private lateinit var maxCharBounds: Rectangle2D
+
+    init {
+        this.x = x
+        this.y = y
+        this.height = height
+        this.width = width
+
+        // Old style: consuming lag info from kafkaCmdGuiChannel.
+        // You can remove this listener if you prefer updates only via refresh.
+        Thread {
+            while (true) {
+                try {
+                    when (val msg = Channels.kafkaCmdGuiChannel.take()) {
+                        is KafkaLagInfo -> {
+                            lagInfo.set(msg.lagInfo)
+                            SwingUtilities.invokeLater { panel.repaint() }
+                        }
+                        else -> {}
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }.apply { isDaemon = true }.start()
+    }
 
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
         if (this.width != width || this.height != height || this.x != x || this.y != y) {
@@ -77,7 +77,7 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
             this.x = x
             this.y = y
         }
-        //Clear
+        // Clear
         g2d.color = UiColors.background
         g2d.fillRect(0, 0, width, height)
         g2d.font = Font(Styles.normalFont, Font.PLAIN, rowHeight)
@@ -123,16 +123,16 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
         g2d.color = UiColors.selection
         g2d.fillRect(refreshButtonRect.x, refreshButtonRect.y, refreshButtonRect.width, refreshButtonRect.height)
         g2d.color = UiColors.defaultText
-        val refreshButtonText = "Refresh"
+        val refreshButtonText = "Refresh (Cmd + R)"
         g2d.drawString(refreshButtonText, refreshButtonRect.x + 10, refreshButtonRect.y + 15)
 
         // Measure column header widths
         val fontMetrics = g2d.fontMetrics
         val columnHeaders = listOf("Group ID", "Topic", "Partition", "Current Offset", "End Offset", "Lag")
-        val sampleData = lagInfo.get()
+        var currentLagInfo = lagInfo.get()
 
         val columnWidths = columnHeaders.mapIndexed { index, header ->
-            val maxDataWidth = sampleData.maxOfOrNull {
+            val maxDataWidth = currentLagInfo.maxOfOrNull {
                 when (index) {
                     0 -> fontMetrics.stringWidth(it.groupId)
                     1 -> fontMetrics.stringWidth(it.topic)
@@ -146,7 +146,7 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
             maxOf(fontMetrics.stringWidth(header), maxDataWidth) + 20 // padding
         }
 
-// Calculate column x-offsets
+        // Calculate column x-offsets
         val columnOffsets = columnWidths.runningFold(0) { acc, w -> acc + w }
 
         // Draw header
@@ -155,15 +155,10 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
             g2d.drawString(columnHeaders[col], columnOffsets[col], maxCharBounds.height.toInt())
         }
 
-        // Draw lag info
-        var currentLagInfo = lagInfo.get()
-
-        // Filter out topics without lag if the flag is set
+        // Filter and sort data if necessary
         if (hideTopicsWithoutLag) {
             currentLagInfo = currentLagInfo.filter { it.lag > 0 }
         }
-
-        // Sort by lag if the flag is set
         if (sortByLag) {
             currentLagInfo = currentLagInfo.sortedByDescending { it.lag }
         }
@@ -171,12 +166,9 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
         // Only display the visible items based on indexOffset
         val startIndex = indexOffset.coerceAtMost(maxOf(0, currentLagInfo.size - 1))
         val endIndex = minOf(startIndex + visibleLines, currentLagInfo.size)
-
         for (i in startIndex until endIndex) {
             val info = currentLagInfo[i]
-            val lineColor = if (info.lag > 0) UiColors.red else UiColors.green
-            g2d.color = lineColor
-
+            g2d.color = if (info.lag > 0) UiColors.red else UiColors.green
             val values = listOf(
                 info.groupId,
                 info.topic,
@@ -185,31 +177,22 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
                 info.endOffset.toString(),
                 info.lag.toString()
             )
-
-            // Draw each value in its column
             for (col in values.indices) {
-                g2d.drawString(
-                    values[col],
-                    columnOffsets[col],
-                    maxCharBounds.height.toInt() * ((i - startIndex) + 2)
-                )
+                g2d.drawString(values[col], columnOffsets[col], maxCharBounds.height.toInt() * ((i - startIndex) + 2))
             }
         }
 
-        // If no lag info, show a message
         if (currentLagInfo.isEmpty()) {
             g2d.color = UiColors.defaultText
-            g2d.drawString("No consumer lag information available. Press Cmd+L to refresh.", 0, maxCharBounds.height.toInt() * 2)
+            g2d.drawString("No consumer lag information available. Press Cmd+R to refresh.", 0, maxCharBounds.height.toInt() * 2)
         }
     }
 
-
     private fun drawSelectedLine() {
-        // Only draw selection if it's visible
-        if (selectedLineIndex >= indexOffset && selectedLineIndex < indexOffset + visibleLines) {
+        if (selectedLineIndex in indexOffset until (indexOffset + visibleLines)) {
             g2d.color = UiColors.selectionLine
-            val height = maxCharBounds.height.toInt() + g2d.fontMetrics.maxDescent
-            g2d.fillRect(0, maxCharBounds.height.toInt() * (selectedLineIndex - indexOffset + 1), width, height)
+            val selHeight = maxCharBounds.height.toInt() + g2d.fontMetrics.maxDescent
+            g2d.fillRect(0, maxCharBounds.height.toInt() * (selectedLineIndex - indexOffset + 1), width, selHeight)
         }
     }
 
@@ -218,73 +201,47 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
     }
 
     override fun keyPressed(e: KeyEvent) {
-        if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_L) {
-            // Refresh lag info
-            kafkaChannel.put(ListLag)
+        if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_R) {
+            refreshLagInfo()
             panel.repaint()
-        } else {
-            val currentLagInfo = lagInfo.get()
+            return
+        }
 
-            when (e.keyCode) {
-                KeyEvent.VK_DOWN -> {
-                    // Move selection down
-                    selectedLineIndex++
-                    val maxIndex = currentLagInfo.size
-                    selectedLineIndex = selectedLineIndex.coerceIn(0 until maxIndex)
-
-                    // Auto-scroll if selection goes out of view
-                    if (selectedLineIndex >= indexOffset + visibleLines) {
-                        indexOffset = selectedLineIndex - visibleLines + 1
-                    }
-
-                    panel.repaint()
+        val currentLagInfo = lagInfo.get()
+        when (e.keyCode) {
+            KeyEvent.VK_DOWN -> {
+                selectedLineIndex = (selectedLineIndex + 1).coerceIn(0, currentLagInfo.size - 1)
+                if (selectedLineIndex >= indexOffset + visibleLines) {
+                    indexOffset = selectedLineIndex - visibleLines + 1
                 }
-                KeyEvent.VK_UP -> {
-                    // Move selection up
-                    selectedLineIndex--
-                    selectedLineIndex = selectedLineIndex.coerceAtLeast(0)
-
-                    // Auto-scroll if selection goes out of view
-                    if (selectedLineIndex < indexOffset) {
-                        indexOffset = selectedLineIndex
-                    }
-
-                    panel.repaint()
+                panel.repaint()
+            }
+            KeyEvent.VK_UP -> {
+                selectedLineIndex = (selectedLineIndex - 1).coerceAtLeast(0)
+                if (selectedLineIndex < indexOffset) {
+                    indexOffset = selectedLineIndex
                 }
-                KeyEvent.VK_PAGE_DOWN -> {
-                    // Scroll down one page
-                    indexOffset += visibleLines
-                    indexOffset = indexOffset.coerceIn(0, maxOf(0, currentLagInfo.size - visibleLines))
-
-                    // Move selection
-                    selectedLineIndex += visibleLines
-                    selectedLineIndex = selectedLineIndex.coerceIn(0, currentLagInfo.size - 1)
-
-                    panel.repaint()
-                }
-                KeyEvent.VK_PAGE_UP -> {
-                    // Scroll up one page
-                    indexOffset -= visibleLines
-                    indexOffset = indexOffset.coerceAtLeast(0)
-
-                    // Move selection
-                    selectedLineIndex -= visibleLines
-                    selectedLineIndex = selectedLineIndex.coerceAtLeast(0)
-
-                    panel.repaint()
-                }
-                KeyEvent.VK_HOME -> {
-                    // Scroll to top
-                    indexOffset = 0
-                    selectedLineIndex = 0
-                    panel.repaint()
-                }
-                KeyEvent.VK_END -> {
-                    // Scroll to bottom
-                    indexOffset = maxOf(0, currentLagInfo.size - visibleLines)
-                    selectedLineIndex = currentLagInfo.size - 1
-                    panel.repaint()
-                }
+                panel.repaint()
+            }
+            KeyEvent.VK_PAGE_DOWN -> {
+                indexOffset = (indexOffset + visibleLines).coerceIn(0, maxOf(0, currentLagInfo.size - visibleLines))
+                selectedLineIndex = (selectedLineIndex + visibleLines).coerceIn(0, currentLagInfo.size - 1)
+                panel.repaint()
+            }
+            KeyEvent.VK_PAGE_UP -> {
+                indexOffset = (indexOffset - visibleLines).coerceAtLeast(0)
+                selectedLineIndex = (selectedLineIndex - visibleLines).coerceAtLeast(0)
+                panel.repaint()
+            }
+            KeyEvent.VK_HOME -> {
+                indexOffset = 0
+                selectedLineIndex = 0
+                panel.repaint()
+            }
+            KeyEvent.VK_END -> {
+                indexOffset = maxOf(0, currentLagInfo.size - visibleLines)
+                selectedLineIndex = currentLagInfo.size - 1
+                panel.repaint()
             }
         }
     }
@@ -293,75 +250,49 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
         panel.repaint()
     }
 
-    override fun mouseClicked(e: MouseEvent) {
-        // Not implemented
-    }
+    override fun mouseClicked(e: MouseEvent) { }
 
     override fun mousePressed(e: MouseEvent) {
         mouseposX = e.x - x
         mouseposY = e.y - y - 7
 
-        // Check if the hide/show button was clicked
-        if (e.x >= hideButtonRect.x && e.x <= hideButtonRect.x + hideButtonRect.width &&
-            e.y >= hideButtonRect.y && e.y <= hideButtonRect.y + hideButtonRect.height) {
-            // Toggle the flag
+        // Hide/Show button
+        if (e.x in hideButtonRect.x until (hideButtonRect.x + hideButtonRect.width) &&
+            e.y in hideButtonRect.y until (hideButtonRect.y + hideButtonRect.height)) {
             hideTopicsWithoutLag = !hideTopicsWithoutLag
-
-            // Reset the index offset when toggling to ensure we start from the beginning
             indexOffset = 0
         }
 
-        // Check if the sort button was clicked
-        if (e.x >= sortButtonRect.x && e.x <= sortButtonRect.x + sortButtonRect.width &&
-            e.y >= sortButtonRect.y && e.y <= sortButtonRect.y + sortButtonRect.height) {
-            // Toggle the sort flag
+        // Sort button
+        if (e.x in sortButtonRect.x until (sortButtonRect.x + sortButtonRect.width) &&
+            e.y in sortButtonRect.y until (sortButtonRect.y + sortButtonRect.height)) {
             sortByLag = !sortByLag
-
-            // Reset the index offset when toggling to ensure we start from the beginning
             indexOffset = 0
         }
 
-        // Check if the refresh button was clicked
-        if (e.x >= refreshButtonRect.x && e.x <= refreshButtonRect.x + refreshButtonRect.width &&
-            e.y >= refreshButtonRect.y && e.y <= refreshButtonRect.y + refreshButtonRect.height) {
-            // Toggle the sort flag
-            kafkaChannel.put(ListLag)
+        // Refresh button
+        if (e.x in refreshButtonRect.x until (refreshButtonRect.x + refreshButtonRect.width) &&
+            e.y in refreshButtonRect.y until (refreshButtonRect.y + refreshButtonRect.height)) {
+            refreshLagInfo()
         }
-
         panel.repaint()
     }
 
-    override fun mouseReleased(e: MouseEvent) {
-        // Not implemented
-    }
+    override fun mouseReleased(e: MouseEvent) { }
 
-    override fun mouseEntered(e: MouseEvent) {
-        if (!mouseInside) {
-            mouseInside = true
-        }
-    }
+    override fun mouseEntered(e: MouseEvent) { mouseInside = true }
 
-    override fun mouseExited(e: MouseEvent) {
-        if (mouseInside) {
-            mouseInside = false
-        }
-    }
+    override fun mouseExited(e: MouseEvent) { mouseInside = false }
 
     override fun mouseWheelMoved(e: MouseWheelEvent) {
         if ((e.isControlDown && !State.onMac) || (e.isMetaDown && State.onMac)) {
             rowHeight += e.wheelRotation
-            rowHeight = rowHeight.coerceIn(1..100)
+            rowHeight = rowHeight.coerceIn(1, 100)
             panel.repaint()
             return
         }
-
-        // Scroll the view
         indexOffset += e.wheelRotation * e.scrollAmount
-
-        // Ensure indexOffset stays within valid range
-        val currentLagInfo = lagInfo.get()
-        indexOffset = indexOffset.coerceIn(0, maxOf(0, currentLagInfo.size - visibleLines))
-
+        indexOffset = indexOffset.coerceIn(0, maxOf(0, lagInfo.get().size - visibleLines))
         panel.repaint()
     }
 
@@ -375,5 +306,18 @@ class KafkaLagView(private val panel: SlidePanel, x: Int, y: Int, width: Int, he
         mouseposX = e.x - x
         mouseposY = e.y - y - 7
         panel.repaint()
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun refreshLagInfo() {
+        // Launch a coroutine to send a ListLag message and await the result.
+        GlobalScope.launch {
+            val msg = ListLag() // ListLag now carries a CompletableDeferred<List<Kafka.LagInfo>>
+            kafkaChannel.put(msg)
+            // Wait for the result from the Kafka consumer thread.
+            val result = msg.result.await()
+            lagInfo.set(result)
+            SwingUtilities.invokeLater { panel.repaint() }
+        }
     }
 }

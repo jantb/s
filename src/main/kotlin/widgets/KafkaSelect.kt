@@ -131,7 +131,6 @@ class KafkaSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, hei
            //     Channels.popChannel.trySendBlocking(ClearIndex)
                 val listTopics = ListTopics()
                 Channels.kafkaChannel.put(listTopics)
-                Channels.kafkaChannel.put(ListLag)
                 itemsCompl.set(listTopics.result.get().map { Item(it, false) }.toMutableList())
                 items.get().clear()
                 items.get().addAll(listTopics.result.get().map { Item(it, false) })

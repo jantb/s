@@ -19,6 +19,7 @@ object UiColors {
     val highlightRect = Color(255, 255 ,255)
 
     val background = Color(30,31,34)
+    val backgroundTeal =  Color(10 ,50 ,50)
     val visibleColors = arrayOf(
         Color(255, 179, 186),  // Light Red
         Color(255, 223, 186),  // Light Orange

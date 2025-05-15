@@ -130,7 +130,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         g2d.color = UiColors.selection
         g2d.fillRect(refreshButtonRect.x, refreshButtonRect.y, refreshButtonRect.width, refreshButtonRect.height)
         g2d.color = UiColors.defaultText
-        g2d.drawString("Refresh", refreshButtonRect.x + 10, refreshButtonRect.y + 15)
+        g2d.drawString("Refresh (Cmd + r)", refreshButtonRect.x + 10, refreshButtonRect.y + 15)
 
         // Measure column header widths
         val fontMetrics = g2d.fontMetrics

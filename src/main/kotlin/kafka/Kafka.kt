@@ -33,11 +33,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class Kafka {
     val notStopping = AtomicBoolean(false)
-    var kafkaConsumer: KafkaConsumer<String, ByteArray>
-    var adminClient: AdminClient
-    var latch = CountDownLatch(1)
-    val configs = mutableMapOf<String, Any>()
+    private val kafkaConsumer: KafkaConsumer<String, ByteArray>
+    private val adminClient: AdminClient
+    private val configs = mutableMapOf<String, Any>()
     private val schemaRegistryClient: SchemaRegistryClient
+    private var latch = CountDownLatch(1)
 
     init {
         val config = ConfigLoader()
@@ -49,78 +49,58 @@ class Kafka {
         val schemaRegistryRest = config.getValue("SCHEMA_REGISTRY_REST")
 
         configs[ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG] = bootstrapServers
-        if (confluentId.isBlank()) {
-
-        } else {
+        if (confluentId.isNotBlank()) {
             configs["security.protocol"] = "SASL_SSL"
             configs["sasl.mechanism"] = "PLAIN"
             configs["sasl.jaas.config"] =
                 "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"$confluentId\" password=\"$confluentSecret\";"
         }
-        configs[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG] =
-            StringDeserializer::class.java.name
-        configs[ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG] =
-            ByteArrayDeserializer::class.java.name
 
-        if (schemaRegistryId.isBlank()) {
-            configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] = schemaRegistryRest
-            schemaRegistryClient = CachedSchemaRegistryClient(
-                /* baseUrl = */ configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] as String,
-                /* cacheCapacity = */ 1000, // schema cache size
+        configs[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG] = StringDeserializer::class.java.name
+        configs[ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG] = ByteArrayDeserializer::class.java.name
 
-                /* originals = */ mapOf(
-                    AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG to configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG],
-                ),
-                /* httpHeaders = */ mapOf()
+        configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] = schemaRegistryRest
+
+        schemaRegistryClient = if (schemaRegistryId.isBlank()) {
+            CachedSchemaRegistryClient(
+                schemaRegistryRest, 1000,
+                mapOf(AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG to schemaRegistryRest),
+                mapOf()
             )
         } else {
-            configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] = schemaRegistryRest
             configs[AbstractKafkaSchemaSerDeConfig.BASIC_AUTH_CREDENTIALS_SOURCE] = "USER_INFO"
             configs[AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG] = "$schemaRegistryId:$schemaRegistrySecret"
 
-            schemaRegistryClient = CachedSchemaRegistryClient(
-                /* baseUrl = */ configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] as String,
-                /* cacheCapacity = */ 1000, // schema cache size
-
-                /* originals = */ mapOf(
-                    AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG to configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG],
+            CachedSchemaRegistryClient(
+                schemaRegistryRest, 1000,
+                mapOf(
+                    AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG to schemaRegistryRest,
                     AbstractKafkaSchemaSerDeConfig.BASIC_AUTH_CREDENTIALS_SOURCE to "USER_INFO",
-                    AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG to configs[AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG]
+                    AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG to "$schemaRegistryId:$schemaRegistrySecret"
                 ),
-                /* httpHeaders = */ mapOf()
+                mapOf()
             )
         }
 
-
-
-        kafkaConsumer = KafkaConsumer(
-            configs
-        )
-
-
-
+        kafkaConsumer = KafkaConsumer(configs)
         adminClient = AdminClient.create(configs)
 
-
-        val thread = Thread {
+        Thread {
             while (true) {
                 when (val msg = Channels.kafkaChannel.take()) {
-
                     is ListTopics -> {
-                        msg.result.complete(list())
+                        msg.result.complete(listTopics())
                     }
 
                     is ListLag -> {
-                        val lagInfo = listLag(adminClient)
-                        Channels.kafkaCmdGuiChannel.put(KafkaLagInfo(lagInfo))
+                        msg.result.complete(listLag())
                     }
 
                     is ListenToTopic -> {
-                        addLogsToIndex(msg.name)
+                        startConsuming(msg.name)
                     }
 
                     is UnListenToTopics -> {
-                        //   Channels.cmdChannel.put(ClearIndex)
                         if (notStopping.get()) {
                             latch = CountDownLatch(1)
                             notStopping.set(false)
@@ -129,52 +109,110 @@ class Kafka {
                     }
 
                     is PublishToTopic -> {
-                        val configs = mutableMapOf<String, Any>()
-                        configs["bootstrap.servers"] = "localhost:19092"
-                        val kafkaProducer = KafkaProducer(configs, StringSerializer(), StringSerializer())
+                        val producerConfigs = mapOf("bootstrap.servers" to "localhost:19092")
+                        val kafkaProducer = KafkaProducer(producerConfigs, StringSerializer(), StringSerializer())
                         kafkaProducer.send(ProducerRecord(msg.topic, msg.key, msg.value))
                     }
                 }
             }
-        }
-        thread.isDaemon = true
-        thread.start()
+        }.apply { isDaemon = true }.start()
     }
 
-    private fun listLag(
-        adminClient: AdminClient,
-    ): List<LagInfo> {
+    private fun listTopics(): List<String> {
+        return kafkaConsumer.listTopics().map { it.key }.sorted()
+    }
+
+    private fun listLag(): List<LagInfo> {
         val lagInfoList = mutableListOf<LagInfo>()
-        val groups = adminClient.listConsumerGroups().all().get().toList()
+        val groups = adminClient.listConsumerGroups().all().get()
 
-        if (groups.isEmpty()) {
-            println("No consumer groups found")
-        } else {
-            groups.forEach { group ->
-                val groupId = group.groupId()
-                val consumerGroupOffsets =
-                    adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get()
-                val endOffsets = kafkaConsumer.endOffsets(consumerGroupOffsets.keys)
+        groups.forEach { group ->
+            val groupId = group.groupId()
+            val consumerOffsets = adminClient.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata().get()
+            val endOffsets = kafkaConsumer.endOffsets(consumerOffsets.keys)
 
-                consumerGroupOffsets.forEach { (topicPartition, offsetAndMetadata) ->
-                    val endOffset = endOffsets.getValue(topicPartition)
-                    val consumerOffset = offsetAndMetadata.offset()
-                    val lag = endOffset - consumerOffset
-
-                    lagInfoList.add(
-                        LagInfo(
-                            groupId = groupId,
-                            topic = topicPartition.topic(),
-                            partition = topicPartition.partition(),
-                            currentOffset = consumerOffset,
-                            endOffset = endOffset,
-                            lag = lag
-                        )
+            consumerOffsets.forEach { (tp, offsetMeta) ->
+                val end = endOffsets.getValue(tp)
+                val current = offsetMeta.offset()
+                lagInfoList.add(
+                    LagInfo(
+                        groupId = groupId,
+                        topic = tp.topic(),
+                        partition = tp.partition(),
+                        currentOffset = current,
+                        endOffset = end,
+                        lag = end - current
                     )
-                }
+                )
             }
         }
+
         return lagInfoList
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
+    private fun startConsuming(topics: List<String>) {
+        val dispatcher = newSingleThreadContext("KafkaConsumerThread")
+        val scope = CoroutineScope(dispatcher)
+        notStopping.set(true)
+
+        scope.launch {
+            val partitions = kafkaConsumer.listTopics()
+                .filter { it.key in topics }
+                .flatMap { it.value.map { tp -> TopicPartition(tp.topic(), tp.partition()) } }
+
+            kafkaConsumer.assign(partitions)
+
+            val startOffsets = kafkaConsumer.offsetsForTimes(partitions.associateWith {
+                OffsetDateTime.now().minusDays(State.kafkaDays.get().toLong()).toEpochSecond() * 1000
+            })
+
+            partitions.forEach {
+                val startOffset = startOffsets[it]?.offset() ?: kafkaConsumer.endOffsets(listOf(it))[it] ?: 0L
+                kafkaConsumer.seek(it, startOffset)
+            }
+
+            while (notStopping.get()) {
+                try {
+                    if (kafkaConsumer.assignment().isEmpty()) {
+                        notStopping.set(false)
+                        break
+                    }
+
+                    val records: ConsumerRecords<String, ByteArray> = kafkaConsumer.poll(Duration.ofMillis(500))
+                    for (record in records) {
+                        val value = try {
+                            KafkaAvroDeserializer(schemaRegistryClient).deserialize(record.topic(), record.value())
+                                .toString()
+                        } catch (e: Exception) {
+                            String(record.value() ?: ByteArray(0))
+                        }
+
+                        val headers = record.headers().toList()
+                        val kafkaLine = KafkaLineDomain(
+                            seq = seq.getAndAdd(1),
+                            level = LogLevel.KAFKA,
+                            timestamp = record.timestamp(),
+                            key = record.key(),
+                            message = value,
+                            indexIdentifier = record.topic(),
+                            offset = record.offset(),
+                            partition = record.partition(),
+                            topic = record.topic(),
+                            headers = headers.joinToString(" | ") { "${it.key()} : ${it.value()?.toString(Charsets.UTF_8)}" },
+                            correlationId = headers.associate { it.key() to it.value() }["X-Correlation-Id"]?.let { String(it) },
+                            requestId = headers.associate { it.key() to it.value() }["X-Request-Id"]?.let { String(it) },
+                            compositeEventId = "${record.topic()}#${record.partition()}#${record.offset()}"
+                        )
+
+                        Channels.popChannel.send(AddToIndexDomainLine(kafkaLine))
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            latch.countDown()
+        }
     }
 
     data class LagInfo(
@@ -185,94 +223,9 @@ class Kafka {
         val endOffset: Long,
         val lag: Long
     )
-
-
-    private fun list(): List<String> {
-        val topic = kafkaConsumer.listTopics().map { it.key }.sorted()
-
-        return topic
-    }
-
-
-    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
-    private fun addLogsToIndex(topics: List<String>): AtomicBoolean {
-        val threadDispatcher = newSingleThreadContext("CoroutineThread")
-        val scope = CoroutineScope(threadDispatcher)
-        //  Channels.cmdChannel.put(ClearIndex)
-        notStopping.set(true)
-        scope.launch {
-            //  Channels.popChannel.send(ClearIndex)
-            val map =
-                kafkaConsumer.listTopics().filter { topics.contains(it.key) }.map { it.value }.flatten()
-                    .map { TopicPartition(it.topic(), it.partition()) }
-
-            kafkaConsumer.assign(map)
-            val endOffsets = kafkaConsumer.endOffsets(map)
-
-
-            val offsetsForTimes = kafkaConsumer.offsetsForTimes(map.associateWith {
-                OffsetDateTime.now().minus(Duration.ofDays(State.kafkaDays.get())).toEpochSecond() * 1000
-            })
-            offsetsForTimes.forEach {
-                kafkaConsumer.seek(it.key, it.value?.offset() ?: endOffsets[it.key]!!)
-            }
-
-            while (notStopping.get()) {
-                try {
-                    if (kafkaConsumer.assignment().isEmpty()) {
-                        notStopping.set(false)
-                        continue
-                    }
-                    val poll: ConsumerRecords<String, ByteArray> = kafkaConsumer.poll(Duration.ofMillis(500))
-                    poll.forEach { consumerRecord ->
-
-                        val rawBytes = consumerRecord.value()
-                        val value = when {
-                            rawBytes != null -> try {
-                                val avroDeserializer = KafkaAvroDeserializer(schemaRegistryClient)
-                                val avroRecord = avroDeserializer.deserialize(consumerRecord.topic(), rawBytes)
-                                avroRecord.toString()
-                            } catch (e: Exception) {
-                                String(rawBytes)
-                            }
-
-                            else -> "null"
-                        }
-
-                        val kafkaLineDomain = KafkaLineDomain(
-                            seq = seq.getAndAdd(1),
-                            level = LogLevel.KAFKA,
-                            timestamp = consumerRecord.timestamp(),
-                            key = consumerRecord.key(),
-                            message = value,
-                            indexIdentifier = consumerRecord.topic(),
-                            offset = consumerRecord.offset(),
-                            partition = consumerRecord.partition(),
-                            topic = consumerRecord.topic(),
-                            headers = consumerRecord.headers().toList()
-                                .joinToString(" | ") { it.key() + " : " + it.value().toString(Charsets.UTF_8) },
-                            correlationId = consumerRecord.headers().toList().associate { it.key() to it.value() }["X-Correlation-Id"]?.let { String(it) },
-                            requestId = consumerRecord.headers().toList().associate { it.key() to it.value() }["X-Request-Id"]?.let { String(it) },
-                            compositeEventId = "${consumerRecord.topic()}#${consumerRecord.partition()}#${consumerRecord.offset()}",
-                        )
-                        Channels.popChannel.send(
-                            AddToIndexDomainLine(
-                                kafkaLineDomain
-                            )
-                        )
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-            latch.countDown()
-        }
-        return notStopping
-    }
 }
 
 class RawJsonDeserializer : JsonDeserializer<String>() {
-    @Throws(IOException::class)
     override fun deserialize(jp: JsonParser, ctxt: DeserializationContext): String {
         val mapper = jp.codec as ObjectMapper
         val node = mapper.readTree<JsonNode>(jp)
@@ -281,7 +234,6 @@ class RawJsonDeserializer : JsonDeserializer<String>() {
 }
 
 class RawJsonSerializer : JsonSerializer<String?>() {
-    @Throws(IOException::class)
     override fun serialize(value: String?, gen: JsonGenerator, serializers: SerializerProvider) {
         gen.writeRawValue(value)
     }
