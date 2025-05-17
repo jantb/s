@@ -12,8 +12,10 @@ import java.util.concurrent.atomic.AtomicLong
 const val cap = 8192
 val seq = AtomicLong(0)
 
+data class IndexBlock(val index: Index<DomainLine>, val drainTree: DrainTree, var minSeq: Long = 0, var maxSeq: Long = Long.MAX_VALUE)
+
 class ValueStore {
-    private val levelIndexes = mutableMapOf<LogLevel, MutableList<Pair<Index<DomainLine>, DrainTree>>>()
+    private val levelIndexes = mutableMapOf<LogLevel, MutableList<IndexBlock>>()
     var size = 0
 
     fun getLogClusters(): List<LogCluster> = State.levels.get().flatMap { level ->
@@ -40,20 +42,24 @@ class ValueStore {
         val level = it.level
 
         val levelIndexList =
-            levelIndexes.getOrPut(level) { mutableListOf(Index<DomainLine>() to DrainTree(it.indexIdentifier)) }
+            levelIndexes.getOrPut(level) { mutableListOf(IndexBlock(Index(), DrainTree(it.indexIdentifier))) }
         run {
-            val (index, drain) = levelIndexList.last()
-            if (index.size >= cap) {
-                index.convertToHigherRank()
-                drain.final()
-                levelIndexList.add(Index<DomainLine>() to DrainTree(it.indexIdentifier))
+            val indexBlock = levelIndexList.last()
+            if (indexBlock.index.size >= cap) {
+                indexBlock.index.convertToHigherRank()
+                indexBlock.drainTree.final()
+                levelIndexList.add(IndexBlock(Index(), DrainTree(it.indexIdentifier)))
             }
         }
-        val (index, drain) = levelIndexList.last()
+        val indexBlock = levelIndexList.last()
         if (it is LogLineDomain) {
-            drain.add(it)
+            indexBlock.drainTree.add(it)
         }
-        index.add(it, it.toString())
+        indexBlock.index.add(it, it.toString())
+        if(indexBlock.index.size == 0){
+            indexBlock.minSeq = it.seq
+        }
+        indexBlock.maxSeq = seq.get()
     }
 
     fun search(query: String, offsetLock: Long): Sequence<DomainLine> {

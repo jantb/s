@@ -57,7 +57,7 @@ class Shard<T>(
     m: Int,
 ) : Serializable {
     private val bf = Bf(m)
-     val valueList: MutableList<T> = mutableListOf()
+    private val valueList: MutableList<T> = mutableListOf()
     private val rows: Array<Row> = Array(m) { Row() }
     private var isHigherRank: Boolean = false
     fun add(gramList: List<Int>, key: T) {
