@@ -309,6 +309,15 @@ class ScrollableList(
             return
         }
 
+        if (e.isShiftDown){
+            indexOffset -= ((e.wheelRotation * e.scrollAmount) * (State.indexedLines.get().toFloat()/10000)).toInt()
+            indexOffset = ensureIndexOffset(indexOffset)
+            updateResults()
+            setFollow()
+            panel.repaint()
+            return
+        }
+
         indexOffset -= e.wheelRotation * e.scrollAmount
         indexOffset = ensureIndexOffset(indexOffset)
         highlightWordMouseOver = null

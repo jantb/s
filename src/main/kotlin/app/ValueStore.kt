@@ -55,10 +55,10 @@ class ValueStore {
         if (it is LogLineDomain) {
             indexBlock.drainTree.add(it)
         }
-        indexBlock.index.add(it, it.toString())
         if(indexBlock.index.size == 0){
             indexBlock.minSeq = it.seq
         }
+        indexBlock.index.add(it, it.toString())
         indexBlock.maxSeq = seq.get()
     }
 
@@ -68,7 +68,7 @@ class ValueStore {
         // Search each specified level
         return State.levels.get().mapNotNull { level ->
             levelIndexes[level]?.reversed()
-                ?.filter { it.minSeq <= offsetLock }
+                ?.filter { it.maxSeq <= offsetLock }
                 ?.map { (index, _, min, max) ->
                     index.searchMustInclude(q.filteredQueryList) {
                         (it.seq <= offsetLock && it.contains(q.queryList, q.queryListNot))
