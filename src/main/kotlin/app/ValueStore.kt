@@ -9,7 +9,7 @@ import util.Index
 import java.util.concurrent.atomic.AtomicLong
 
 
-const val cap = 1024
+const val cap = 8192
 val seq = AtomicLong(0)
 
 class ValueStore {
@@ -62,7 +62,7 @@ class ValueStore {
         // Search each specified level
         return State.levels.get().toSet().mapNotNull { level ->
             levelIndexes[level]?.reversed()
-                ?.map { (index, drain) ->
+                ?.map { (index, _) ->
                     index.searchMustInclude(q.filteredQueryList) {
                         (it.seq <= offsetLock && it.contains(q.queryList, q.queryListNot))
                     }
@@ -102,8 +102,8 @@ class ValueStore {
             }
         }
         return Query(
-            queryListNot = queryListNot,
-            queryList = queryList,
+            queryListNot = queryListNot.filter { it.isNotBlank() },
+            queryList = queryList.filter { it.isNotBlank() },
             filteredQueryList = listOf(queryList.filter { it.isNotBlank() })
         )
     }

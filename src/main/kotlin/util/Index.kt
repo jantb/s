@@ -9,7 +9,7 @@ import kotlin.math.*
 
 class Index<T : Comparable<T>>(
     private val probability: Double = 0.0001,
-    private val goalCardinality: Double = 0.1,
+    private val goalCardinality: Double = 0.37,
 ) : Serializable {
     private var shardArray: Array<Shard<T>?> = Array(32) { null }
     private var isHigherRank: Boolean = false
@@ -39,8 +39,7 @@ class Index<T : Comparable<T>>(
         val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
         val result =
-            shardArray.mapNotNull { it?.search(gramsList) }.merge()
-                .filter { f(it) }
+            shardArray.mapNotNull { it?.search(gramsList)?.filter { f(it) } }.merge()
 
         return result.sortedDescending()
     }
@@ -58,7 +57,7 @@ class Shard<T>(
     m: Int,
 ) : Serializable {
     private val bf = Bf(m)
-    private val valueList: MutableList<T> = mutableListOf()
+     val valueList: MutableList<T> = mutableListOf()
     private val rows: Array<Row> = Array(m) { Row() }
     private var isHigherRank: Boolean = false
     fun add(gramList: List<Int>, key: T) {
@@ -92,7 +91,7 @@ class Shard<T>(
 
     fun search(gramsList: List<List<Int>>): Sequence<T> {
         if (gramsList.flatten().isEmpty()) {
-            return valueList.asSequence()
+            return valueList.asReversed().asSequence()
         }
 
         val rowList = gramsList.filter { it.isNotEmpty() }.map { getRows(it) }.flatten()
