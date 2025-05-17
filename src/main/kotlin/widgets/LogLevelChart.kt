@@ -33,7 +33,39 @@ class LogLevelChart(
 ) : ComponentOwn() {
 
     // Data structure for log counts at a specific time
-    private data class TimePoint(val time: kotlinx.datetime.Instant, val counts: MutableMap<LogLevel, Int> = mutableMapOf())
+    private data class TimePoint(
+        val time: kotlinx.datetime.Instant,
+        val counts: IntArray = IntArray(LogLevel.entries.size)
+    ) {
+        // Get total count for all levels
+        fun getTotal(): Int = counts.sum()
+
+        // Get count for a specific level
+        fun getCount(level: LogLevel): Int = counts[level.ordinal]
+
+        // Increment count for a specific level
+        fun incrementCount(level: LogLevel) {
+            counts[level.ordinal]++
+        }
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+
+            other as TimePoint
+
+            if (time != other.time) return false
+            if (!counts.contentEquals(other.counts)) return false
+
+            return true
+        }
+
+        override fun hashCode(): Int {
+            var result = time.hashCode()
+            result = 31 * result + counts.contentHashCode()
+            return result
+        }
+    }
 
     // Chart state
     private val timePoints = mutableListOf<TimePoint>()
@@ -67,17 +99,18 @@ class LogLevelChart(
 
         lock.lock()
         try {
-            // Set time range (assuming logs are ordered oldest to newest)
+            // Set time range (assuming logs are ordered newest to oldest)
             startTime = logs.lastOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
-            endTime =  logs.firstOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) }?: Clock.System.now()
+            endTime = logs.firstOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
             if (startTime == endTime) endTime = startTime.plus(1.minutes)
 
             val durationTotal = startTime.until(endTime, DateTimeUnit.MILLISECOND)
             val interval = durationTotal / (width.toLong() / widthDivision)
+
             // Recreate time points
             timePoints.clear()
             (0 until width.toLong() / widthDivision).forEach { i ->
-                timePoints.add(TimePoint(startTime.plus(interval *i,DateTimeUnit.MILLISECOND)))
+                timePoints.add(TimePoint(startTime.plus(interval * i, DateTimeUnit.MILLISECOND)))
             }
 
             // Assign logs to time points efficiently
@@ -87,11 +120,11 @@ class LogLevelChart(
                 val index = if (interval > 0) {
                     (durationSinceStart / interval).toInt().coerceIn(0, timePoints.size - 1)
                 } else 0
-                timePoints[index].counts[level] = timePoints[index].counts.getOrDefault(level, 0) + 1
+                timePoints[index].incrementCount(level)
             }
 
             // Update scale
-            val newMaxTotal = timePoints.maxOf { it.counts.values.sum() }
+            val newMaxTotal = timePoints.maxOfOrNull { it.getTotal() } ?: 0
             updateScale(newMaxTotal)
         } finally {
             lock.unlock()
@@ -120,7 +153,6 @@ class LogLevelChart(
         }
     }
 
-
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
         lock.lock()
         try {
@@ -147,6 +179,7 @@ class LogLevelChart(
             lock.unlock()
         }
     }
+
     private fun Graphics2D.drawChart() {
         if (timePoints.isEmpty()) {
             drawEmptyChart()
@@ -176,18 +209,18 @@ class LogLevelChart(
             val currentDate = dateFormatter.format(javaInstant)
 
             // Check if date changed
-            if ( lastDate != currentDate) {
+            if (lastDate != currentDate) {
                 // Draw date change indicator - a prominent vertical line
                 val dateChangeStroke = BasicStroke(2f)
                 val originalStroke = stroke
                 stroke = dateChangeStroke
-                color = UiColors.orange
+                color = UiColors.teal
                 drawLine(xPosBase, 40, xPosBase, height - 35)
                 stroke = originalStroke
 
                 // Add date label
                 font = Font("Monospaced", Font.BOLD, 12)
-                drawString("${currentDate}", xPosBase + 5, 55)
+                drawString(currentDate, xPosBase + 5, 55)
 
                 // Reset to regular color for other elements
                 color = Color.GRAY
@@ -206,7 +239,7 @@ class LogLevelChart(
             var currentHeight = 0
             levels.forEach { level ->
                 if (level in State.levels.get()) {
-                    val count = timePoint.counts.getOrDefault(level, 0)
+                    val count = timePoint.getCount(level)
                     if (count > 0) {
                         val barHeight = ((count.toFloat() / currentScaleMax) * (height - 80)).toInt().coerceAtLeast(1)
                         color = getLevelColor(level)
@@ -219,8 +252,8 @@ class LogLevelChart(
             }
         }
 
-        val totalMessages = timePoints.sumOf { it.counts.values.sum() }
-        val durationSecs = startTime.until(endTime,DateTimeUnit.SECOND).seconds.toInt(DurationUnit.SECONDS).coerceAtLeast(1)
+        val totalMessages = timePoints.sumOf { it.getTotal() }
+        val durationSecs = startTime.until(endTime, DateTimeUnit.SECOND).seconds.toInt(DurationUnit.SECONDS).coerceAtLeast(1)
         val avgMps = totalMessages.toFloat() / durationSecs
 
         // Add current date range label at the top
@@ -288,8 +321,6 @@ class LogLevelChart(
         }
     }
 
-
-
     override fun mouseClicked(e: MouseEvent) {
         levelRectangles.entries.find { it.value.contains(e.point) }?.key?.let { level ->
             if (level in State.levels.get() && State.levels.get().size > 1) {
@@ -322,8 +353,7 @@ class LogLevelChart(
     override fun mouseMoved(e: MouseEvent) {}
 }
 
- fun getLevelColor(level: LogLevel): Color = when (level) {
-
+fun getLevelColor(level: LogLevel): Color = when (level) {
     LogLevel.INFO -> UiColors.green
     LogLevel.WARN -> UiColors.orange
     LogLevel.DEBUG -> UiColors.defaultText
