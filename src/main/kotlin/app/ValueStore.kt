@@ -67,8 +67,7 @@ class ValueStore {
 
         // Search each specified level
         return State.levels.get().mapNotNull { level ->
-            levelIndexes[level]?.reversed()
-                ?.filter { it.maxSeq <= offsetLock }
+            levelIndexes[level]?.reversed()?.asSequence()
                 ?.map { (index, _, min, max) ->
                     index.searchMustInclude(q.filteredQueryList) {
                         (it.seq <= offsetLock && it.contains(q.queryList, q.queryListNot))
