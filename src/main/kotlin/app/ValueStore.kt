@@ -19,7 +19,7 @@ class ValueStore {
     var size = 0
 
     fun getLogClusters(): List<LogCluster> = State.levels.get().flatMap { level ->
-        levelIndexes[level]?.flatMap { (index, drainTree) ->
+        levelIndexes[level]?.flatMap { (_, drainTree) ->
             drainTree.logClusters().map { cluster ->
                 cluster.copy(indexIdentifier = drainTree.indexIdentifier)
             }
@@ -66,9 +66,10 @@ class ValueStore {
         val q = getQuery(query)
 
         // Search each specified level
-        return State.levels.get().toSet().mapNotNull { level ->
+        return State.levels.get().mapNotNull { level ->
             levelIndexes[level]?.reversed()
-                ?.map { (index, _) ->
+                ?.filter { it.minSeq <= offsetLock }
+                ?.map { (index, _, min, max) ->
                     index.searchMustInclude(q.filteredQueryList) {
                         (it.seq <= offsetLock && it.contains(q.queryList, q.queryListNot))
                     }

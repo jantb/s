@@ -21,7 +21,6 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.DurationUnit
 
@@ -73,20 +72,20 @@ class LogLevelChart(
             endTime =  logs.firstOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) }?: Clock.System.now()
             if (startTime == endTime) endTime = startTime.plus(1.minutes)
 
-            val durationTotal = startTime.until(endTime, DateTimeUnit.NANOSECOND).nanoseconds
-            val intervalNanos = durationTotal.inWholeNanoseconds / (width.toLong() / widthDivision)
+            val durationTotal = startTime.until(endTime, DateTimeUnit.MILLISECOND)
+            val interval = durationTotal / (width.toLong() / widthDivision)
             // Recreate time points
             timePoints.clear()
             (0 until width.toLong() / widthDivision).forEach { i ->
-                timePoints.add(TimePoint(startTime.plus(intervalNanos,DateTimeUnit.NANOSECOND)))
+                timePoints.add(TimePoint(startTime.plus(interval *i,DateTimeUnit.MILLISECOND)))
             }
 
             // Assign logs to time points efficiently
             logs.forEach { domain ->
                 val level = domain.level
-                val durationSinceStart = startTime.until(kotlinx.datetime.Instant.fromEpochMilliseconds(domain.timestamp), DateTimeUnit.NANOSECOND).nanoseconds.toLong(DurationUnit.NANOSECONDS)
-                val index = if (intervalNanos > 0) {
-                    (durationSinceStart / intervalNanos).toInt().coerceIn(0, timePoints.size - 1)
+                val durationSinceStart = startTime.until(kotlinx.datetime.Instant.fromEpochMilliseconds(domain.timestamp), DateTimeUnit.MILLISECOND)
+                val index = if (interval > 0) {
+                    (durationSinceStart / interval).toInt().coerceIn(0, timePoints.size - 1)
                 } else 0
                 timePoints[index].counts[level] = timePoints[index].counts.getOrDefault(level, 0) + 1
             }
@@ -148,7 +147,6 @@ class LogLevelChart(
             lock.unlock()
         }
     }
-
     private fun Graphics2D.drawChart() {
         if (timePoints.isEmpty()) {
             drawEmptyChart()
@@ -163,14 +161,47 @@ class LogLevelChart(
         color = Color.GRAY
         drawLine(30, height - 35, width - 30, height - 35)
 
+        // Create a date formatter
+        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault())
+
+        // Track the last date to detect date changes
+        var lastDate: String? = null
+
         // Draw bars and time labels
         timePoints.forEachIndexed { index, timePoint ->
             val xPosBase = 30 + (index * timeSlotWidth).toInt()
+            val javaInstant = timePoint.time.toJavaInstant()
+
+            // Get current date string
+            val currentDate = dateFormatter.format(javaInstant)
+
+            // Check if date changed
+            if ( lastDate != currentDate) {
+                // Draw date change indicator - a prominent vertical line
+                val dateChangeStroke = BasicStroke(2f)
+                val originalStroke = stroke
+                stroke = dateChangeStroke
+                color = UiColors.orange
+                drawLine(xPosBase, 40, xPosBase, height - 35)
+                stroke = originalStroke
+
+                // Add date label
+                font = Font("Monospaced", Font.BOLD, 12)
+                drawString("${currentDate}", xPosBase + 5, 55)
+
+                // Reset to regular color for other elements
+                color = Color.GRAY
+            }
+
+            // Draw regular time labels at intervals
             if (index % 25 == 0 || index == timePoints.size - 1) {
                 font = Font("Monospaced", Font.PLAIN, 12)
                 color = Color.GRAY
-                drawString(timeFormatter.format(timePoint.time.toJavaInstant()), xPosBase, height - 15)
+                drawString(timeFormatter.format(javaInstant), xPosBase, height - 15)
             }
+
+            // Update last date
+            lastDate = currentDate
 
             var currentHeight = 0
             levels.forEach { level ->
@@ -192,10 +223,16 @@ class LogLevelChart(
         val durationSecs = startTime.until(endTime,DateTimeUnit.SECOND).seconds.toInt(DurationUnit.SECONDS).coerceAtLeast(1)
         val avgMps = totalMessages.toFloat() / durationSecs
 
+        // Add current date range label at the top
+        val startDateStr = dateFormatter.format(startTime.toJavaInstant())
+        val endDateStr = dateFormatter.format(endTime.toJavaInstant())
+
         color = Color.LIGHT_GRAY
         font = Font("Monospaced", Font.PLAIN, 12)
-        drawString("${timeFormatter.format(startTime.toJavaInstant())} - ${timeFormatter.format(endTime.toJavaInstant())}", 30, 25)
-        drawString("${endTime.minus(startTime)}", 240, 25)
+
+        // Show date range in addition to time range
+        drawString("${startDateStr} ${timeFormatter.format(startTime.toJavaInstant())} - ${endDateStr} ${timeFormatter.format(endTime.toJavaInstant())}", 30, 25)
+        drawString("${endTime.minus(startTime)}", 480, 25)
         drawString("Avg MPS: %.2f".format(avgMps), width - 120, 25)
 
         drawLegend(levels)
