@@ -12,7 +12,12 @@ import java.util.concurrent.atomic.AtomicLong
 const val cap = 8192
 val seq = AtomicLong(0)
 
-data class IndexBlock(val index: Index<DomainLine>, val drainTree: DrainTree, var minSeq: Long = 0, var maxSeq: Long = Long.MAX_VALUE)
+data class IndexBlock(
+    val index: Index<DomainLine>,
+    val drainTree: DrainTree,
+    var minSeq: Long = 0,
+    var maxSeq: Long = Long.MAX_VALUE
+)
 
 class ValueStore {
     private val levelIndexes = mutableMapOf<LogLevel, MutableList<IndexBlock>>()
@@ -55,7 +60,7 @@ class ValueStore {
         if (it is LogLineDomain) {
             indexBlock.drainTree.add(it)
         }
-        if(indexBlock.index.size == 0){
+        if (indexBlock.index.size == 0) {
             indexBlock.minSeq = it.seq
         }
         indexBlock.index.add(it, it.toString())
@@ -64,13 +69,15 @@ class ValueStore {
 
     fun search(query: String, offsetLock: Long): Sequence<DomainLine> {
         val q = getQuery(query)
-
+        val l = offsetLock - State.lock.get()
         // Search each specified level
         return State.levels.get().mapNotNull { level ->
             levelIndexes[level]?.reversed()?.asSequence()
+                ?.filter { it.minSeq < l}
+                ?.filter { it.minSeq < offsetLock }
                 ?.map { (index, _, min, max) ->
                     index.searchMustInclude(q.filteredQueryList) {
-                        (it.seq <= offsetLock && it.contains(q.queryList, q.queryListNot))
+                        (it.seq <= l && it.seq <= offsetLock && it.contains(q.queryList, q.queryListNot))
                     }
                 }?.reduceOrNull { acc, seq -> acc + seq }
         }.merge()

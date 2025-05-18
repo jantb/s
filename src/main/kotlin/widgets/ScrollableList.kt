@@ -86,7 +86,7 @@ class ScrollableList(
 
     private var lineList = listOf<LineItem>()
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
-        if (this.width != width || this.height != height ||rowHeight != rowHeightCurrent|| this.x != x || this.y != y) {
+        if (this.width != width || this.height != height || rowHeight != rowHeightCurrent || this.x != x || this.y != y) {
             if (::g2d.isInitialized) {
                 this.g2d.dispose()
             }
@@ -126,7 +126,7 @@ class ScrollableList(
                     )
                 }
             }
-            g2d.font =  loadFontFromResources(rowHeight.toFloat())
+            g2d.font = loadFontFromResources(rowHeight.toFloat())
             indexOffset = 0
             updateResults()
         }
@@ -199,6 +199,7 @@ class ScrollableList(
 
             KeyEvent.VK_ENTER -> {
                 indexOffset = 0
+                State.lock.set(0)
                 updateResults()
                 setFollow()
             }
@@ -309,9 +310,11 @@ class ScrollableList(
             return
         }
 
-        if (e.isShiftDown){
-            indexOffset -= ((e.wheelRotation * e.scrollAmount) * (State.indexedLines.get().toFloat()/10000)).toInt()
+        if (e.isShiftDown) {
+            State.lock.getAndAdd(-((e.wheelRotation * e.scrollAmount) * 1024).toLong())
+            State.lock.set(State.lock.get().coerceIn(0..Long.MAX_VALUE))
             indexOffset = ensureIndexOffset(indexOffset)
+
             updateResults()
             setFollow()
             panel.repaint()
@@ -419,7 +422,8 @@ class ScrollableList(
 
     private fun mouseInside(e: MouseEvent, it: ComponentOwn) = e.x in it.x..it.width && e.y in it.y..(it.y + it.height)
 }
- fun loadFontFromResources(size: Float = 14f): Font {
+
+fun loadFontFromResources(size: Float = 14f): Font {
     val stream = ClassLoader.getSystemResourceAsStream("JetBrainsMono-Regular.ttf")
         ?: error("Font not found at JetBrainsMono-Regular.ttf")
     val baseFont = Font.createFont(Font.TRUETYPE_FONT, stream)

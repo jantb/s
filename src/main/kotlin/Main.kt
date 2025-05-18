@@ -353,6 +353,7 @@ object State {
     val kafkaDays = AtomicLong(1)
     val indexedLines = AtomicInteger(0)
     val searchTime = AtomicLong(0)
+    val lock = AtomicLong(0)
     val length = AtomicInteger(0)
     val offset = AtomicInteger(0)
     val levels = AtomicReference(run{
