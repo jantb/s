@@ -16,7 +16,8 @@ data class IndexBlock(
     val index: Index<DomainLine>,
     val drainTree: DrainTree,
     var minSeq: Long = 0,
-    var maxSeq: Long = Long.MAX_VALUE
+    var maxSeq: Long = Long.MAX_VALUE,
+    var maxTimestamp: Long = 0
 )
 
 class ValueStore {
@@ -37,34 +38,32 @@ class ValueStore {
         }
 
     fun put(domainLine: DomainLine) {
-        indexDomainLine(domainLine)
-    }
-
-    private fun indexDomainLine(it: DomainLine) {
-        size++
-        State.indexedLines.addAndGet(1)
-
-        val level = it.level
-
+        val level = domainLine.level
         val levelIndexList =
-            levelIndexes.getOrPut(level) { mutableListOf(IndexBlock(Index(), DrainTree(it.indexIdentifier))) }
+            levelIndexes.getOrPut(level) { mutableListOf(IndexBlock(Index(), DrainTree(domainLine.indexIdentifier))) }
         run {
             val indexBlock = levelIndexList.last()
             if (indexBlock.index.size >= cap) {
                 indexBlock.index.convertToHigherRank()
                 indexBlock.drainTree.final()
-                levelIndexList.add(IndexBlock(Index(), DrainTree(it.indexIdentifier)))
+                levelIndexList.add(IndexBlock(Index(), DrainTree(domainLine.indexIdentifier)))
             }
         }
         val indexBlock = levelIndexList.last()
-        if (it is LogLineDomain) {
-            indexBlock.drainTree.add(it)
+        if (domainLine.timestamp < indexBlock.maxTimestamp) {
+            return
+        }
+        if (domainLine is LogLineDomain) {
+            indexBlock.drainTree.add(domainLine)
         }
         if (indexBlock.index.size == 0) {
-            indexBlock.minSeq = it.seq
+            indexBlock.minSeq = domainLine.seq
         }
-        indexBlock.index.add(it, it.toString())
+        indexBlock.index.add(domainLine, domainLine.toString())
         indexBlock.maxSeq = seq.get()
+        indexBlock.maxTimestamp = domainLine.timestamp
+        size++
+        State.indexedLines.addAndGet(1)
     }
 
     fun search(query: String, offsetLock: Long): Sequence<DomainLine> {
@@ -73,7 +72,7 @@ class ValueStore {
         // Search each specified level
         return State.levels.get().mapNotNull { level ->
             levelIndexes[level]?.reversed()?.asSequence()
-                ?.filter { it.minSeq < l}
+                ?.filter { it.minSeq < l }
                 ?.filter { it.minSeq < offsetLock }
                 ?.map { (index, _, min, max) ->
                     index.searchMustInclude(q.filteredQueryList) {
