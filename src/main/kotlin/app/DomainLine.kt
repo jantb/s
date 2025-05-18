@@ -1,11 +1,9 @@
 package app
 
 import LogLevel
-import kotlinx.datetime.Instant
-import kotlinx.serialization.Serializable
+import java.io.Serializable
 
-@Serializable
-sealed interface DomainLine : Comparable<DomainLine> {
+sealed interface DomainLine :Serializable, Comparable<DomainLine> {
     val seq: Long
     val level: LogLevel
     val timestamp: Long

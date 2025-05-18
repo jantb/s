@@ -5,11 +5,15 @@ import LogCluster
 import LogLevel
 import State
 import merge
+import util.BitCaskByOffset
 import util.Index
+import util.fromBytes
+import util.toBytes
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.io.path.Path
 
 
-const val cap = 8192
+const val cap = 512
 val seq = AtomicLong(0)
 
 data class IndexBlock(
@@ -19,6 +23,7 @@ data class IndexBlock(
     var maxSeq: Long = Long.MAX_VALUE,
     var maxTimestamp: Long = 0
 )
+
 
 class ValueStore {
     private val levelIndexes = mutableMapOf<LogLevel, MutableList<IndexBlock>>()

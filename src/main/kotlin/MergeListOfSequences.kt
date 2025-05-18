@@ -1,31 +1,28 @@
+import java.util.PriorityQueue
+
 fun <T : Comparable<T>> List<Sequence<T>>.merge(): Sequence<T> = sequence {
     if (isEmpty()) return@sequence
 
-    // Initialize iterators and current values
-    val iterators = map { it.iterator() }
-    val currentValues = MutableList(size) { i -> iterators[i].takeIf { it.hasNext() }?.next() }
+    // Initialize iterators and priority queue
+    val iterators = map { it.iterator() }.toTypedArray()
+    val queue = PriorityQueue<Pair<T, Int>>(size, compareByDescending { it.first })
 
-    // Continue while any sequence has values
-    while (currentValues.any { it != null }) {
-        // Find the index of the maximum value
-        var maxIndex = -1
-        var maxValue: T? = null
-
-        for (i in currentValues.indices) {
-            val value = currentValues[i]
-            if (value != null && (maxValue == null || value > maxValue)) {
-                maxIndex = i
-                maxValue = value
-            }
+    // Initialize queue with first values
+    iterators.forEachIndexed { i, iter ->
+        if (iter.hasNext()) {
+            queue.offer(iter.next() to i)
         }
+    }
 
-        // Yield the maximum value if found
-        if (maxValue != null) {
-            yield(maxValue)
+    // Continue while queue is not empty
+    while (queue.isNotEmpty()) {
+        // Get and yield the maximum value
+        val (maxValue, maxIndex) = queue.poll()
+        yield(maxValue)
 
-            // Advance the iterator for the selected sequence
-            val iter = iterators[maxIndex]
-            currentValues[maxIndex] = if (iter.hasNext()) iter.next() else null
+        // Advance the iterator for the selected sequence
+        if (iterators[maxIndex].hasNext()) {
+            queue.offer(iterators[maxIndex].next() to maxIndex)
         }
     }
 }
