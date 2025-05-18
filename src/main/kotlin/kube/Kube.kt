@@ -1,7 +1,10 @@
 package kube
 
 import app.*
+import io.fabric8.kubernetes.api.model.Pod
 import io.fabric8.kubernetes.client.KubernetesClientBuilder
+import io.fabric8.kubernetes.client.Watcher
+import io.fabric8.kubernetes.client.WatcherException
 import io.fabric8.kubernetes.client.dsl.LogWatch
 import kotlinx.coroutines.*
 import kotlinx.datetime.Instant
@@ -12,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class Kube {
     private val listenedPods: MutableMap<String, AtomicBoolean> = mutableMapOf()
+    private val client = KubernetesClientBuilder().build()
 
     init {
         val thread = Thread {
@@ -21,12 +25,9 @@ class Kube {
                     is ListenToPod -> {
                         listenedPods[msg.podName] = addLogsToIndex(msg.podName)
                     }
-
                     is UnListenToPod -> {
-                        listenedPods.remove(msg.podName)!!.set(false)
-                        // Channels.cmdChannel.put(ClearNamedIndex(msg.podName))
+                        listenedPods.remove(msg.podName)?.set(false)
                     }
-
                     is UnListenToPods -> {
                         listenedPods.forEach { it.value.set(false) }
                         listenedPods.clear()
@@ -36,17 +37,26 @@ class Kube {
         }
         thread.isDaemon = true
         thread.start()
-    }
 
-    val client = KubernetesClientBuilder().build()
+        // Watch for new pods
+        client.pods().inAnyNamespace().watch(object : Watcher<Pod> {
+            override fun eventReceived(action: Watcher.Action, pod: Pod) {
+                val name = pod.metadata.name
+                if (action == Watcher.Action.ADDED && listenedPods.containsKey(name)) {
+                    listenedPods[name] = addLogsToIndex(name)
+                }
+            }
+            override fun onClose(p0: WatcherException?) {
+            }
+        })
+    }
 
     fun listPodsInAllNamespaces(): List<PodUnit> {
         return client.pods().inAnyNamespace().list().items.map {
             PodUnit(
                 name = it.metadata.name,
-                version = it.status.containerStatuses.firstOrNull { it.name != "istio-proxy" && it.name != "daprd" }?.image?.substringAfterLast(
-                    ":"
-                ) ?: "",
+                version = it.status.containerStatuses.firstOrNull { it.name != "istio-proxy" && it.name != "daprd" }
+                    ?.image?.substringAfterLast(":") ?: "",
                 creationTimestamp = it.metadata.creationTimestamp
             )
         }
@@ -54,15 +64,15 @@ class Kube {
 
     private fun getLogSequence(pod: String, namespace: String): LogWatch {
         val podResource = client.pods().inNamespace(namespace).withName(pod)
-        return podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" && it.name != "daprd" }.name)
-            .usingTimestamps().watchLog()
+        val containerName = podResource.get().spec.containers.first { it.name != "istio-proxy" && it.name != "daprd" }.name
+        return podResource.inContainer(containerName).usingTimestamps().watchLog()
     }
 
     private fun getLogSequencePrev(pod: String, namespace: String): List<String> {
         val podResource = client.pods().inNamespace(namespace).withName(pod)
         return try {
-            podResource.inContainer(podResource.get().spec.containers.first { it.name != "istio-proxy" && it.name != "daprd" }.name)
-                .usingTimestamps().terminated().log.split("\n")
+            val containerName = podResource.get().spec.containers.first { it.name != "istio-proxy" && it.name != "daprd" }.name
+            podResource.inContainer(containerName).usingTimestamps().terminated().log.split("\n")
         } catch (e: Exception) {
             emptyList()
         }
@@ -70,15 +80,15 @@ class Kube {
 
     @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
     private fun addLogsToIndex(pod: String): AtomicBoolean {
-        val threadDispatcher = newSingleThreadContext("CoroutineThread")
+        val threadDispatcher = newSingleThreadContext("CoroutineThread-$pod")
         val scope = CoroutineScope(threadDispatcher)
 
         val notStopping = AtomicBoolean(true)
         scope.launch {
-            val podNamespacePair = client.pods().inAnyNamespace().list().items
+            val podNamespace = client.pods().inAnyNamespace().list().items
                 .firstOrNull { it.metadata.name == pod }?.metadata?.namespace ?: return@launch
 
-            getLogSequencePrev(pod, podNamespacePair).forEach {
+            getLogSequencePrev(pod, podNamespace).forEach {
                 getLogJson(it, seq = seq.getAndAdd(1), indexIdentifier = pod)?.let {
                     Channels.popChannel.send(AddToIndexDomainLine(it))
                 }
@@ -86,27 +96,24 @@ class Kube {
 
             while (notStopping.get()) {
                 try {
-                    val logSequence = getLogSequence(pod, podNamespacePair)
+                    val logSequence = getLogSequence(pod, podNamespace)
                     BufferedReader(InputStreamReader(logSequence.output)).use { reader ->
                         while (notStopping.get()) {
-                            val line = reader.readLine()
-                            if (line.isNullOrBlank()) {
-                                notStopping.set(false)
-                            }
+                            val line = reader.readLine() ?: break
                             getLogJson(line, seq = seq.getAndAdd(1), indexIdentifier = pod)?.let {
                                 Channels.popChannel.send(AddToIndexDomainLine(it))
                             }
-
                         }
                     }
                 } catch (e: Exception) {
-                    notStopping.set(false)
+                    delay(2000)
                 }
             }
         }
         return notStopping
     }
 }
+
 private val json = Json { ignoreUnknownKeys = true }
 
 private fun getLogJson(v: String, seq: Long, indexIdentifier: String): DomainLine? {
