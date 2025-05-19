@@ -169,7 +169,7 @@ class Kafka {
                 kafkaConsumer.assign(partitions)
 
                 val startOffsets = kafkaConsumer.offsetsForTimes(partitions.associateWith {
-                    OffsetDateTime.now().minusDays(State.kafkaDays.get().toLong()).toEpochSecond() * 1000
+                    OffsetDateTime.now().minusDays(State.kafkaDays.get()).toEpochSecond() * 1000
                 })
 
                 partitions.forEach {
@@ -205,7 +205,7 @@ class Kafka {
                             timestamp = record.timestamp(),
                             key = record.key(),
                             message = value,
-                            indexIdentifier = record.topic(),
+                            indexIdentifier = "${record.topic()}#${record.partition()}",
                             offset = record.offset(),
                             partition = record.partition(),
                             topic = record.topic(),
