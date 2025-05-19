@@ -31,7 +31,7 @@ class TextViewerLogLine(title: String = "", domain: LogLineDomain?) : JFrame() {
         }
 
         domain?.let { log ->
-            addField("Timestamp", log.timestamp.toString(), fieldsPanel, constraints)
+            addField("Timestamp", kotlinx.datetime.Instant.fromEpochMilliseconds(log.timestamp).toString(), fieldsPanel, constraints)
             log.correlationId?.let {
                 addField("CorrelationId", it, fieldsPanel, constraints)
             }

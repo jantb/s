@@ -10,6 +10,7 @@ import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseWheelEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.time.Instant
 import javax.swing.*
 
 val json = Json { prettyPrint = true }
@@ -35,7 +36,7 @@ class TextViewerKafkaLine(title: String = "", domain: KafkaLineDomain?) : JFrame
         }
 
         domain?.let { lineDomain ->
-            addField("Timestamp", lineDomain.timestamp.toString(), fieldsPanel, constraints)
+            addField("Timestamp", kotlinx.datetime.Instant.fromEpochMilliseconds(lineDomain.timestamp).toString(), fieldsPanel, constraints)
             lineDomain.correlationId?.let {
                 addField("CorrelationId", it, fieldsPanel, constraints)
             }
@@ -47,6 +48,7 @@ class TextViewerKafkaLine(title: String = "", domain: KafkaLineDomain?) : JFrame
 
             addField("Topic", lineDomain.topic, fieldsPanel, constraints)
             addField("Partition", lineDomain.partition.toString(), fieldsPanel, constraints)
+            addField("Key", lineDomain.key.toString(), fieldsPanel, constraints)
             addField("Offset", lineDomain.offset.toString(), fieldsPanel, constraints)
             addField("Composite event id", lineDomain.compositeEventId, fieldsPanel, constraints)
 
