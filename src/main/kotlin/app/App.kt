@@ -29,25 +29,30 @@ class App : CoroutineScope {
         private var query = UUID.randomUUID().toString()
         private var queryChanged = true
         private var results = emptyList<DomainLine>()
-        private  var resultsOffsetStart = 0L
+        private var resultsOffsetStart = 0L
+        private var complete = false
         fun setQuery(newQuery: String) {
             queryChanged = query != newQuery
             query = newQuery
         }
 
-        fun setResults(results: List<DomainLine>, offset: Long) {
+        fun setResults(results: List<DomainLine>, offset: Long, complete: Boolean) {
             this.results = results
-            this.resultsOffsetStart = offset
+            this.resultsOffsetStart = offset - kotlin.math.min(offset, 5000)
+            this.complete = complete
         }
 
         fun needRefresh(offset: Long): Boolean {
-            return queryChanged || resultsOffsetStart > offset || ((offset-resultsOffsetStart)) > 5000
+            return queryChanged ||
+                    resultsOffsetStart > offset ||
+                    ((offset - resultsOffsetStart + 5000) > results.size ) && !complete
         }
 
         fun get(offset: Long): List<DomainLine> {
             return results.drop((offset - resultsOffsetStart).toInt())
         }
     }
+
 
     fun start() {
         launch(CoroutineName("indexUpdaterScheduler")) {
@@ -91,25 +96,29 @@ class App : CoroutineScope {
                         }
 
                         val listResults = measureTimedValue {
+                            val n = 10000
                             if (msg.offset > 0) {
                                 buffer.setQuery(newQuery = msg.query)
                                 if (buffer.needRefresh(offset = msg.offset.toLong())) {
-                                    buffer.setResults(valueStores.map {
+                                    val cacheStartOffset = kotlin.math.max(0, msg.offset - 5000)
+                                    val results = valueStores.map {
                                         it.value.search(
                                             query = msg.query,
                                             offsetLock = offsetLock
                                         )
-                                    }.merge().drop(msg.offset).take(15000).toList(), msg.offset.toLong())
+                                    }.merge().drop(cacheStartOffset).take(n + 10000).toList()
+                                    buffer.setResults(results, cacheStartOffset.toLong(), results.size != n + 10000 )
                                 }
 
-                                buffer.get(msg.offset.toLong())
+                                buffer.get(msg.offset.toLong()).take(n)
+
                             } else {
                                 valueStores.map {
                                     it.value.search(
                                         query = msg.query,
                                         offsetLock = offsetLock
                                     )
-                                }.merge().drop(msg.offset).take(10000).toList()
+                                }.merge().drop(msg.offset).take(n).toList()
                             }
                         }
 
