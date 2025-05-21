@@ -1,5 +1,3 @@
-@file:OptIn(ExperimentalTime::class)
-
 package app
 
 import LogCluster
@@ -19,18 +17,43 @@ import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
 import kotlinx.coroutines.selects.select
 import kube.PodUnit
 import merge
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
 import kotlin.coroutines.CoroutineContext
-import kotlin.time.ExperimentalTime
 import kotlin.time.measureTimedValue
 
 class App : CoroutineScope {
-    fun start() {
 
+    private class CachedList {
+        private var query = UUID.randomUUID().toString()
+        private var queryChanged = true
+        private var results = emptyList<DomainLine>()
+        private  var resultsOffsetStart = 0L
+        fun setQuery(newQuery: String) {
+            queryChanged = query != newQuery
+            query = newQuery
+        }
+
+        fun setResults(results: List<DomainLine>, offset: Long) {
+            this.results = results
+            this.resultsOffsetStart = offset
+        }
+
+        fun needRefresh(offset: Long): Boolean {
+            return queryChanged || resultsOffsetStart > offset || ((offset-resultsOffsetStart)) > 5000
+        }
+
+        fun get(offset: Long): List<DomainLine> {
+            return results.drop((offset - resultsOffsetStart).toInt())
+        }
+    }
+
+    fun start() {
         launch(CoroutineName("indexUpdaterScheduler")) {
             val valueStores = mutableMapOf<String, ValueStore>()
             var offsetLock = 0L
+            val buffer = CachedList()
             while (true) {
                 when (val msg = select {
                     searchChannel.onReceive { it }
@@ -50,11 +73,15 @@ class App : CoroutineScope {
                             indexedLines.addAndGet(-remove.size)
                         }
                     }
-                    is RefreshLogGroups ->{
-                        logClusterCmdGuiChannel.put(LogClusterList(valueStores.values.map { it.getLogClusters() }.flatten()))
+
+                    is RefreshLogGroups -> {
+                        logClusterCmdGuiChannel.put(LogClusterList(valueStores.values.map { it.getLogClusters() }
+                            .flatten()))
                     }
 
                     is QueryChanged -> {
+
+
                         if (msg.offset > 0) {
                             if (offsetLock == Long.MAX_VALUE) {
                                 offsetLock = seq.get()
@@ -64,17 +91,36 @@ class App : CoroutineScope {
                         }
 
                         val listResults = measureTimedValue {
-                            valueStores.map {
-                                it.value.search(
-                                    query = msg.query,
-                                    offsetLock = offsetLock
-                                )
-                            }.merge().drop(msg.offset).take(10000).toList()
+                            if (msg.offset > 0) {
+                                buffer.setQuery(newQuery = msg.query)
+                                if (buffer.needRefresh(offset = msg.offset.toLong())) {
+                                    buffer.setResults(valueStores.map {
+                                        it.value.search(
+                                            query = msg.query,
+                                            offsetLock = offsetLock
+                                        )
+                                    }.merge().drop(msg.offset).take(15000).toList(), msg.offset.toLong())
+                                }
+
+                                buffer.get(msg.offset.toLong())
+                            } else {
+                                valueStores.map {
+                                    it.value.search(
+                                        query = msg.query,
+                                        offsetLock = offsetLock
+                                    )
+                                }.merge().drop(msg.offset).take(10000).toList()
+                            }
                         }
 
                         searchTime.set(listResults.duration.inWholeNanoseconds)
 
-                        kafkaCmdGuiChannel.put(ResultChanged(listResults.value.take( msg.length).reversed(), listResults.value))
+                        kafkaCmdGuiChannel.put(
+                            ResultChanged(
+                                listResults.value.take(msg.length).reversed(),
+                                listResults.value
+                            )
+                        )
                     }
                 }
             }
