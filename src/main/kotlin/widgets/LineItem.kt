@@ -61,23 +61,13 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
                 )
                 this.text.addText(" ", color = UiColors.defaultText)
                 this.text.addText(
-                    domainLine.indexIdentifier,
+                    domainLine.serviceName,
                     color = UiColors.visibleColors[domainLine.indexIdentifier.hashCode().absoluteValue % UiColors.visibleColors.size]
                 )
                 domainLine.correlationId?.let {
                     this.text.addText(" ", color = UiColors.defaultText)
                     this.text.addText(it, color = UiColors.defaultText)
                 }
-                domainLine.requestId?.let {
-                    this.text.addText(" ", color = UiColors.defaultText)
-                    this.text.addText(it, color = UiColors.defaultText)
-                }
-
-                this.text.addText(" ", color = UiColors.defaultText)
-                this.text.addText(
-                    domainLine.logger,
-                    color = UiColors.green
-                )
 
                 this.text.addText(" ", color = UiColors.defaultText)
                 this.text.addText(domainLine.message.take(1000), color = UiColors.defaultText)
