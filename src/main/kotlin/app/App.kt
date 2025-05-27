@@ -45,7 +45,7 @@ class App : CoroutineScope {
         fun needRefresh(offset: Long): Boolean {
             return queryChanged ||
                     resultsOffsetStart > offset ||
-                    ((offset - resultsOffsetStart + 5000) > results.size ) && !complete
+                    ((offset - resultsOffsetStart + 5000) > results.size) && !complete
         }
 
         fun get(offset: Long): List<DomainLine> {
@@ -58,7 +58,7 @@ class App : CoroutineScope {
         launch(CoroutineName("indexUpdaterScheduler")) {
             val valueStores = mutableMapOf<String, ValueStore>()
             var offsetLock = 0L
-            val buffer = CachedList()
+            var buffer = CachedList()
             while (true) {
                 when (val msg = select {
                     searchChannel.onReceive { it }
@@ -107,12 +107,13 @@ class App : CoroutineScope {
                                             offsetLock = offsetLock
                                         )
                                     }.merge().drop(cacheStartOffset).take(n + 10000).toList()
-                                    buffer.setResults(results, cacheStartOffset.toLong(), results.size != n + 10000 )
+                                    buffer.setResults(results, cacheStartOffset.toLong(), results.size != n + 10000)
                                 }
 
                                 buffer.get(msg.offset.toLong()).take(n)
 
                             } else {
+                                buffer = CachedList()
                                 valueStores.map {
                                     it.value.search(
                                         query = msg.query,

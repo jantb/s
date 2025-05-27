@@ -39,6 +39,8 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
     }
 
     fun setText(text: String) {
+        g2d.color = UiColors.background
+        g2d.fillRect(0, 0, width, height)
         this.text.clear()
         this.text.addText(text, color = UiColors.defaultText)
         if (this.text.highlight) {

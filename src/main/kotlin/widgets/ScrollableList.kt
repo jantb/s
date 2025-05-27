@@ -3,18 +3,18 @@ package widgets
 import ComponentOwn
 import SlidePanel
 import State
-import app.*
+import app.Channels
+import app.DomainLine
+import app.QueryChanged
+import app.ResultChanged
 import kotlinx.coroutines.channels.trySendBlocking
-import util.Styles
 import util.UiColors
 import java.awt.EventQueue
 import java.awt.Font
 import java.awt.Graphics2D
-import java.awt.GraphicsEnvironment
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
-import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
