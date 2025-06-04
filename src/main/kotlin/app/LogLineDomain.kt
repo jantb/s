@@ -39,6 +39,22 @@ data class LogLineDomain(
             stacktrace = ecsDocument.stacktrace,
             indexIdentifier = indexIdentifier,
         )
+
+        operator fun invoke(seq: Long, indexIdentifier: String, ecsDocument: EcsDocument2) = LogLineDomain(
+            seq = seq,
+            timestamp = ecsDocument.timestamp.toEpochMilliseconds(),
+            level = ecsDocument.log.level,
+            threadName = ecsDocument.process.thread.name,
+            serviceName = ecsDocument.service.name,
+            serviceVersion = ecsDocument.service.version,
+            logger = ecsDocument.log.logger,
+            message = ecsDocument.message,
+            correlationId = ecsDocument.correlation?.id,
+            requestId = ecsDocument.request?.id,
+            errorMessage = ecsDocument.error?.message,
+            stacktrace = ecsDocument.error?.stacktrace,
+            indexIdentifier = indexIdentifier,
+        )
     }
     private val cachedString by lazy {
         listOfNotNull(

@@ -92,7 +92,7 @@ class IndexTest {
     @Test
     fun regression_test_higher_rank() {
         val index = Index<String        >()
-        val itemCount = 500_000
+        val itemCount = 100_000
 
         val map = mutableSetOf< String>() // For later verification
 

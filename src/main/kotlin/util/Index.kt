@@ -9,7 +9,7 @@ import kotlin.math.*
 
 class Index<T : Comparable<T>>(
     private val probability: Double = 0.0001,
-    private val goalCardinality: Double = 0.37,
+    private val goalCardinality: Double = 0.30,
 ) : Serializable {
     private var shardArray: Array<Shard<T>?> = Array(32) { null }
     private var isHigherRank: Boolean = false
@@ -38,10 +38,7 @@ class Index<T : Comparable<T>>(
         // Must include all the strings in each of the lists
         val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
 
-        val result =
-            shardArray.mapNotNull { it?.search(gramsList)?.filter { f(it) } }.merge()
-
-        return result.sortedDescending()
+        return shardArray.mapNotNull { shard -> shard?.search(gramsList)?.filter { f(it) } }.merge()
     }
 
     fun convertToHigherRank() {

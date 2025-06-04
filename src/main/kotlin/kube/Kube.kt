@@ -25,9 +25,11 @@ class Kube {
                     is ListenToPod -> {
                         listenedPods[msg.podName] = addLogsToIndex(msg.podName)
                     }
+
                     is UnListenToPod -> {
                         listenedPods.remove(msg.podName)?.set(false)
                     }
+
                     is UnListenToPods -> {
                         listenedPods.forEach { it.value.set(false) }
                         listenedPods.clear()
@@ -46,6 +48,7 @@ class Kube {
                     listenedPods[name] = addLogsToIndex(name)
                 }
             }
+
             override fun onClose(p0: WatcherException?) {
             }
         })
@@ -64,14 +67,16 @@ class Kube {
 
     private fun getLogSequence(pod: String, namespace: String): LogWatch {
         val podResource = client.pods().inNamespace(namespace).withName(pod)
-        val containerName = podResource.get().spec.containers.first { it.name != "istio-proxy" && it.name != "daprd" }.name
+        val containerName =
+            podResource.get().spec.containers.first { it.name != "istio-proxy" && it.name != "daprd" }.name
         return podResource.inContainer(containerName).usingTimestamps().watchLog()
     }
 
     private fun getLogSequencePrev(pod: String, namespace: String): List<String> {
         val podResource = client.pods().inNamespace(namespace).withName(pod)
         return try {
-            val containerName = podResource.get().spec.containers.first { it.name != "istio-proxy" && it.name != "daprd" }.name
+            val containerName =
+                podResource.get().spec.containers.first { it.name != "istio-proxy" && it.name != "daprd" }.name
             podResource.inContainer(containerName).usingTimestamps().terminated().log.split("\n")
         } catch (e: Exception) {
             emptyList()
@@ -124,19 +129,24 @@ private fun getLogJson(v: String, seq: Long, indexIdentifier: String): DomainLin
         val ecsDocument = json.decodeFromString<EcsDocument>(message)
         LogLineDomain(seq = seq, indexIdentifier = indexIdentifier, ecsDocument = ecsDocument)
     } catch (e: Exception) {
-        runCatching {
-            LogLineDomain(
-                seq,
-                timestamp = Instant.parse(timestamp).toEpochMilliseconds(),
-                level = LogLevel.UNKNOWN,
-                threadName = "",
-                serviceName = "",
-                serviceVersion = "",
-                logger = "",
-                message = message,
-                indexIdentifier = indexIdentifier,
-            )
-        }.getOrNull()
+        try {
+            val ecsDocument = json.decodeFromString<EcsDocument2>(message)
+            LogLineDomain(seq = seq, indexIdentifier = indexIdentifier, ecsDocument = ecsDocument)
+        } catch (e: Exception) {
+            runCatching {
+                LogLineDomain(
+                    seq,
+                    timestamp = Instant.parse(timestamp).toEpochMilliseconds(),
+                    level = LogLevel.UNKNOWN,
+                    threadName = "",
+                    serviceName = "",
+                    serviceVersion = "",
+                    logger = "",
+                    message = message,
+                    indexIdentifier = indexIdentifier,
+                )
+            }.getOrNull()
+        }
     }
 }
 
