@@ -1,5 +1,6 @@
 package util
 
+import kotlinx.html.Entities
 import merge
 import sortedByDescending
 import util.Bf.Companion.estimate
@@ -37,8 +38,10 @@ class Index<T : Comparable<T>>(
     fun searchMustInclude(valueListList: List<List<String>>, f: (T) -> Boolean): Sequence<T> {
         // Must include all the strings in each of the lists
         val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
+        val result =
+            shardArray.mapNotNull { it?.search(gramsList)?.filter { f(it) } }.merge()
 
-        return shardArray.mapNotNull { shard -> shard?.search(gramsList)?.filter { f(it) } }.merge()
+        return result.sortedDescending()
     }
 
     fun convertToHigherRank() {

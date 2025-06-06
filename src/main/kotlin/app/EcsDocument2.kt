@@ -27,7 +27,7 @@ data class LogInfo(
 @Serializable
 data class ErrorInfo(
     val message: String?=null,
-    val stacktrace: String?=null
+    @SerialName("stack_trace") val stacktrace: String?=null
 )
 
 @Serializable
