@@ -49,6 +49,11 @@ class ModernTextViewer(
         val isExpandable: Boolean = false
     )
     
+    data class ColoredText(
+        val text: String,
+        val color: Color
+    )
+    
     init {
         this.x = x
         this.y = y
@@ -177,6 +182,160 @@ class ModernTextViewer(
         return lines
     }
     
+    private fun highlightJson(text: String): List<ColoredText> {
+        val result = mutableListOf<ColoredText>()
+        var i = 0
+        
+        while (i < text.length) {
+            val char = text[i]
+            when (char) {
+                '{', '}', '[', ']', ':', ',' -> {
+                    // JSON structural characters
+                    result.add(ColoredText(char.toString(), UiColors.teal))
+                    i++
+                }
+                '"' -> {
+                    // String literals
+                    val start = i
+                    i++ // Skip opening quote
+                    var escaped = false
+                    while (i < text.length && (text[i] != '"' || escaped)) {
+                        if (text[i] == '\\' && !escaped) {
+                            escaped = true
+                        } else {
+                            escaped = false
+                        }
+                        i++
+                    }
+                    if (i < text.length) i++ // Skip closing quote
+                    result.add(ColoredText(text.substring(start, i), UiColors.green))
+                }
+                '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> {
+                    // Numbers
+                    val start = i
+                    while (i < text.length && (text[i].isDigit() || text[i] == '.' || text[i] == 'e' || text[i] == 'E' || text[i] == '+' || text[i] == '-')) {
+                        i++
+                    }
+                    result.add(ColoredText(text.substring(start, i), UiColors.orange))
+                }
+                't', 'f', 'n' -> {
+                    // Boolean and null literals
+                    if (i + 3 < text.length && text.substring(i, i + 4) == "true") {
+                        result.add(ColoredText("true", UiColors.magenta))
+                        i += 4
+                    } else if (i + 4 < text.length && text.substring(i, i + 5) == "false") {
+                        result.add(ColoredText("false", UiColors.magenta))
+                        i += 5
+                    } else if (i + 3 < text.length && text.substring(i, i + 4) == "null") {
+                        result.add(ColoredText("null", UiColors.magenta))
+                        i += 4
+                    } else {
+                        result.add(ColoredText(char.toString(), UiColors.defaultText))
+                        i++
+                    }
+                }
+                ' ', '\t', '\n', '\r' -> {
+                    // Whitespace
+                    val start = i
+                    while (i < text.length && text[i].isWhitespace()) {
+                        i++
+                    }
+                    result.add(ColoredText(text.substring(start, i), UiColors.defaultText))
+                }
+                else -> {
+                    // Regular text
+                    result.add(ColoredText(char.toString(), UiColors.defaultText))
+                    i++
+                }
+            }
+        }
+        
+        return result
+    }
+    
+    private fun highlightStackTrace(text: String): List<ColoredText> {
+        val result = mutableListOf<ColoredText>()
+        val lines = text.split('\n')
+        
+        for (line in lines) {
+            when {
+                line.startsWith("at ") -> {
+                    // Stack trace element
+                    val parenIndex = line.indexOf('(')
+                    if (parenIndex != -1) {
+                        // Highlight "at " keyword
+                        result.add(ColoredText("at ", UiColors.teal))
+                        // Highlight class and method
+                        result.add(ColoredText(line.substring(3, parenIndex), UiColors.orange))
+                        // Highlight file and line number
+                        result.add(ColoredText(line.substring(parenIndex), UiColors.teal))
+                    } else {
+                        result.add(ColoredText("at ", UiColors.teal))
+                        result.add(ColoredText(line.substring(3), UiColors.orange))
+                    }
+                }
+                line.contains("Exception") || line.contains("Error") -> {
+                    // Exception class names
+                    result.add(ColoredText(line, UiColors.red))
+                }
+                line.startsWith("\tat ") -> {
+                    // Tabbed stack trace element
+                    result.add(ColoredText("\tat ", UiColors.teal))
+                    val parenIndex = line.indexOf('(', 2)
+                    if (parenIndex != -1) {
+                        result.add(ColoredText(line.substring(4, parenIndex), UiColors.orange))
+                        result.add(ColoredText(line.substring(parenIndex), UiColors.teal))
+                    } else {
+                        result.add(ColoredText(line.substring(4), UiColors.orange))
+                    }
+                }
+                else -> {
+                    result.add(ColoredText(line, UiColors.defaultText))
+                }
+            }
+            result.add(ColoredText("\n", UiColors.defaultText))
+        }
+        
+        // Remove the last newline if it exists
+        if (result.isNotEmpty() && result.last().text == "\n") {
+            result.removeAt(result.size - 1)
+        }
+        
+        return result
+    }
+    
+    private fun highlightText(content: String, sectionLabel: String): List<ColoredText> {
+        return when {
+            sectionLabel == "Message" && (domain is LogLineDomain || domain is KafkaLineDomain) -> {
+                // Check if content looks like JSON
+                val trimmedContent = content.trimStart()
+                if (trimmedContent.startsWith("{") || trimmedContent.startsWith("[")) {
+                    highlightJson(content)
+                } else if (domain is LogLineDomain && (domain as LogLineDomain).stacktrace != null &&
+                           content.contains("\n") &&
+                           (content.contains("Exception") || content.contains("Error") || content.contains("at "))) {
+                    // This is likely a message with embedded stack trace
+                    highlightStackTrace(content)
+                } else if (domain is LogLineDomain && (domain as LogLineDomain).stacktrace != null) {
+                    // Separate stack trace handling
+                    val fullContent = buildString {
+                        append(content)
+                        (domain as LogLineDomain).stacktrace?.let { append("\n").append(it) }
+                    }
+                    highlightStackTrace(fullContent)
+                } else {
+                    listOf(ColoredText(content, UiColors.defaultText))
+                }
+            }
+            sectionLabel == "Stacktrace" && domain is LogLineDomain -> {
+                highlightStackTrace(content)
+            }
+            else -> {
+                listOf(ColoredText(content, UiColors.defaultText))
+            }
+        }
+    }
+    
     fun show() {
         isVisible = true
         parent.repaint(this)
@@ -275,16 +434,42 @@ class ModernTextViewer(
                 g2d.drawString("${section.label}:", 10, currentY + 15)
                 currentY += 25
                 
-                // Draw wrapped content
+                // Draw wrapped content with syntax highlighting
                 g2d.color = UiColors.defaultText
+                val coloredTexts = highlightText(section.content, section.label)
+                drawColoredText(coloredTexts, 20, currentY, width - 40, lineHeight)
                 val wrappedLines = wrapText(section.content, width - 40)
-                for (line in wrappedLines) {
-                    if (currentY > 0 && currentY < height) {
-                        g2d.drawString(line, 20, currentY)
-                    }
+                currentY += wrappedLines.size * lineHeight + 10
+            }
+        }
+    }
+    
+    private fun drawColoredText(coloredTexts: List<ColoredText>, x: Int, startY: Int, maxWidth: Int, lineHeight: Int) {
+        var currentX = x
+        var currentY = startY
+        val metrics = g2d.fontMetrics
+        
+        for (coloredText in coloredTexts) {
+            g2d.color = coloredText.color
+            val text = coloredText.text
+            
+            // Handle multi-line text
+            val lines = text.split('\n')
+            for (i in lines.indices) {
+                val line = lines[i]
+                if (i > 0) {
+                    // New line
                     currentY += lineHeight
+                    currentX = x
                 }
-                currentY += 10
+                
+                if (line.isEmpty()) continue
+                
+                // Simple approach: just draw the text without complex wrapping for now
+                if (currentY > 0 && currentY < height) {
+                    g2d.drawString(line, currentX, currentY)
+                }
+                currentX += metrics.stringWidth(line)
             }
         }
     }

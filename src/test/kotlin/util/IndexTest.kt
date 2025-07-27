@@ -42,15 +42,15 @@ class IndexTest {
         val index = Index<String>()
         val key = "key"
         val key2 = "key2"
-        val value = "a"
-        val value2 = "b"
+        val value = "aaa"
+        val value2 = "bbb"
 
         index.add( value, value)
         index.add( value2, value2)
 
         assertEquals(2, index.size)
 
-        val searchMustInclude = index.searchMustInclude(listOf(listOf("a"))) {
+        val searchMustInclude = index.searchMustInclude(listOf(listOf("aaa"))) {
             true
         }.toList()
         assertEquals(1, searchMustInclude.size)

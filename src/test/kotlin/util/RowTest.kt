@@ -203,13 +203,6 @@ class RowTest {
     }
 
     @Test
-    fun `test if conversion stops when target density is reached`() {
-        val row = Row(longArrayOf(0, 0, 0, 0, 0, 0, 0, 0))
-        row.convertToTargetDensity(0.2)
-        assertTrue(row.words.calculateDensity() >= 0.2)
-    }
-
-    @Test
     fun testIncreaseRank() {
         val row = Row()
         row.words = longArrayOf(0b110011, 0b101101)

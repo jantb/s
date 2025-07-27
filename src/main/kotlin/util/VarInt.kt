@@ -31,6 +31,9 @@ class VarInt {
     }
 
     fun get(index: Int): Long {
+        if (index < 0 || index >= count) {
+            throw IllegalArgumentException("Index out of bounds: $index, size: $count")
+        }
 
         // 1) exact cache hit?
         if (index == lastGetIndex) return lastGetValue
