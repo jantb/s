@@ -292,7 +292,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         val barHeight = 40
         val barY = 50
         val barSpacing = 15
-        val maxBarWidth = width - 80  // Increased padding from 40 to 80
+        val maxBarWidth = width - 120  // Increased padding to prevent cut off
         val maxValue = levelCounts.values.maxOrNull() ?: 1
         
         var x = 40  // Increased padding from 20 to 40
