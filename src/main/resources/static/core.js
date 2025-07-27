@@ -14,6 +14,15 @@ let isLoading = false;
 let currentOffset = 0;
 let lastSentOffset = -1;
 
+// Virtual cache globals
+const VIRTUAL_CACHE_SIZE = 11000; // Total lines to keep in virtual cache
+const BORDER_THRESHOLD = 1000; // When to request more data (distance from border)
+const REQUEST_CHUNK_SIZE = 2000; // How many lines to request at once
+
+let virtualCache = []; // Main virtual cache array
+let virtualCacheStartOffset = 0; // Offset where virtual cache starts
+let isVirtualCacheInitialized = false;
+
 // Initialize the virtual scrolling
 function initVirtualScroll() {
     logViewer = document.getElementById('log-viewer');
@@ -21,6 +30,7 @@ function initVirtualScroll() {
 
     viewportHeight = logViewer.clientHeight;
     maxVisibleLines = Math.ceil(viewportHeight / lineHeight) - 2;
+    // Virtual cache is independent of visible lines
 
     logViewer.addEventListener('wheel', handleScroll);
     window.addEventListener('resize', () => {
@@ -69,11 +79,13 @@ function initVirtualScroll() {
                 filter.classList.remove('inactive');
                 filter.classList.add('active');
             }
+            // Clear virtual cache when filters change as cached data may not match new filter
+            clearVirtualCache();
             // Re-render logs with new filter
             renderVisibleLogs();
             // If we have a search query, re-fetch logs to ensure we have enough matching the filter
             if (searchQuery || activeLevels.size < 5) {
-                fetchLogsWithOffset(currentOffset);
+                fetchLogsWithVirtualCache(currentOffset);
             }
         });
     });
@@ -98,12 +110,14 @@ function handleScroll(event) {
         return;
     }
     
-    const delta = Math.sign(event.deltaY);
+    // Fix scroll direction: negative deltaY (scroll up) should go to older logs (higher offset)
+    // positive deltaY (scroll down) should go to newer logs (lower offset)
+    const delta = -Math.sign(event.deltaY);
     const newOffset = Math.max(0, currentOffset + delta * 3);
 
     if (newOffset !== currentOffset) {
         currentOffset = newOffset;
-        fetchLogsWithOffset(currentOffset);
+        fetchLogsWithVirtualCache(currentOffset);
     }
 }
 
@@ -117,7 +131,7 @@ function renderVisibleLogs() {
         if (!logElement) continue;
 
         const logIndex = currentOffset + i;
-        const log = allLogs[logIndex];
+        const log = getLogFromVirtualCache(logIndex);
         
         if (!log || !activeLevels.has(log.level)) {
             logElement.style.display = 'none';
@@ -178,9 +192,20 @@ function fetchLogs(offset) {
     }
 }
 
-// Fetch logs with offset while maintaining search context
-function fetchLogsWithOffset(offset) {
+// Virtual cache function to fetch logs with intelligent cache management
+function fetchLogsWithVirtualCache(offset) {
     if (isLoading) {
+        return;
+    }
+
+    // Check if we have this data in virtual cache
+    if (isLogInVirtualCache(offset)) {
+        console.log(`Virtual cache hit for offset ${offset}`);
+        renderVisibleLogs();
+        document.getElementById('search-status').textContent = `Showing cached logs from offset ${offset}`;
+        
+        // Check if we need to expand the cache (approaching borders)
+        checkAndExpandVirtualCache(offset);
         return;
     }
 
@@ -190,27 +215,19 @@ function fetchLogsWithOffset(offset) {
         return;
     }
 
-    isLoading = true;
-    lastSentOffset = offset;
-    
-    // Update status to show we're loading at this offset
-    const statusText = searchQuery ?
-        `Searching "${searchQuery}" at offset ${offset}...` :
-        `Loading logs at offset ${offset}...`;
-    document.getElementById('search-status').textContent = statusText;
-
-    // Send search request with current query and new offset
-    if (!safeSend({
-        action: 'search',
-        query: searchQuery,
-        offset: offset,
-        length: maxVisibleLines,
-        levels: Array.from(activeLevels)
-    })) {
-        console.log('Failed to send search query, connection issue');
-        document.getElementById('search-status').textContent = 'Connection lost, reconnecting...';
-        isLoading = false;
+    // If virtual cache is not initialized or offset is far from current cache, initialize around this offset
+    if (!isVirtualCacheInitialized || !isOffsetNearVirtualCache(offset)) {
+        initializeVirtualCacheAt(offset);
+        return;
     }
+
+    // Expand cache to include this offset
+    expandVirtualCacheToInclude(offset);
+}
+
+// Fetch logs with offset while maintaining search context (legacy function for compatibility)
+function fetchLogsWithOffset(offset) {
+    fetchLogsWithVirtualCache(offset);
 }
 
 const sendSearchQuery = debounce((query, resetOffset = true) => {
@@ -220,6 +237,7 @@ const sendSearchQuery = debounce((query, resetOffset = true) => {
         // Only reset when it's a new search, not when scrolling
         document.getElementById('search-status').textContent = 'Searching...';
         allLogs = []; // Clear all existing logs
+        clearVirtualCache(); // Clear the virtual cache for new searches
         currentOffset = 0;
         lastSentOffset = -1;
         logContainer.innerHTML = ''; // Clear UI
@@ -240,11 +258,14 @@ const sendSearchQuery = debounce((query, resetOffset = true) => {
         renderVisibleLogs();
     }
 
+    const requestOffset = resetOffset ? 0 : currentOffset;
+    lastSentOffset = requestOffset;
+
     if (!safeSend({
         action: 'search',
         query: query,
-        offset: resetOffset ? 0 : currentOffset,
-        length: maxVisibleLines,
+        offset: requestOffset,
+        length: REQUEST_CHUNK_SIZE,
         levels: Array.from(activeLevels)
     })) {
         document.getElementById('search-status').textContent = 'Connection lost, reconnecting...';
@@ -253,6 +274,219 @@ const sendSearchQuery = debounce((query, resetOffset = true) => {
         }
     }
 }, 300);
+
+// Virtual cache management functions
+function clearVirtualCache() {
+    virtualCache = [];
+    virtualCacheStartOffset = 0;
+    isVirtualCacheInitialized = false;
+    allLogs = []; // Also clear the old allLogs array
+    console.log('Virtual cache cleared');
+}
+
+function getLogFromVirtualCache(globalOffset) {
+    if (!isVirtualCacheInitialized) {
+        return null;
+    }
+    
+    const localIndex = globalOffset - virtualCacheStartOffset;
+    if (localIndex >= 0 && localIndex < virtualCache.length) {
+        return virtualCache[localIndex];
+    }
+    
+    return null;
+}
+
+function isLogInVirtualCache(globalOffset) {
+    if (!isVirtualCacheInitialized) {
+        return false;
+    }
+    
+    const localIndex = globalOffset - virtualCacheStartOffset;
+    return localIndex >= 0 && localIndex < virtualCache.length && virtualCache[localIndex] != null;
+}
+
+function isOffsetNearVirtualCache(globalOffset) {
+    if (!isVirtualCacheInitialized) {
+        return false;
+    }
+    
+    const cacheEndOffset = virtualCacheStartOffset + virtualCache.length;
+    return globalOffset >= virtualCacheStartOffset - BORDER_THRESHOLD &&
+           globalOffset <= cacheEndOffset + BORDER_THRESHOLD;
+}
+
+function checkAndExpandVirtualCache(currentOffset) {
+    if (!isVirtualCacheInitialized) {
+        return;
+    }
+    
+    const distanceFromStart = currentOffset - virtualCacheStartOffset;
+    const distanceFromEnd = (virtualCacheStartOffset + virtualCache.length) - currentOffset;
+    
+    // If approaching the start border, expand backwards
+    if (distanceFromStart < BORDER_THRESHOLD && virtualCacheStartOffset > 0) {
+        expandVirtualCacheBackwards();
+    }
+    
+    // If approaching the end border, expand forwards
+    if (distanceFromEnd < BORDER_THRESHOLD) {
+        expandVirtualCacheForwards();
+    }
+}
+
+function initializeVirtualCacheAt(offset) {
+    console.log(`Initializing virtual cache at offset ${offset}`);
+    
+    // Calculate optimal start position (center the cache around the requested offset)
+    const idealStart = Math.max(0, offset - Math.floor(REQUEST_CHUNK_SIZE / 2));
+    virtualCacheStartOffset = idealStart;
+    
+    isLoading = true;
+    lastSentOffset = virtualCacheStartOffset; // Set to the actual request offset
+    
+    const statusText = searchQuery ?
+        `Initializing cache: searching "${searchQuery}" at offset ${virtualCacheStartOffset}...` :
+        `Initializing cache at offset ${virtualCacheStartOffset}...`;
+    document.getElementById('search-status').textContent = statusText;
+
+    // Request a large chunk to initialize the cache
+    if (!safeSend({
+        action: 'search',
+        query: searchQuery,
+        offset: virtualCacheStartOffset,
+        length: REQUEST_CHUNK_SIZE,
+        levels: Array.from(activeLevels)
+    })) {
+        console.log('Failed to initialize virtual cache, connection issue');
+        document.getElementById('search-status').textContent = 'Connection lost, reconnecting...';
+        isLoading = false;
+    }
+}
+
+function expandVirtualCacheBackwards() {
+    if (isLoading || virtualCacheStartOffset <= 0) {
+        return;
+    }
+    
+    console.log('Expanding virtual cache backwards');
+    
+    const newStartOffset = Math.max(0, virtualCacheStartOffset - REQUEST_CHUNK_SIZE);
+    const requestSize = virtualCacheStartOffset - newStartOffset;
+    
+    if (requestSize <= 0) {
+        return;
+    }
+    
+    isLoading = true;
+    lastSentOffset = newStartOffset;
+    
+    if (!safeSend({
+        action: 'search',
+        query: searchQuery,
+        offset: newStartOffset,
+        length: requestSize,
+        levels: Array.from(activeLevels)
+    })) {
+        console.log('Failed to expand virtual cache backwards');
+        isLoading = false;
+    }
+}
+
+function expandVirtualCacheForwards() {
+    if (isLoading) {
+        return;
+    }
+    
+    console.log('Expanding virtual cache forwards');
+    
+    const currentEndOffset = virtualCacheStartOffset + virtualCache.length;
+    
+    isLoading = true;
+    lastSentOffset = currentEndOffset;
+    
+    if (!safeSend({
+        action: 'search',
+        query: searchQuery,
+        offset: currentEndOffset,
+        length: REQUEST_CHUNK_SIZE,
+        levels: Array.from(activeLevels)
+    })) {
+        console.log('Failed to expand virtual cache forwards');
+        isLoading = false;
+    }
+}
+
+function expandVirtualCacheToInclude(offset) {
+    if (isLoading) {
+        return;
+    }
+    
+    console.log(`Expanding virtual cache to include offset ${offset}`);
+    
+    const currentEndOffset = virtualCacheStartOffset + virtualCache.length;
+    
+    if (offset < virtualCacheStartOffset) {
+        // Need to expand backwards
+        expandVirtualCacheBackwards();
+    } else if (offset >= currentEndOffset) {
+        // Need to expand forwards
+        expandVirtualCacheForwards();
+    }
+}
+
+function addToVirtualCache(offset, logs, isExpansion = false) {
+    console.log(`Adding ${logs.length} logs to virtual cache at offset ${offset}, expansion: ${isExpansion}`);
+    
+    if (!isVirtualCacheInitialized) {
+        // First initialization
+        virtualCacheStartOffset = offset;
+        virtualCache = [...logs];
+        isVirtualCacheInitialized = true;
+        console.log(`Virtual cache initialized: start=${virtualCacheStartOffset}, size=${virtualCache.length}`);
+    } else if (isExpansion) {
+        if (offset < virtualCacheStartOffset) {
+            // Expanding backwards
+            const newLogs = [...logs];
+            virtualCache = newLogs.concat(virtualCache);
+            virtualCacheStartOffset = offset;
+            
+            // Trim if cache is too large
+            if (virtualCache.length > VIRTUAL_CACHE_SIZE) {
+                const excess = virtualCache.length - VIRTUAL_CACHE_SIZE;
+                virtualCache = virtualCache.slice(0, VIRTUAL_CACHE_SIZE);
+                console.log(`Trimmed ${excess} logs from end of virtual cache`);
+            }
+        } else {
+            // Expanding forwards
+            virtualCache = virtualCache.concat(logs);
+            
+            // Trim if cache is too large
+            if (virtualCache.length > VIRTUAL_CACHE_SIZE) {
+                const excess = virtualCache.length - VIRTUAL_CACHE_SIZE;
+                virtualCache = virtualCache.slice(excess);
+                virtualCacheStartOffset += excess;
+                console.log(`Trimmed ${excess} logs from start of virtual cache`);
+            }
+        }
+        
+        console.log(`Virtual cache expanded: start=${virtualCacheStartOffset}, size=${virtualCache.length}`);
+    } else {
+        // Replace existing data
+        const localStartIndex = offset - virtualCacheStartOffset;
+        for (let i = 0; i < logs.length; i++) {
+            const localIndex = localStartIndex + i;
+            if (localIndex >= 0 && localIndex < virtualCache.length) {
+                virtualCache[localIndex] = logs[i];
+            }
+        }
+    }
+    
+    // Update allLogs for compatibility
+    for (let i = 0; i < logs.length; i++) {
+        allLogs[offset + i] = logs[i];
+    }
+}
 
 // Event listeners
 document.getElementById('search-input').addEventListener('input', (e) => {

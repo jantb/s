@@ -27,7 +27,7 @@ function connectWebSocket() {
         }
 
         if (searchQuery) {
-            fetchLogsWithOffset(currentOffset);
+            fetchLogsWithVirtualCache(currentOffset);
         }
 
         if (selectedPods.size > 0) {
@@ -126,20 +126,22 @@ function handleLogData(logs) {
     isLoading = false;
 
     if (logs.length === 0) {
-        searchStatus.textContent = `No logs at offset ${currentOffset}`;
+        searchStatus.textContent = `No logs at offset ${lastSentOffset}`;
         console.log('No logs received');
-        allLogs.length = currentOffset; // Clear logs beyond current offset
         renderVisibleLogs();
         return;
     }
 
-    // Replace logs at the current offset
-    for (let i = 0; i < logs.length; i++) {
-        allLogs[currentOffset + i] = logs[i];
-    }
+    // Determine if this is an expansion request
+    const isExpansion = isVirtualCacheInitialized &&
+        (lastSentOffset < virtualCacheStartOffset ||
+         lastSentOffset >= virtualCacheStartOffset + virtualCache.length);
 
-    searchStatus.textContent = `Showing logs from offset ${currentOffset}`;
-    console.log(`Received ${logs.length} logs at offset ${currentOffset}, total stored: ${allLogs.filter(x => x).length}`);
+    // Add to virtual cache
+    addToVirtualCache(lastSentOffset, logs, isExpansion);
+
+    searchStatus.textContent = `Showing logs from virtual cache (${virtualCache.length} cached)`;
+    console.log(`Received ${logs.length} logs at offset ${lastSentOffset}, virtual cache size: ${virtualCache.length}`);
 
     renderVisibleLogs();
 }
