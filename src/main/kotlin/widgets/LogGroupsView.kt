@@ -34,10 +34,9 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     private var hideLowSeverity = false
     private var sortByCount = true  // Always sort by descending count
     private val hideButtonRect = Rectangle(0, 0, 200, 25)
-    private val refreshButtonRect = Rectangle(0, 0, 200, 25)
     
     // Chart properties
-    private var chartHeight = 120
+    private var chartHeight = 140
     private var hoveredBar: Pair<Int, LogLevel>? = null
     private var tooltipInfo: TooltipInfo? = null
     
@@ -89,11 +88,12 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         receiveThread.isDaemon = true
         receiveThread.start()
 
+
         // Thread for auto-refreshing log clusters
         val refreshThread = Thread {
             while (true) {
                 try {
-                    Thread.sleep(5000) // Refresh every 5 seconds
+                    Thread.sleep(200) // Refresh every 200 ms
                     refreshChannel.trySend(RefreshLogGroups)
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -149,8 +149,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         g2d.color = UiColors.defaultText
 
         // Calculate chart height and visible lines
-        chartHeight = 120
-        visibleLines = ((height - chartHeight) / maxCharBounds.height.toInt()) - 2 // -2 for header and spacing
+        chartHeight = 140
+        visibleLines = ((height - chartHeight - 30) / maxCharBounds.height.toInt()) - 2 // -2 for header and spacing, -30 for bottom padding
 
         // Draw chart
         drawChart()
@@ -209,16 +209,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         g2d.font = Font(Styles.normalFont, Font.PLAIN, rowHeight)
         for (i in startIndex until endIndex) {
             val cluster = currentClusters[i]
-            val lineColor = when (cluster.level) {
-                LogLevel.ERROR -> UiColors.red
-                LogLevel.WARN -> UiColors.orange
-                LogLevel.DEBUG -> UiColors.teal
-                LogLevel.INFO -> UiColors.green
-                LogLevel.KAFKA -> Color(0, 188, 212) // Material Cyan
-                else -> UiColors.defaultText
-            }
-            g2d.color = lineColor
-
+            
             val values = listOf(
                 cluster.count.toString(),
                 cluster.level.name,
@@ -226,8 +217,26 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                 cluster.block
             )
 
-            // Draw each value in its column
+            // Draw each value in its column with different colors
             for (col in values.indices) {
+                // Set color based on column
+                g2d.color = when (col) {
+                    0 -> UiColors.teal // Count column
+                    1 -> { // Level column - keep level colors
+                        when (cluster.level) {
+                            LogLevel.ERROR -> UiColors.red
+                            LogLevel.WARN -> UiColors.orange
+                            LogLevel.DEBUG -> UiColors.teal
+                            LogLevel.INFO -> UiColors.green
+                            LogLevel.KAFKA -> Color(0, 188, 212) // Material Cyan
+                            else -> UiColors.defaultText
+                        }
+                    }
+                    2 -> UiColors.magenta // IndexId column
+                    3 -> UiColors.defaultText // Message Pattern column
+                    else -> UiColors.defaultText
+                }
+                
                 g2d.drawString(
                     values[col],
                     columnOffsets[col],
@@ -350,7 +359,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     
     private fun drawButtons() {
         // Hide/Show low severity button with enhanced styling
-        hideButtonRect.x = width - 210
+        hideButtonRect.x = width - 210  // Adjusted position since refresh button is removed
         hideButtonRect.y = chartHeight + 5
         
         // Button background with gradient
@@ -374,30 +383,6 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         val hideButtonY = hideButtonRect.y + (hideButtonRect.height + hideButtonMetrics.ascent) / 2 - 2
         g2d.drawString(hideButtonText, hideButtonX, hideButtonY)
 
-        // Refresh button with enhanced styling
-        refreshButtonRect.x = width - 420  // Adjusted position since sort button is removed
-        refreshButtonRect.y = chartHeight + 5
-        
-        // Button background with gradient
-        val refreshButtonGradient = GradientPaint(
-            refreshButtonRect.x.toFloat(), refreshButtonRect.y.toFloat(), UiColors.selection.brighter(),
-            refreshButtonRect.x.toFloat(), (refreshButtonRect.y + refreshButtonRect.height).toFloat(), UiColors.selection.darker()
-        )
-        g2d.paint = refreshButtonGradient
-        g2d.fillRoundRect(refreshButtonRect.x, refreshButtonRect.y, refreshButtonRect.width, refreshButtonRect.height, 6, 6)
-        
-        // Button border
-        g2d.color = UiColors.defaultText.darker()
-        g2d.drawRoundRect(refreshButtonRect.x, refreshButtonRect.y, refreshButtonRect.width, refreshButtonRect.height, 6, 6)
-        
-        // Button text
-        g2d.font = buttonFont
-        g2d.color = UiColors.defaultText
-        val refreshButtonText = "Refresh (Cmd + R)"
-        val refreshButtonMetrics = g2d.fontMetrics
-        val refreshButtonX = refreshButtonRect.x + (refreshButtonRect.width - refreshButtonMetrics.stringWidth(refreshButtonText)) / 2
-        val refreshButtonY = refreshButtonRect.y + (refreshButtonRect.height + refreshButtonMetrics.ascent) / 2 - 2
-        g2d.drawString(refreshButtonText, refreshButtonX, refreshButtonY)
     }
 
     private fun drawSelectedLine() {
@@ -531,11 +516,6 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             indexOffset = 0
         }
 
-        if (e.x >= refreshButtonRect.x && e.x <= refreshButtonRect.x + refreshButtonRect.width &&
-            e.y >= refreshButtonRect.y && e.y <= refreshButtonRect.y + refreshButtonRect.height
-        ) {
-            refreshChannel.trySend(RefreshLogGroups)
-        }
         panel.repaint()
     }
 
@@ -616,11 +596,11 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         }
         
         // Check which bar is being hovered
-        var x = 20
+        var x = 40  // Match the padding used in drawChart
         val barHeight = 40
         val barY = 50
         val barSpacing = 15
-        val maxBarWidth = width - 40
+        val maxBarWidth = width - 80  // Match the padding used in drawChart
         val maxValue = levelCounts.values.maxOrNull() ?: 1
         
         LogLevel.entries.forEach { level ->
