@@ -8,6 +8,8 @@ import app.DomainLine
 import app.QueryChanged
 import app.ResultChanged
 import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.until
 import util.UiColors
 import java.awt.EventQueue
 import java.awt.Font
@@ -30,7 +32,10 @@ class ScrollableList(
 
     // Chart for log levels
     private val logLevelChart = LogLevelChart(
-        x = x, y = 0, width = width, height = 100, onLevelsChanged = { updateResults() })
+        x = x, y = 0, width = width, height = 100,
+        onLevelsChanged = { updateResults() },
+        onBarClicked = { indexOffset -> handleBarClicked(indexOffset) }
+    )
     private var chartHeight = 100
 
     init {
@@ -421,6 +426,36 @@ class ScrollableList(
     }
 
     private fun mouseInside(e: MouseEvent, it: ComponentOwn) = e.x in it.x..it.width && e.y in it.y..(it.y + it.height)
+    
+    private fun handleBarClicked(clickedTimeIndex: Int) {
+        // When a bar is clicked, we receive the time index from the chart
+        // We need to calculate the absolute offset by counting events to the right
+        // of the clicked bar from the beginning of the chart data
+        
+        // Get the chart's time points to count events
+        val chartTimePoints = logLevelChart.getTimePoints()
+        
+        if (chartTimePoints.isEmpty() || clickedTimeIndex >= chartTimePoints.size) {
+            return
+        }
+        
+        // Count total events from the clicked time point to the end (right side)
+        // This gives us the absolute offset from the beginning of the data
+        var eventsToRight = 0
+        for (i in clickedTimeIndex until chartTimePoints.size) {
+            eventsToRight += chartTimePoints[i].getTotal()
+        }
+        
+        // Set the absolute offset (not adding to current offset)
+        indexOffset = eventsToRight
+        
+        // Disable follow mode when user clicks on a bar
+        follow = false
+        
+        // Update the results to reflect the new offset
+        updateResults()
+        panel.repaint()
+    }
 }
 
 fun loadFontFromResources(size: Float = 14f): Font {

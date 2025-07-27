@@ -26,13 +26,16 @@ import kotlin.time.DurationUnit
  * Log entries are counted by level (INFO, WARN, DEBUG, ERROR) and shown as stacked bars.
  */
 class LogLevelChart(
-    x: Int, y: Int, width: Int, height: Int, private val onLevelsChanged: (() -> Unit)? = null
+    x: Int, y: Int, width: Int, height: Int,
+    private val onLevelsChanged: (() -> Unit)? = null,
+    private val onBarClicked: ((indexOffset: Int) -> Unit)? = null
 ) : ComponentOwn() {
 
     // Data structure for log counts at a specific time
-    private data class TimePoint(
+    data class TimePoint(
         val time: kotlinx.datetime.Instant,
-        val counts: IntArray = IntArray(LogLevel.entries.size)
+        val counts: IntArray = IntArray(LogLevel.entries.size),
+        val logEntries: MutableList<DomainLine> = mutableListOf() // Store actual log entries
     ) {
         // Get total count for all levels
         fun getTotal(): Int = counts.sum()
@@ -40,9 +43,10 @@ class LogLevelChart(
         // Get count for a specific level
         fun getCount(level: LogLevel): Int = counts[level.ordinal]
 
-        // Increment count for a specific level
-        fun incrementCount(level: LogLevel) {
+        // Increment count for a specific level and store the log entry
+        fun incrementCount(level: LogLevel, logEntry: DomainLine) {
             counts[level.ordinal]++
+            logEntries.add(logEntry)
         }
 
         override fun equals(other: Any?): Boolean {
@@ -81,18 +85,37 @@ class LogLevelChart(
     private var g2d: Graphics2D? = null
     private val lock = ReentrantLock()
     private val widthDivision = 6
-    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.of("UTC"))
+    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.of("UTC"))
     
     // Enhanced UI properties
     private var hoveredBar: Pair<Int, LogLevel>? = null
     private var tooltipInfo: TooltipInfo? = null
     
-    // Zoom and pan properties
-    private var zoomLevel = 1.0
-    private var panOffset = 0.0
-    private var isDragging = false
+    // Mouse interaction properties
     private var lastMouseX = 0
     private var lastMouseY = 0
+    
+    // Performance optimization caches
+    private val gradientCache = mutableMapOf<LogLevel, GradientPaint>()
+    private val colorCache = mutableMapOf<LogLevel, Color>()
+    private var cachedVisibleRange: Pair<Int, Int>? = null
+    private var lastRenderWidth = 0
+    private var lastRenderHeight = 0
+    private var cachedTimeSlotWidth = 0f
+    private var cachedChartWidth = 0f
+    private var cachedMaxChartHeight = 0
+    
+    // Pre-calculated fonts
+    private val headerBoldFont = Font("JetBrains Mono", Font.BOLD, 11)
+    private val headerPlainFont = Font("JetBrains Mono", Font.PLAIN, 11)
+    private val legendFont = Font("JetBrains Mono", Font.PLAIN, 11)
+    private val legendBoldFont = Font("JetBrains Mono", Font.BOLD, 11)
+    private val tooltipFont = Font("JetBrains Mono", Font.BOLD, 12)
+    private val tooltipPlainFont = Font("JetBrains Mono", Font.PLAIN, 11)
+    private val emptyChartFont = Font("JetBrains Mono", Font.ITALIC, 14)
+    private val timeFont = Font("Monospaced", Font.PLAIN, 12)
+    private val dateBoldFont = Font("Monospaced", Font.BOLD, 12)
     
     private data class TooltipInfo(
         val x: Int,
@@ -116,17 +139,35 @@ class LogLevelChart(
         lock.lock()
         try {
             // Set time range (assuming logs are ordered newest to oldest)
-            startTime = logs.lastOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
-            endTime = logs.firstOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
-            if (startTime == endTime) endTime = startTime.plus(1.minutes)
+            val newStartTime = logs.lastOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
+            val newEndTime = logs.firstOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
+            val adjustedEndTime = if (newStartTime == newEndTime) newStartTime.plus(1.minutes) else newEndTime
 
-            val durationTotal = startTime.until(endTime, DateTimeUnit.MILLISECOND)
+            val durationTotal = newStartTime.until(adjustedEndTime, DateTimeUnit.MILLISECOND)
             val interval = durationTotal / (width.toLong() / widthDivision)
+            val targetSize = (width.toLong() / widthDivision).toInt()
 
-            // Recreate time points
-            timePoints.clear()
-            (0 until width.toLong() / widthDivision).forEach { i ->
-                timePoints.add(TimePoint(startTime.plus(interval * i, DateTimeUnit.MILLISECOND)))
+            // Check if we can do incremental update or need full recreation
+            val needsFullRecreation = startTime != newStartTime || endTime != adjustedEndTime || timePoints.size != targetSize
+
+            if (needsFullRecreation) {
+                // Full recreation needed
+                startTime = newStartTime
+                endTime = adjustedEndTime
+                
+                timePoints.clear()
+                (0 until targetSize).forEach { i ->
+                    timePoints.add(TimePoint(startTime.plus(interval * i, DateTimeUnit.MILLISECOND)))
+                }
+                
+                // Invalidate caches since time range changed
+                invalidateCache()
+            } else {
+                // Incremental update - just reset counts and clear log entries
+                timePoints.forEach { timePoint ->
+                    timePoint.counts.fill(0)
+                    timePoint.logEntries.clear()
+                }
             }
 
             // Assign logs to time points efficiently
@@ -136,7 +177,7 @@ class LogLevelChart(
                 val index = if (interval > 0) {
                     (durationSinceStart / interval).toInt().coerceIn(0, timePoints.size - 1)
                 } else 0
-                timePoints[index].incrementCount(level)
+                timePoints[index].incrementCount(level, domain)
             }
 
             // Update scale
@@ -169,26 +210,70 @@ class LogLevelChart(
         }
     }
 
+    /** Invalidates caches when dimensions change */
+    private fun invalidateCache() {
+        cachedVisibleRange = null
+    }
+
+    /** Pre-calculates values that are used frequently in rendering */
+    private fun updateRenderingCache(width: Int, height: Int) {
+        val needsUpdate = lastRenderWidth != width || lastRenderHeight != height || cachedVisibleRange == null
+        
+        if (needsUpdate) {
+            lastRenderWidth = width
+            lastRenderHeight = height
+            cachedChartWidth = (width - 60).toFloat()
+            cachedMaxChartHeight = height - 55 - 35
+            cachedTimeSlotWidth = cachedChartWidth / timePoints.size.coerceAtLeast(1)
+            
+            // All time points are visible (no zoom/pan)
+            cachedVisibleRange = 0 to (timePoints.size - 1)
+        }
+        
+        // Initialize color cache if needed
+        if (colorCache.isEmpty()) {
+            allLogLevels.forEach { level ->
+                colorCache[level] = getLevelColor(level)
+            }
+        }
+    }
+    
+    /** Gets cached gradient for a level, creating if necessary */
+    private fun getCachedGradient(level: LogLevel, x: Int, y: Int, height: Int): GradientPaint {
+        val cacheKey = level
+        return gradientCache.getOrPut(cacheKey) {
+            val baseColor = colorCache[level] ?: getLevelColor(level)
+            GradientPaint(
+                x.toFloat(), y.toFloat(), baseColor.brighter(),
+                x.toFloat(), (y + height).toFloat(), baseColor.darker()
+            )
+        }
+    }
+
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
+        // Pre-calculate values outside the lock to reduce lock time
+        updateRenderingCache(width, height)
+        
         lock.lock()
         try {
             // Reinitialize image if dimensions change or not yet initialized
             if (image == null || this.width != width || this.height != height) {
                 g2d?.dispose()
                 image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-                g2d = image!!.createGraphics()
+                g2d = image!!.createGraphics().apply {
+                    // Set rendering hints once during initialization
+                    setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+                    setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+                }
                 this.width = width
                 this.height = height
                 this.x = x
                 this.y = y
             }
 
-            // Clear and draw with anti-aliasing
+            // Clear and draw
             g2d!!.apply {
-                setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
-                
                 color = UiColors.background
                 fillRect(0, 0, width, height)
                 drawChart()
@@ -208,12 +293,6 @@ class LogLevelChart(
         }
 
         val levels = allLogLevels.toList()
-        
-        // Apply zoom and pan transformations
-        val chartWidth = (width - 60).toFloat()
-        val zoomedWidth = chartWidth * zoomLevel.toFloat()
-        val panPixels = (panOffset * chartWidth).toFloat()
-        val timeSlotWidth = zoomedWidth / timePoints.size.coerceAtLeast(1)
 
         // Draw enhanced gridlines and axis (adjusted for header height)
         drawEnhancedGridlines(currentScaleMax)
@@ -224,20 +303,12 @@ class LogLevelChart(
         drawLine(30, height - 35, width - 30, height - 35)
         stroke = BasicStroke(1f)
 
-        // Create a date formatter
-        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault())
-
         // Track the last date to detect date changes
         var lastDate: String? = null
 
-        // Draw bars and time labels with zoom and pan
+        // Iterate through all time points
         timePoints.forEachIndexed { index, timePoint ->
-            val xPosBase = 30 + (index * timeSlotWidth + panPixels).toInt()
-            
-            // Skip rendering if bar is outside visible area (performance optimization)
-            if (xPosBase + timeSlotWidth < 30 || xPosBase > width - 30) {
-                return@forEachIndexed
-            }
+            val xPosBase = 30 + (index * cachedTimeSlotWidth).toInt()
             
             val javaInstant = timePoint.time.toJavaInstant()
 
@@ -254,8 +325,8 @@ class LogLevelChart(
                 drawLine(xPosBase, 55, xPosBase, height - 35)
                 stroke = originalStroke
 
-                // Add date label
-                font = Font("Monospaced", Font.BOLD, 12)
+                // Add date label using cached font
+                font = dateBoldFont
                 drawString(currentDate, xPosBase + 5, 70)
 
                 // Reset to regular color for other elements
@@ -264,7 +335,7 @@ class LogLevelChart(
 
             // Draw regular time labels at intervals
             if (index % 25 == 0 || index == timePoints.size - 1) {
-                font = Font("Monospaced", Font.PLAIN, 12)
+                font = timeFont
                 color = Color.GRAY
                 drawString(timeFormatter.format(javaInstant), xPosBase, height - 15)
             }
@@ -277,9 +348,8 @@ class LogLevelChart(
                 if (level in State.levels.get()) {
                     val count = timePoint.getCount(level)
                     if (count > 0) {
-                        val maxChartHeight = height - 55 - 35  // From header bottom (55) to axis (35 from bottom)
-                        val barHeight = ((count.toFloat() / currentScaleMax) * maxChartHeight).toInt().coerceAtLeast(1)
-                        val barWidth = timeSlotWidth.toInt() - 2
+                        val barHeight = ((count.toFloat() / currentScaleMax) * cachedMaxChartHeight).toInt().coerceAtLeast(1)
+                        val barWidth = cachedTimeSlotWidth.toInt() - 2
                         val barX = xPosBase
                         val barY = height - 35 - currentHeight - barHeight
                         
@@ -303,9 +373,9 @@ class LogLevelChart(
 
         // Enhanced header information
         drawEnhancedHeader(totalMessages, avgMps, durationSecs)
-        drawZoomIndicator()
         drawLegend(levels)
     }
+    
 
     private fun Graphics2D.drawEmptyChart() {
         color = UiColors.background
@@ -321,8 +391,8 @@ class LogLevelChart(
         drawLine(30, 55, 30, height - 35) // Y-axis
         stroke = BasicStroke(1f)
         
-        // Add "No Data" message
-        font = Font("JetBrains Mono", Font.ITALIC, 14)
+        // Add "No Data" message with cached font
+        font = emptyChartFont
         color = UiColors.defaultText.darker()
         val message = "No log data available"
         val metrics = fontMetrics
@@ -348,12 +418,11 @@ class LogLevelChart(
         drawLine(0, headerHeight, width, headerHeight)
         
         // Time range information
-        val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault())
         val startDateStr = dateFormatter.format(startTime.toJavaInstant())
         val endDateStr = dateFormatter.format(endTime.toJavaInstant())
         
         // First line - Time range
-        font = Font("JetBrains Mono", Font.BOLD, 11)
+        font = headerBoldFont
         color = UiColors.defaultText.brighter()
         val timeRangeText = if (startDateStr == endDateStr) {
             "$startDateStr ${timeFormatter.format(startTime.toJavaInstant())} - ${timeFormatter.format(endTime.toJavaInstant())}"
@@ -363,45 +432,20 @@ class LogLevelChart(
         drawString(timeRangeText, 10, 18)
         
         // Second line - Duration and Statistics
-        font = Font("JetBrains Mono", Font.PLAIN, 11)
+        font = headerPlainFont
         color = UiColors.defaultText
         val duration = endTime.minus(startTime)
         val durationText = "Duration: $duration"
         drawString(durationText, 10, 35)
         
         // Right side - Statistics on second line
-        font = Font("JetBrains Mono", Font.BOLD, 11)
+        font = headerBoldFont
         color = UiColors.teal
         val statsText = "Total: $totalMessages | Avg: %.1f/s".format(avgMps)
         val statsWidth = fontMetrics.stringWidth(statsText)
         drawString(statsText, width - statsWidth - 10, 35)
     }
     
-    private fun Graphics2D.drawZoomIndicator() {
-        if (zoomLevel != 1.0 || panOffset != 0.0) {
-            // Draw zoom indicator in bottom right corner
-            val indicatorWidth = 120
-            val indicatorHeight = 25
-            val indicatorX = width - indicatorWidth - 10
-            val indicatorY = height - indicatorHeight - 10
-            
-            // Background
-            color = Color(0, 0, 0, 150)
-            fillRoundRect(indicatorX, indicatorY, indicatorWidth, indicatorHeight, 5, 5)
-            
-            // Border
-            color = UiColors.defaultText.darker()
-            drawRoundRect(indicatorX, indicatorY, indicatorWidth, indicatorHeight, 5, 5)
-            
-            // Text
-            font = Font("JetBrains Mono", Font.PLAIN, 10)
-            color = UiColors.defaultText
-            drawString("Zoom: %.1fx".format(zoomLevel), indicatorX + 5, indicatorY + 12)
-            if (panOffset != 0.0) {
-                drawString("Pan: %.1f".format(panOffset), indicatorX + 5, indicatorY + 22)
-            }
-        }
-    }
 
     private fun Graphics2D.drawEnhancedGridlines(maxCount: Int) {
         // Draw subtle grid lines
@@ -426,13 +470,10 @@ class LogLevelChart(
     }
     
     private fun Graphics2D.drawEnhancedBar(x: Int, y: Int, width: Int, height: Int, level: LogLevel, count: Int, timePoint: TimePoint) {
-        val baseColor = getLevelColor(level)
+        val baseColor = colorCache[level] ?: getLevelColor(level)
         
-        // Create gradient paint
-        val gradient = GradientPaint(
-            x.toFloat(), y.toFloat(), baseColor.brighter(),
-            x.toFloat(), (y + height).toFloat(), baseColor.darker()
-        )
+        // Use cached gradient
+        val gradient = getCachedGradient(level, x, y, height)
         
         // Check if this bar is hovered
         val isHovered = hoveredBar?.first == timePoints.indexOf(timePoint) && hoveredBar?.second == level
@@ -481,18 +522,18 @@ class LogLevelChart(
             stroke = BasicStroke(1f)
             drawRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
             
-            // Draw tooltip content
-            font = Font("JetBrains Mono", Font.BOLD, 12)
+            // Draw tooltip content with cached fonts
+            font = tooltipFont
             color = UiColors.defaultText
             
             val timeStr = timeFormatter.format(tooltip.timePoint.time.toJavaInstant())
             drawString("Time: $timeStr", tooltipX + padding, tooltipY + padding + 15)
             
-            color = getLevelColor(tooltip.level)
+            color = colorCache[tooltip.level] ?: getLevelColor(tooltip.level)
             drawString("${tooltip.level.name}: ${tooltip.count}", tooltipX + padding, tooltipY + padding + 35)
             
             color = UiColors.defaultText.darker()
-            font = Font("JetBrains Mono", Font.PLAIN, 11)
+            font = tooltipPlainFont
             drawString("Total: ${tooltip.timePoint.getTotal()}", tooltipX + padding, tooltipY + padding + 55)
             
             // Add percentage information
@@ -504,7 +545,6 @@ class LogLevelChart(
     }
 
     private fun Graphics2D.drawLegend(levels: List<LogLevel>) {
-        font = Font("JetBrains Mono", Font.PLAIN, 11)
         levelRectangles.clear()
         val labelWidth = 90
         val totalWidth = labelWidth * levels.size
@@ -517,7 +557,7 @@ class LogLevelChart(
 
             // Enhanced selection background
             if (isSelected) {
-                val selectionColor = getLevelColor(level)
+                val selectionColor = colorCache[level] ?: getLevelColor(level)
                 color = Color(selectionColor.red, selectionColor.green, selectionColor.blue, 60)
                 fillRoundRect(boxX - 4, boxY - 4, labelWidth - 2, 18, 6, 6)
                 
@@ -528,7 +568,7 @@ class LogLevelChart(
             }
 
             // Enhanced color indicator with gradient
-            val levelColor = getLevelColor(level)
+            val levelColor = colorCache[level] ?: getLevelColor(level)
             val gradient = GradientPaint(
                 boxX.toFloat(), boxY.toFloat(), levelColor.brighter(),
                 boxX.toFloat(), (boxY + 12).toFloat(), levelColor.darker()
@@ -542,9 +582,9 @@ class LogLevelChart(
             drawRoundRect(boxX, boxY, 12, 12, 3, 3)
             stroke = BasicStroke(1f)
             
-            // Enhanced text rendering
+            // Enhanced text rendering with cached fonts
             color = if (isSelected) UiColors.defaultText.brighter() else UiColors.defaultText.darker()
-            font = Font("JetBrains Mono", if (isSelected) Font.BOLD else Font.PLAIN, 11)
+            font = if (isSelected) legendBoldFont else legendFont
             drawString(level.name, boxX + 18, boxY + 10)
 
             levelRectangles[level] = Rectangle(boxX - 4, boxY - 4, labelWidth - 2, 18)
@@ -569,32 +609,6 @@ class LogLevelChart(
     
     override fun keyPressed(e: KeyEvent) {
         when (e.keyCode) {
-            KeyEvent.VK_PLUS, KeyEvent.VK_EQUALS -> {
-                // Zoom in
-                zoomLevel = (zoomLevel * 1.2).coerceAtMost(10.0)
-            }
-            KeyEvent.VK_MINUS -> {
-                // Zoom out
-                zoomLevel = (zoomLevel / 1.2).coerceAtLeast(0.1)
-            }
-            KeyEvent.VK_0 -> {
-                // Reset zoom and pan
-                zoomLevel = 1.0
-                panOffset = 0.0
-            }
-            KeyEvent.VK_LEFT -> {
-                // Pan left
-                if (zoomLevel > 1.0) {
-                    val minPan = -(zoomLevel - 1).coerceAtLeast(0.0)
-                    panOffset = (panOffset - 0.1).coerceAtLeast(minPan)
-                }
-            }
-            KeyEvent.VK_RIGHT -> {
-                // Pan right
-                if (zoomLevel > 1.0) {
-                    panOffset = (panOffset + 0.1).coerceAtMost(0.0)
-                }
-            }
             KeyEvent.VK_R -> {
                 // Reset all filters
                 State.levels.get().clear()
@@ -606,13 +620,27 @@ class LogLevelChart(
     
     override fun keyReleased(e: KeyEvent) {}
     override fun mousePressed(e: MouseEvent) {
-        isDragging = true
         lastMouseX = e.x
         lastMouseY = e.y
     }
     
     override fun mouseReleased(e: MouseEvent) {
-        isDragging = false
+        // Check if we clicked on a bar in the chart area
+        if (e.y >= 55 && e.y <= height - 35 && e.x >= 30 && e.x <= width - 30) {
+            handleBarClick(e.x, e.y)
+        }
+    }
+    
+    private fun handleBarClick(mouseX: Int, mouseY: Int) {
+        if (timePoints.isEmpty()) return
+        
+        // Calculate which time point was clicked
+        val chartX = mouseX - 30
+        val timeIndex = (chartX / cachedTimeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
+        
+        // Pass the time index to the parent so it can calculate the correct offset
+        // by counting events to the right of this bar and adding to current offset
+        onBarClicked?.invoke(timeIndex)
     }
     override fun mouseEntered(e: MouseEvent) {
         mouseInside = true
@@ -623,91 +651,73 @@ class LogLevelChart(
     }
 
     override fun mouseWheelMoved(e: MouseWheelEvent) {
-        // Zoom functionality
-        val zoomFactor = if (e.wheelRotation < 0) 1.1 else 0.9
-        val newZoomLevel = (zoomLevel * zoomFactor).coerceIn(0.1, 10.0)
-        
-        if (newZoomLevel != zoomLevel) {
-            zoomLevel = newZoomLevel
-            // Adjust pan offset to zoom towards mouse position
-            val mouseRatio = (e.x - 30).toDouble() / (width - 60).coerceAtLeast(1)
-            panOffset = (panOffset + mouseRatio) * zoomFactor - mouseRatio
-            
-            // Fix the coerceIn range - ensure min <= max
-            val minPan = -(zoomLevel - 1).coerceAtLeast(0.0)
-            val maxPan = 0.0
-            panOffset = panOffset.coerceIn(minPan, maxPan)
-        }
+        // No zoom functionality - mouse wheel does nothing
     }
     
     override fun mouseDragged(e: MouseEvent) {
-        if (isDragging && zoomLevel > 1.0) {
-            val deltaX = e.x - lastMouseX
-            val panSensitivity = 0.001 * zoomLevel
-            panOffset += deltaX * panSensitivity
-            
-            // Fix the coerceIn range - ensure min <= max
-            val minPan = -(zoomLevel - 1).coerceAtLeast(0.0)
-            val maxPan = 0.0
-            panOffset = panOffset.coerceIn(minPan, maxPan)
-        }
         lastMouseX = e.x
         lastMouseY = e.y
     }
     override fun mouseMoved(e: MouseEvent) {
-        // Handle hover effects for bars with zoom and pan
-        val chartWidth = (width - 60).toFloat()
-        val zoomedWidth = chartWidth * zoomLevel.toFloat()
-        val panPixels = (panOffset * chartWidth).toFloat()
-        val timeSlotWidth = zoomedWidth / timePoints.size.coerceAtLeast(1)
+        // Early exit if mouse is outside chart area
         val mouseX = e.x - 30
         val mouseY = e.y
         
-        if (mouseX >= 0 && mouseX < width - 60 && mouseY >= 55 && mouseY <= height - 35) {
-            // Adjust mouse position for zoom and pan
-            val adjustedMouseX = mouseX - panPixels
-            val timeIndex = (adjustedMouseX / timeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
-            val timePoint = timePoints.getOrNull(timeIndex)
-            
-            if (timePoint != null) {
-                // Find which level bar is being hovered
-                var currentHeight = 0
-                var hoveredLevel: LogLevel? = null
-                
-                for (level in allLogLevels.reversed()) {
-                    if (level in State.levels.get()) {
-                        val count = timePoint.getCount(level)
-                        if (count > 0) {
-                            val maxChartHeight = height - 55 - 35  // From header bottom (55) to axis (35 from bottom)
-                            val barHeight = ((count.toFloat() / currentScaleMax) * maxChartHeight).toInt().coerceAtLeast(1)
-                            val barY = height - 35 - currentHeight - barHeight
-                            val adjustedBarY = barY.coerceAtLeast(55)
-                            val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
-                            
-                            val barTop = adjustedBarY
-                            val barBottom = adjustedBarY + adjustedBarHeight
-                            
-                            if (mouseY >= barTop && mouseY <= barBottom) {
-                                hoveredLevel = level
-                                tooltipInfo = TooltipInfo(e.x, e.y, timePoint, level, count)
-                                break
-                            }
-                            currentHeight += barHeight
-                        }
-                    }
-                }
-                
-                hoveredBar = if (hoveredLevel != null) timeIndex to hoveredLevel else null
-                if (hoveredLevel == null) tooltipInfo = null
-            } else {
-                hoveredBar = null
-                tooltipInfo = null
-            }
-        } else {
+        if (mouseX < 0 || mouseX >= width - 60 || mouseY < 55 || mouseY > height - 35) {
             hoveredBar = null
             tooltipInfo = null
+            return
         }
+        
+        // Calculate which time point is being hovered
+        if (timePoints.isEmpty()) {
+            hoveredBar = null
+            tooltipInfo = null
+            return
+        }
+        
+        val timeIndex = (mouseX / cachedTimeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
+        val timePoint = timePoints.getOrNull(timeIndex)
+        
+        if (timePoint == null) {
+            hoveredBar = null
+            tooltipInfo = null
+            return
+        }
+        
+        // Find which level bar is being hovered - optimized loop
+        var currentHeight = 0
+        var hoveredLevel: LogLevel? = null
+        val selectedLevels = State.levels.get() // Cache the set lookup
+        
+        for (level in allLogLevels.reversed()) {
+            if (level in selectedLevels) {
+                val count = timePoint.getCount(level)
+                if (count > 0) {
+                    val barHeight = ((count.toFloat() / currentScaleMax) * cachedMaxChartHeight).toInt().coerceAtLeast(1)
+                    val barY = height - 35 - currentHeight - barHeight
+                    val adjustedBarY = barY.coerceAtLeast(55)
+                    val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
+                    
+                    val barTop = adjustedBarY
+                    val barBottom = adjustedBarY + adjustedBarHeight
+                    
+                    if (mouseY >= barTop && mouseY <= barBottom) {
+                        hoveredLevel = level
+                        tooltipInfo = TooltipInfo(e.x, e.y, timePoint, level, count)
+                        break
+                    }
+                    currentHeight += barHeight
+                }
+            }
+        }
+        
+        hoveredBar = if (hoveredLevel != null) timeIndex to hoveredLevel else null
+        if (hoveredLevel == null) tooltipInfo = null
     }
+    
+    /** Provides access to time points for offset calculation */
+    fun getTimePoints(): List<TimePoint> = timePoints.toList()
 }
 
 fun getLevelColor(level: LogLevel): Color = when (level) {
