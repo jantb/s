@@ -148,7 +148,7 @@ class App : CoroutineScope {
                         kafkaCmdGuiChannel.put(
                             ResultChanged(
                                 listResults.value.take(msg.length).reversed(),
-                                listResults.value
+                                listResults.value // Pass the full dataset (up to 10,000 entries) for chart generation
                             )
                         )
                     }
