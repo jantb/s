@@ -11,11 +11,193 @@ import java.awt.datatransfer.StringSelection
 import java.awt.event.*
 import javax.swing.*
 import javax.swing.border.EmptyBorder
+import javax.swing.text.*
 
 class ModernTextViewerWindow(title: String = "Log Details", private val domain: DomainLine) : JFrame() {
     
     private val json = Json { prettyPrint = true }
     private var fontSize = 12
+    
+    data class ColoredText(
+        val text: String,
+        val color: Color
+    )
+    
+    fun highlightJson(text: String): List<ColoredText> {
+        val result = mutableListOf<ColoredText>()
+        var i = 0
+        
+        while (i < text.length) {
+            val char = text[i]
+            when (char) {
+                '{', '}', '[', ']', ':', ',' -> {
+                    // JSON structural characters
+                    result.add(ColoredText(char.toString(), UiColors.teal))
+                    i++
+                }
+                '"' -> {
+                    // String literals
+                    val start = i
+                    i++ // Skip opening quote
+                    var escaped = false
+                    while (i < text.length && (text[i] != '"' || escaped)) {
+                        if (text[i] == '\\' && !escaped) {
+                            escaped = true
+                        } else {
+                            escaped = false
+                        }
+                        i++
+                    }
+                    if (i < text.length) i++ // Skip closing quote
+                    result.add(ColoredText(text.substring(start, i), UiColors.green))
+                }
+                '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> {
+                    // Numbers
+                    val start = i
+                    while (i < text.length && (text[i].isDigit() || text[i] == '.' || text[i] == 'e' || text[i] == 'E' || text[i] == '+' || text[i] == '-')) {
+                        i++
+                    }
+                    result.add(ColoredText(text.substring(start, i), UiColors.orange))
+                }
+                't', 'f', 'n' -> {
+                    // Boolean and null literals
+                    if (i + 3 < text.length && text.substring(i, i + 4) == "true") {
+                        result.add(ColoredText("true", UiColors.magenta))
+                        i += 4
+                    } else if (i + 4 < text.length && text.substring(i, i + 5) == "false") {
+                        result.add(ColoredText("false", UiColors.magenta))
+                        i += 5
+                    } else if (i + 3 < text.length && text.substring(i, i + 4) == "null") {
+                        result.add(ColoredText("null", UiColors.magenta))
+                        i += 4
+                    } else {
+                        result.add(ColoredText(char.toString(), UiColors.defaultText))
+                        i++
+                    }
+                }
+                ' ', '\t', '\n', '\r' -> {
+                    // Whitespace
+                    val start = i
+                    while (i < text.length && text[i].isWhitespace()) {
+                        i++
+                    }
+                    result.add(ColoredText(text.substring(start, i), UiColors.defaultText))
+                }
+                else -> {
+                    // Regular text
+                    result.add(ColoredText(char.toString(), UiColors.defaultText))
+                    i++
+                }
+            }
+        }
+        
+        return result
+    }
+    
+    fun highlightStackTrace(text: String): List<ColoredText> {
+        val result = mutableListOf<ColoredText>()
+        val lines = text.split('\n')
+        
+        for (line in lines) {
+            when {
+                line.startsWith("at ") -> {
+                    // Stack trace element
+                    val parenIndex = line.indexOf('(')
+                    if (parenIndex != -1) {
+                        // Highlight "at " keyword
+                        result.add(ColoredText("at ", UiColors.teal))
+                        // Highlight class and method
+                        result.add(ColoredText(line.substring(3, parenIndex), UiColors.orange))
+                        // Highlight file and line number
+                        result.add(ColoredText(line.substring(parenIndex), UiColors.teal))
+                    } else {
+                        result.add(ColoredText("at ", UiColors.teal))
+                        result.add(ColoredText(line.substring(3), UiColors.orange))
+                    }
+                }
+                line.contains("Exception") || line.contains("Error") -> {
+                    // Exception class names
+                    result.add(ColoredText(line, UiColors.red))
+                }
+                line.startsWith("\tat ") -> {
+                    // Tabbed stack trace element
+                    result.add(ColoredText("\tat ", UiColors.teal))
+                    val parenIndex = line.indexOf('(', 2)
+                    if (parenIndex != -1) {
+                        result.add(ColoredText(line.substring(4, parenIndex), UiColors.orange))
+                        result.add(ColoredText(line.substring(parenIndex), UiColors.teal))
+                    } else {
+                        result.add(ColoredText(line.substring(4), UiColors.orange))
+                    }
+                }
+                else -> {
+                    result.add(ColoredText(line, UiColors.defaultText))
+                }
+            }
+            result.add(ColoredText("\n", UiColors.defaultText))
+        }
+        
+        // Remove the last newline if it exists
+        if (result.isNotEmpty() && result.last().text == "\n") {
+            result.removeAt(result.size - 1)
+        }
+        
+        return result
+    }
+    
+    fun highlightText(content: String, sectionLabel: String): List<ColoredText> {
+        return when {
+            sectionLabel == "Message" && (domain is LogLineDomain || domain is KafkaLineDomain) -> {
+                // Check if content looks like JSON
+                val trimmedContent = content.trimStart()
+                if (trimmedContent.startsWith("{") || trimmedContent.startsWith("[")) {
+                    highlightJson(content)
+                } else if (domain is LogLineDomain && domain.stacktrace != null &&
+                           content.contains("\n") &&
+                           (content.contains("Exception") || content.contains("Error") || content.contains("at "))) {
+                    // This is likely a message with embedded stack trace
+                    highlightStackTrace(content)
+                } else if (domain is LogLineDomain && domain.stacktrace != null) {
+                    // Separate stack trace handling
+                    val fullContent = buildString {
+                        append(content)
+                        domain.stacktrace.let { append("\n").append(it) }
+                    }
+                    highlightStackTrace(fullContent)
+                } else {
+                    listOf(ColoredText(content, UiColors.defaultText))
+                }
+            }
+            sectionLabel == "Stacktrace" && domain is LogLineDomain -> {
+                highlightStackTrace(content)
+            }
+            else -> {
+                listOf(ColoredText(content, UiColors.defaultText))
+            }
+        }
+    }
+    
+    private fun setStyledText(textPane: JTextPane, content: String) {
+        val doc = DefaultStyledDocument()
+        val coloredTexts = highlightText(content, "Message")
+        
+        try {
+            var offset = 0
+            for (coloredText in coloredTexts) {
+                val style = SimpleAttributeSet()
+                StyleConstants.setForeground(style, coloredText.color)
+                StyleConstants.setFontFamily(style, Styles.monoFont)
+                StyleConstants.setFontSize(style, fontSize)
+                doc.insertString(offset, coloredText.text, style)
+                offset += coloredText.text.length
+            }
+        } catch (e: BadLocationException) {
+            e.printStackTrace()
+        }
+        
+        // Set the document to the text pane
+        textPane.styledDocument = doc
+    }
     
     init {
         setupWindow(title)
@@ -207,15 +389,16 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
         
         // Message content
         val messageContent = getMessageContent()
-        val textArea = JTextArea(messageContent).apply {
+        val textPane = JTextPane().apply {
             isEditable = false
-            lineWrap = true
-            wrapStyleWord = true
             background = UiColors.selectionLine
             foreground = UiColors.defaultText
             font = Font(Styles.monoFont, Font.PLAIN, fontSize)
             border = EmptyBorder(10, 10, 10, 10)
             caretColor = UiColors.defaultText
+            
+            // Set the styled text with syntax highlighting
+            setStyledText(this, messageContent)
             
             // Enable text selection
             addMouseWheelListener { e ->
@@ -229,7 +412,7 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
             }
         }
         
-        val scrollPane = JScrollPane(textArea).apply {
+        val scrollPane = JScrollPane(textPane).apply {
             background = UiColors.background
             border = null
             verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
