@@ -26,8 +26,8 @@ import kotlin.time.measureTimedValue
 class App : CoroutineScope {
 
     private class CachedList {
-        private var query = UUID.randomUUID().toString()
-        private var queryChanged = true
+        private var query = ""
+        private var queryChanged = false
         private var results = emptyList<DomainLine>()
         private var resultsOffsetStart = 0L
         private var complete = false
@@ -98,6 +98,7 @@ class App : CoroutineScope {
                         val listResults = measureTimedValue {
                             val n = 10000
                             if (msg.offset > 0) {
+                                // Use caching for backward scrolling
                                 buffer.setQuery(newQuery = msg.query)
                                 if (buffer.needRefresh(offset = msg.offset.toLong())) {
                                     val cacheStartOffset = kotlin.math.max(0, msg.offset - 5000)
@@ -111,15 +112,19 @@ class App : CoroutineScope {
                                 }
 
                                 buffer.get(msg.offset.toLong()).take(n)
-
                             } else {
-                                buffer = CachedList()
-                                valueStores.map {
+                                // For initial load/follow mode (offset == 0)
+                                buffer.setQuery(newQuery = msg.query)
+                                // Always refresh when at offset 0 to get latest streaming data
+                                val results = valueStores.map {
                                     it.value.search(
                                         query = msg.query,
                                         offsetLock = offsetLock
                                     )
-                                }.merge().drop(msg.offset).take(n).toList()
+                                }.merge().take(n).toList()
+                                buffer.setResults(results, 0L, results.size != n)
+                                
+                                buffer.get(0L).take(n)
                             }
                         }
 

@@ -40,7 +40,7 @@ class ScrollableList(
         this.width = width
         start()
         scheduler.scheduleWithFixedDelay({
-            if (State.changedAt.get() > lastUpdate) {
+            if (State.changedAt.get() > lastUpdate && follow) {
                 updateResults()
                 panel.repaint()
             }
@@ -200,8 +200,8 @@ class ScrollableList(
             KeyEvent.VK_ENTER -> {
                 indexOffset = 0
                 State.lock.set(0)
-                updateResults()
                 setFollow()
+                updateResults()
             }
 
             KeyEvent.VK_C -> {
