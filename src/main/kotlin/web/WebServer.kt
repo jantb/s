@@ -15,6 +15,7 @@ import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.serialization.Serializable
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
+import kafka.Kafka
 
 class WebServer(private val port: Int = 9999) {
     private val clients = ConcurrentHashMap<String, WebSocketSession>()
@@ -146,6 +147,107 @@ class WebServer(private val port: Int = 9999) {
                             }
                         }
 
+                        // Start the coroutine to listen for log cluster updates
+                        val logClusterJob = scope.launch {
+                            try {
+                                while (isActive) {
+                                    try {
+                                        val message = Channels.logClusterCmdGuiChannel.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                        if (message is LogClusterList) {
+                                            try {
+                                                val clusters = message.clusters.map { cluster ->
+                                                    LogClusterInfo(
+                                                        count = cluster.count.toInt(),
+                                                        level = cluster.level.name,
+                                                        indexIdentifier = cluster.indexIdentifier,
+                                                        messagePattern = cluster.block
+                                                    )
+                                                }
+
+                                                withTimeout(1000) {
+                                                    try {
+                                                        send(Frame.Text(json.encodeToString(
+                                                            WebSocketMessage.serializer(),
+                                                            WebSocketMessage("logClusters", logClusters = clusters)
+                                                        )))
+                                                    } catch (e: Exception) {
+                                                        println("Failed to send log clusters for client $clientId: ${e.message}")
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                println("Error processing log cluster message for client $clientId: ${e.message}")
+                                            }
+                                        }
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        println("Error processing log clusters for client $clientId: ${e.message}")
+                                    }
+                                    yield()
+                                }
+                            } catch (e: CancellationException) {
+                                println("Log cluster job cancelled for client $clientId: ${e.message}")
+                            } catch (e: Exception) {
+                                println("Log cluster job error for client $clientId: ${e.message}")
+                            }
+                        }
+
+                        // Start the coroutine to listen for chart data updates
+                        val chartDataJob = scope.launch {
+                            try {
+                                while (isActive) {
+                                    try {
+                                        val message = Channels.kafkaCmdGuiChannel.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                        if (message is ResultChanged) {
+                                            try {
+                                                // Send chart data if available
+                                                if (message.chartResult.isNotEmpty()) {
+                                                    // Create chart data from the result
+                                                    val chartResult = message.chartResult
+                                                    
+                                                    // For simplicity, we'll send a simplified version of the data
+                                                    // In a real implementation, this would be more sophisticated
+                                                    val timePoints = chartResult.take(100).map { domainLine ->
+                                                        // Create a simple time point representation
+                                                        val time = domainLine.timestamp
+                                                        // For now, we'll just send a simple count per level
+                                                        // A real implementation would aggregate data properly
+                                                        val counts = listOf(1, 0, 0, 0, 0, 0) // Simplified counts for INFO, WARN, DEBUG, ERROR, UNKNOWN, KAFKA
+                                                        TimePointData(time, counts)
+                                                    }
+                                                    
+                                                    val levels = listOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN", "KAFKA")
+                                                    val chartData = LogLevelChartData(timePoints, levels, 100)
+                                                    
+                                                    withTimeout(1000) {
+                                                        try {
+                                                            send(Frame.Text(json.encodeToString(
+                                                                WebSocketMessage.serializer(),
+                                                                WebSocketMessage("chartData", chartData = chartData)
+                                                            )))
+                                                        } catch (e: Exception) {
+                                                            println("Failed to send chart data for client $clientId: ${e.message}")
+                                                        }
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                println("Error processing chart data message for client $clientId: ${e.message}")
+                                            }
+                                        }
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        println("Error processing chart data for client $clientId: ${e.message}")
+                                    }
+                                    yield()
+                                }
+                            } catch (e: CancellationException) {
+                                println("Chart data job cancelled for client $clientId: ${e.message}")
+                            } catch (e: Exception) {
+                                println("Chart data job error for client $clientId: ${e.message}")
+                            }
+                        }
+
                         // Set up message handler for incoming client messages
                         val messageHandlerJob = scope.launch {
                             try {
@@ -200,6 +302,63 @@ class WebServer(private val port: Int = 9999) {
                                                     }
                                                     "ping" -> {
                                                     }
+                                                    "listTopics" -> {
+                                                        val listTopics = ListTopics()
+                                                        Channels.kafkaChannel.put(listTopics)
+                                                        try {
+                                                            val topics = listTopics.result.get()
+                                                            val topicList = topics.map { KafkaTopic(it) }
+                                                            send(Frame.Text(json.encodeToString(
+                                                                WebSocketMessage.serializer(),
+                                                                WebSocketMessage("topics", topics = topicList)
+                                                            )))
+                                                        } catch (e: Exception) {
+                                                            println("Error listing Kafka topics for client $clientId: ${e.message}")
+                                                        }
+                                                    }
+                                                    "listenToTopics" -> {
+                                                        message.topics?.let {
+                                                            Channels.kafkaChannel.put(ListenToTopic(it))
+                                                        }
+                                                    }
+                                                    "unlistenToTopics" -> {
+                                                        Channels.kafkaChannel.put(UnListenToTopics)
+                                                    }
+                                                    "listLag" -> {
+                                                        try {
+                                                            val msg = ListLag()
+                                                            Channels.kafkaChannel.put(msg)
+                                                            val result = msg.result.await()
+                                                            val lagInfoList = result.map { lagInfo ->
+                                                                KafkaLagInfo(
+                                                                    groupId = lagInfo.groupId,
+                                                                    topic = lagInfo.topic,
+                                                                    partition = lagInfo.partition,
+                                                                    currentOffset = lagInfo.currentOffset,
+                                                                    endOffset = lagInfo.endOffset,
+                                                                    lag = lagInfo.lag
+                                                                )
+                                                            }
+                                                            send(Frame.Text(json.encodeToString(
+                                                                WebSocketMessage.serializer(),
+                                                                WebSocketMessage("lagInfo", lagInfo = lagInfoList)
+                                                            )))
+                                                        } catch (e: Exception) {
+                                                            println("Error listing Kafka lag for client $clientId: ${e.message}")
+                                                        }
+                                                    }
+                                                    "refreshLogGroups" -> {
+                                                        try {
+                                                            Channels.refreshChannel.trySend(RefreshLogGroups)
+                                                        } catch (e: Exception) {
+                                                            println("Error refreshing log groups for client $clientId: ${e.message}")
+                                                        }
+                                                    }
+                                                    "setKafkaDays" -> {
+                                                        message.days?.let {
+                                                            State.kafkaDays.set(it.toLong())
+                                                        }
+                                                    }
                                                 }
                                             } catch (e: Exception) {
                                                 println("Error parsing client message for client $clientId: ${e.message}")
@@ -219,6 +378,9 @@ class WebServer(private val port: Int = 9999) {
 
                         // Wait for the session to complete
                         messageHandlerJob.join()
+                        logUpdateJob.join()
+                        logClusterJob.join()
+                        chartDataJob.join()
 
                     } catch (e: Exception) {
                         println("Error in WebSocket session for client $clientId: ${e.message}")
@@ -257,7 +419,11 @@ data class WebLogLine(
 data class WebSocketMessage(
     val type: String,
     val logs: List<WebLogLine> = emptyList(),
-    val podMaps: List<Map<String, String>> = emptyList()
+    val podMaps: List<Map<String, String>> = emptyList(),
+    val topics: List<KafkaTopic> = emptyList(),
+    val lagInfo: List<KafkaLagInfo> = emptyList(),
+    val logClusters: List<LogClusterInfo> = emptyList(),
+    val chartData: LogLevelChartData? = null
 )
 
 @Serializable
@@ -272,5 +438,53 @@ data class ClientMessage(
     val podName: String? = null,
     val query: String? = null,
     val offset: Int = 0,
-    val length: Int = 0
+    val length: Int = 0,
+    val levels: List<String>? = null,
+    val topics: List<String>? = null,
+    val hideLowSeverity: Boolean = false,
+    val sortByCount: Boolean = false,
+    val hideTopicsWithoutLag: Boolean = false,
+    val sortByLag: Boolean = false,
+    val startTime: Long? = null,
+    val endTime: Long? = null,
+    val minLogLevel: String? = null,
+    val serviceNames: List<String>? = null,
+    val correlationIds: List<String>? = null,
+    val days: Int? = null
+)
+
+@Serializable
+data class KafkaTopic(
+    val name: String
+)
+
+@Serializable
+data class KafkaLagInfo(
+    val groupId: String,
+    val topic: String,
+    val partition: Int,
+    val currentOffset: Long,
+    val endOffset: Long,
+    val lag: Long
+)
+
+@Serializable
+data class LogClusterInfo(
+    val count: Int,
+    val level: String,
+    val indexIdentifier: String,
+    val messagePattern: String
+)
+
+@Serializable
+data class LogLevelChartData(
+    val timePoints: List<TimePointData>,
+    val levels: List<String>,
+    val scaleMax: Int
+)
+
+@Serializable
+data class TimePointData(
+    val time: Long,
+    val counts: List<Int>
 )

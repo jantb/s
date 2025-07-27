@@ -6,33 +6,159 @@
     <title>Log Viewer</title>
     <style>
         body {
-            font-family: monospace;
+            font-family: 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
             margin: 0;
             padding: 0;
-            background-color: #1e1e1e;
+            background-color: #1e1e22;
             color: #d4d4d4;
             display: flex;
             flex-direction: column;
             height: 100vh;
-            font-size: 11px;
+            font-size: 12px;
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                gap: 8px;
+            }
+            .search-container {
+                flex-direction: column;
+                gap: 8px;
+            }
+            .search-wrapper {
+                width: 100%;
+            }
+            .search-options {
+                margin-left: 0;
+            }
+            .level-filters {
+                width: 100%;
+                overflow-x: auto;
+                padding: 4px;
+            }
+            .buttons {
+                width: 100%;
+                justify-content: center;
+            }
+            .pod-modal {
+                width: 95%;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .header {
+                padding: 6px;
+            }
+            .search-option {
+                padding: 2px 6px;
+                font-size: 10px;
+            }
+            .level-filter {
+                padding: 2px 6px;
+                font-size: 10px;
+            }
+            .pod-item {
+                padding: 8px 12px;
+            }
         }
         .header {
             display: flex;
             padding: 8px;
-            background-color: #323232;
-            border-bottom: 1px solid #555;
+            background-color: #252526;
+            border-bottom: 1px solid #3c3c3c;
         }
         .search-container {
             flex: 1;
             margin-right: 8px;
+            display: flex;
+            gap: 8px;
+        }
+        .search-wrapper {
+            flex: 1;
+            position: relative;
         }
         #search-input {
             width: 100%;
-            padding: 4px;
-            background-color: #252525;
+            padding: 6px 8px;
+            background-color: #3c3c3c;
             border: 1px solid #555;
             color: #d4d4d4;
+            font-size: 12px;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        .search-options {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: 8px;
+        }
+        .search-option {
+            padding: 4px 8px;
+            background-color: #3c3c3c;
+            border: 1px solid #555;
+            color: #888;
             font-size: 11px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .search-option.active {
+            background-color: #0e639c;
+            color: white;
+            border-color: #0e639c;
+        }
+        .search-option:hover {
+            background-color: #454545;
+        }
+        .search-option.active:hover {
+            background-color: #1177bb;
+        }
+        .level-filters {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 0 8px;
+            background-color: #3c3c3c;
+            border: 1px solid #555;
+            border-radius: 3px;
+        }
+        .level-filter {
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: bold;
+            transition: all 0.2s ease;
+        }
+        .level-filter.active {
+            opacity: 1;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+        }
+        .level-filter.inactive {
+            opacity: 0.5;
+        }
+        .level-filter.INFO {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .level-filter.WARN {
+            background-color: #FF9800;
+            color: white;
+        }
+        .level-filter.ERROR {
+            background-color: #F44336;
+            color: white;
+        }
+        .level-filter.DEBUG {
+            background-color: #607D8B;
+            color: white;
+        }
+        .level-filter.KAFKA {
+            background-color: #00BCD4;
+            color: white;
         }
         .log-viewer {
             flex: 1;
@@ -89,40 +215,243 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: rgba(0, 0, 0, 0.8);
+            background-color: rgba(30, 30, 34, 0.9);
             display: none;
             flex-direction: column;
-            padding: 15px;
-            z-index: 10;
+            padding: 20px;
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
         }
         .pod-selector.visible {
             display: flex;
         }
+        .kafka-topics-selector {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(30, 30, 34, 0.9);
+            display: none;
+            flex-direction: column;
+            padding: 20px;
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .kafka-topics-selector.visible {
+            display: flex;
+        }
+        .log-clusters-selector {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(30, 30, 34, 0.9);
+            display: none;
+            flex-direction: column;
+            padding: 20px;
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .log-clusters-selector.visible {
+            display: flex;
+        }
+        .kafka-lag-selector {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(30, 30, 34, 0.9);
+            display: none;
+            flex-direction: column;
+            padding: 20px;
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .kafka-lag-selector.visible {
+            display: flex;
+        }
+        
+        .kafka-lag-modal {
+            background-color: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 6px;
+            width: calc(100% - 200px);
+            height: calc(100% - 200px);
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+        
+        .kafka-lag-modal .pod-list {
+            flex: 1;
+            overflow-y: auto;
+            background-color: #1e1e1e;
+            max-height: none;
+        }
+        .pod-modal {
+            background-color: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 6px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+        
+        .log-clusters-modal {
+            background-color: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 6px;
+            width: calc(100% - 200px);
+            height: calc(100% - 200px);
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+        .pod-modal-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .pod-modal-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #d4d4d4;
+        }
+        .pod-modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 16px;
+            cursor: pointer;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .pod-modal-close:hover {
+            color: #d4d4d4;
+        }
+        .pod-search-container {
+            padding: 12px 16px;
+            border-bottom: 1px solid #3c3c3c;
+        }
         .pod-search {
-            padding: 8px;
-            background-color: #252525;
+            width: 100%;
+            padding: 8px 12px;
+            background-color: #3c3c3c;
             border: 1px solid #555;
             color: #d4d4d4;
-            margin-bottom: 8px;
-            font-size: 11px;
+            font-size: 12px;
+            border-radius: 3px;
+            box-sizing: border-box;
         }
         .pod-list {
             flex: 1;
             overflow-y: auto;
-            background-color: #252525;
-            border: 1px solid #555;
+            background-color: #1e1e1e;
+            max-height: 400px;
+        }
+        
+        .log-clusters-modal .pod-list {
+            flex: 1;
+            overflow-y: auto;
+            background-color: #1e1e1e;
+            max-height: none;
         }
         .pod-item {
-            padding: 6px;
-            border-bottom: 1px solid #333;
+            padding: 10px 16px;
+            border-bottom: 1px solid #3c3c3c;
             cursor: pointer;
-            font-size: 11px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            transition: background-color 0.1s ease;
         }
         .pod-item:hover {
-            background-color: #2a2a2a;
+            background-color: #2a2d2e;
         }
         .pod-item.selected {
-            background-color: #264f78;
+            background-color: #094771;
+        }
+        .pod-item.selected:hover {
+            background-color: #0c5a8f;
+        }
+        .pod-name {
+            flex: 1;
+            font-weight: 500;
+        }
+        .pod-version {
+            color: #888;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+        .pod-checkbox {
+            width: 16px;
+            height: 16px;
+            border: 1px solid #555;
+            border-radius: 3px;
+            margin-right: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .pod-item.selected .pod-checkbox {
+            background-color: #0e639c;
+            border-color: #0e639c;
+        }
+        .pod-checkbox::after {
+            content: '';
+            width: 10px;
+            height: 10px;
+            background-color: white;
+            display: none;
+        }
+        .pod-item.selected .pod-checkbox::after {
+            display: block;
+        }
+        .pod-modal-footer {
+            padding: 12px 16px;
+            border-top: 1px solid #3c3c3c;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        .pod-modal-footer button {
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .pod-modal-footer .btn-primary {
+            background-color: #0e639c;
+            border: 1px solid #0e639c;
+            color: white;
+        }
+        .pod-modal-footer .btn-primary:hover {
+            background-color: #1177bb;
+        }
+        .pod-modal-footer .btn-secondary {
+            background-color: #3c3c3c;
+            border: 1px solid #555;
+            color: #d4d4d4;
+        }
+        .pod-modal-footer .btn-secondary:hover {
+            background-color: #454545;
         }
         .level-INFO .log-message {
             color: #6A9955 !important;
@@ -160,10 +489,26 @@
 <body>
 <div class="header">
     <div class="search-container">
-        <input type="text" class="search-input" id="search-input" placeholder="Search logs...">
+        <div class="search-wrapper">
+            <input type="text" class="search-input" id="search-input" placeholder="Search logs...">
+        </div>
+        <div class="search-options">
+            <div class="search-option" id="case-sensitive" title="Case Sensitive (Alt+C)">Aa</div>
+            <div class="search-option" id="regex-search" title="Regex Search (Alt+R)">.*</div>
+        </div>
+        <div class="level-filters" id="level-filters">
+            <div class="level-filter INFO active" data-level="INFO">INFO</div>
+            <div class="level-filter WARN active" data-level="WARN">WARN</div>
+            <div class="level-filter ERROR active" data-level="ERROR">ERROR</div>
+            <div class="level-filter DEBUG active" data-level="DEBUG">DEBUG</div>
+            <div class="level-filter KAFKA active" data-level="KAFKA">KAFKA</div>
+        </div>
     </div>
     <div class="buttons">
         <button id="pod-select-btn">Select Pods</button>
+        <button id="kafka-topics-btn">Kafka Topics</button>
+        <button id="kafka-lag-btn">Kafka Lag</button>
+        <button id="log-clusters-btn">Log Clusters</button>
         <span id="stats-counter" style="margin-left: 12px; color: #9CDCFE; font-size: 11px;">Indexed Lines: 0</span>
         <span id="search-status" style="margin-left: 12px; color: #DCDCAA; font-size: 11px;"></span>
     </div>
@@ -172,11 +517,59 @@
     <div class="log-container" id="log-container"></div>
 </div>
 <div class="pod-selector" id="pod-selector">
-    <input type="text" class="pod-search" id="pod-search" placeholder="Filter pods...">
-    <div class="pod-list" id="pod-list"></div>
-    <div class="buttons">
-        <button id="refresh-pods-btn">Refresh Pods</button>
-        <button id="close-pod-selector-btn">Close</button>
+    <div class="pod-modal">
+        <div class="pod-modal-header">
+            <div class="pod-modal-title">Select Pods</div>
+            <button class="pod-modal-close" id="close-pod-selector-btn">×</button>
+        </div>
+        <div class="pod-search-container">
+            <input type="text" class="pod-search" id="pod-search" placeholder="Filter pods...">
+        </div>
+        <div class="pod-list" id="pod-list"></div>
+        <div class="pod-modal-footer">
+            <button class="btn-secondary" id="refresh-pods-btn">Refresh</button>
+            <button class="btn-primary" id="apply-pod-selection-btn">Apply</button>
+        </div>
+    </div>
+</div>
+
+<div class="kafka-topics-selector" id="kafka-topics-selector">
+    <div class="pod-modal">
+        <div class="pod-modal-header">
+            <div class="pod-modal-title">Kafka Topics</div>
+            <button class="pod-modal-close" id="close-kafka-topics-btn">×</button>
+        </div>
+        <div class="pod-search-container">
+            <input type="text" class="pod-search" id="kafka-topics-search" placeholder="Filter topics...">
+        </div>
+        <div class="pod-list" id="kafka-topics-list"></div>
+        <div class="pod-modal-footer">
+            <button class="btn-secondary" id="refresh-kafka-topics-btn">Refresh</button>
+            <button class="btn-primary" id="apply-kafka-topics-btn">Apply</button>
+        </div>
+    </div>
+</div>
+
+<div class="log-clusters-selector" id="log-clusters-selector">
+    <div class="log-clusters-modal">
+        <div class="pod-modal-header">
+            <div class="pod-modal-title">Log Clusters</div>
+            <button class="pod-modal-close" id="close-log-clusters-btn">×</button>
+        </div>
+        <div class="pod-list" id="log-clusters-list"></div>
+    </div>
+</div>
+
+<div class="kafka-lag-selector" id="kafka-lag-selector">
+    <div class="kafka-lag-modal">
+        <div class="pod-modal-header">
+            <div class="pod-modal-title">Kafka Consumer Lag</div>
+            <button class="pod-modal-close" id="close-kafka-lag-btn">×</button>
+        </div>
+        <div class="pod-list" id="kafka-lag-list"></div>
+        <div class="pod-modal-footer">
+            <button class="btn-secondary" id="refresh-kafka-lag-btn">Refresh</button>
+        </div>
     </div>
 </div>
 
@@ -186,6 +579,10 @@
     let allPods = [];
     let searchQuery = '';
     let allLogs = [];
+    let activeLevels = new Set(['INFO', 'WARN', 'ERROR', 'DEBUG', 'KAFKA']);
+    let tempSelectedPods = new Set(); // Temporary selection for modal
+    let caseSensitive = false;
+    let regexSearch = false;
     const lineHeight = 22;
     let viewportHeight = 0;
     let maxVisibleLines = 0;
@@ -222,6 +619,57 @@
             `;
             logContainer.appendChild(logElement);
         }
+
+        // Add event listeners for level filters
+        document.querySelectorAll('.level-filter').forEach(filter => {
+            filter.addEventListener('click', () => {
+                const level = filter.dataset.level;
+                if (activeLevels.has(level)) {
+                    activeLevels.delete(level);
+                    filter.classList.remove('active');
+                    filter.classList.add('inactive');
+                } else {
+                    activeLevels.add(level);
+                    filter.classList.remove('inactive');
+                    filter.classList.add('active');
+                }
+                // Re-render logs with new filter
+                renderVisibleLogs();
+                // If we have a search query, re-fetch logs to ensure we have enough matching the filter
+                if (searchQuery || activeLevels.size < 5) {
+                    fetchLogs(currentOffset);
+                }
+            });
+        });
+        
+        // Add event listeners for search options
+        document.getElementById('case-sensitive').addEventListener('click', () => {
+            caseSensitive = !caseSensitive;
+            const element = document.getElementById('case-sensitive');
+            if (caseSensitive) {
+                element.classList.add('active');
+            } else {
+                element.classList.remove('active');
+            }
+            // Re-run search with new option
+            if (searchQuery) {
+                sendSearchQuery(searchQuery);
+            }
+        });
+        
+        document.getElementById('regex-search').addEventListener('click', () => {
+            regexSearch = !regexSearch;
+            const element = document.getElementById('regex-search');
+            if (regexSearch) {
+                element.classList.add('active');
+            } else {
+                element.classList.remove('active');
+            }
+            // Re-run search with new option
+            if (searchQuery) {
+                sendSearchQuery(searchQuery);
+            }
+        });
     }
 
     // Debounce function to limit scroll event frequency
@@ -252,17 +700,31 @@
     function renderVisibleLogs() {
         const logLines = logContainer.children;
 
+        // Find logs that match active levels
+        let visibleLogIndices = [];
+        for (let i = currentOffset; i < allLogs.length && visibleLogIndices.length < maxVisibleLines; i++) {
+            if (allLogs[i] && activeLevels.has(allLogs[i].level)) {
+                visibleLogIndices.push(i);
+            }
+        }
+
+        // Render visible logs
         for (let i = 0; i < maxVisibleLines; i++) {
-            const logIndex = currentOffset + i;
             const logElement = logLines[i];
             if (!logElement) continue;
 
-            if (logIndex >= allLogs.length || !allLogs[logIndex]) {
+            if (i >= visibleLogIndices.length) {
                 logElement.style.display = 'none';
                 continue;
             }
 
+            const logIndex = visibleLogIndices[i];
             const log = allLogs[logIndex];
+            if (!log) {
+                logElement.style.display = 'none';
+                continue;
+            }
+
             logElement.style.display = 'flex';
             logElement.className = `log-line level-${log.level}`;
             logElement.style.top = `${i * lineHeight}px`;
@@ -311,7 +773,8 @@
             action: 'search',
             query: searchQuery,
             offset: offset,
-            length: maxVisibleLines
+            length: maxVisibleLines,
+            levels: Array.from(activeLevels)
         })) {
             console.log('Failed to send search query, connection issue');
             document.getElementById('search-status').textContent = 'Connection lost, reconnecting...';
@@ -383,6 +846,16 @@
                     handlePodData(data.podMaps);
                 } else if (data.type === 'stats') {
                     updateStats(data);
+                } else if (data.type === 'logClusters') {
+                    handleLogClusters(data.logClusters);
+                } else if (data.type === 'chartData') {
+                    handleChartData(data.chartData);
+                } else if (data.type === 'topics') {
+                    handleTopics(data.topics);
+                } else if (data.type === 'lagInfo') {
+                    handleLagInfo(data.lagInfo);
+                } else if (data.type === 'welcome') {
+                    console.log('Welcome message received:', data.logs[0].message);
                 }
             } catch (e) {
                 console.error('Error parsing message:', e);
@@ -457,6 +930,26 @@
         renderPodList();
     }
 
+    function handleLogClusters(clusters) {
+        console.log('Received log clusters:', clusters);
+        // TODO: Implement log cluster visualization
+    }
+
+    function handleChartData(chartData) {
+        console.log('Received chart data:', chartData);
+        // TODO: Implement chart visualization
+    }
+
+    function handleTopics(topics) {
+        console.log('Received topics:', topics);
+        // TODO: Implement topic visualization
+    }
+
+    function handleLagInfo(lagInfo) {
+        console.log('Received lag info:', lagInfo);
+        // TODO: Implement lag info visualization
+    }
+
     function renderPodList() {
         const podList = document.getElementById('pod-list');
         podList.innerHTML = '';
@@ -469,22 +962,18 @@
 
         for (const pod of filteredPods) {
             const podItem = document.createElement('div');
-            podItem.className = `pod-item ${selectedPods.has(pod.name) ? 'selected' : ''}`;
-            podItem.innerText = `${pod.name} ${pod.version}`;
+            podItem.className = `pod-item ${tempSelectedPods.has(pod.name) ? 'selected' : ''}`;
+            podItem.innerHTML = `
+                <div class="pod-checkbox"></div>
+                <div class="pod-name">${pod.name}</div>
+                <div class="pod-version">${pod.version}</div>
+            `;
 
             podItem.addEventListener('click', () => {
-                if (selectedPods.has(pod.name)) {
-                    selectedPods.delete(pod.name);
-                    safeSend({
-                        action: 'unlistenPod',
-                        podName: pod.name
-                    });
+                if (tempSelectedPods.has(pod.name)) {
+                    tempSelectedPods.delete(pod.name);
                 } else {
-                    selectedPods.add(pod.name);
-                    safeSend({
-                        action: 'listenPod',
-                        podName: pod.name
-                    });
+                    tempSelectedPods.add(pod.name);
                 }
                 renderPodList();
             });
@@ -494,6 +983,8 @@
     }
 
     document.getElementById('pod-select-btn').addEventListener('click', () => {
+        // Copy current selections to temp set when opening modal
+        tempSelectedPods = new Set(selectedPods);
         document.getElementById('pod-selector').classList.add('visible');
         safeSend({
             action: 'listPods'
@@ -501,6 +992,32 @@
     });
 
     document.getElementById('close-pod-selector-btn').addEventListener('click', () => {
+        document.getElementById('pod-selector').classList.remove('visible');
+    });
+
+    document.getElementById('apply-pod-selection-btn').addEventListener('click', () => {
+        // Apply temp selections to actual selections
+        const podsToUnlisten = [...selectedPods].filter(pod => !tempSelectedPods.has(pod));
+        const podsToListen = [...tempSelectedPods].filter(pod => !selectedPods.has(pod));
+        
+        // Unlisten from pods that were deselected
+        podsToUnlisten.forEach(pod => {
+            selectedPods.delete(pod);
+            safeSend({
+                action: 'unlistenPod',
+                podName: pod
+            });
+        });
+        
+        // Listen to pods that were selected
+        podsToListen.forEach(pod => {
+            selectedPods.add(pod);
+            safeSend({
+                action: 'listenPod',
+                podName: pod
+            });
+        });
+        
         document.getElementById('pod-selector').classList.remove('visible');
     });
 
@@ -540,7 +1057,8 @@
             action: 'search',
             query: query,
             offset: 0,
-            length: maxVisibleLines
+            length: maxVisibleLines,
+            levels: Array.from(activeLevels)
         })) {
             document.getElementById('search-status').textContent = 'Connection lost, reconnecting...';
         }
@@ -550,6 +1068,306 @@
         searchQuery = e.target.value;
         sendSearchQuery(searchQuery); // Always send the query, even if blank
     });
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd + P to open pod selection
+        if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
+            e.preventDefault();
+            document.getElementById('pod-select-btn').click();
+        }
+        
+        // Escape to close pod selection
+        if (e.key === 'Escape') {
+            const podSelector = document.getElementById('pod-selector');
+            if (podSelector.classList.contains('visible')) {
+                podSelector.classList.remove('visible');
+            }
+        }
+        
+        // Enter in search input to force search
+        if (e.key === 'Enter' && e.target.id === 'search-input') {
+            sendSearchQuery(searchQuery);
+        }
+        
+        // Alt + C for case sensitive toggle
+        if (e.altKey && e.key === 'c') {
+            e.preventDefault();
+            document.getElementById('case-sensitive').click();
+        }
+        
+        // Alt + R for regex search toggle
+        if (e.altKey && e.key === 'r') {
+            e.preventDefault();
+            document.getElementById('regex-search').click();
+        }
+    });
+
+    // Kafka topics functionality
+    let allTopics = [];
+    let selectedTopics = new Set();
+
+    document.getElementById('kafka-topics-btn').addEventListener('click', () => {
+        document.getElementById('kafka-topics-selector').classList.add('visible');
+        safeSend({
+            action: 'listTopics'
+        });
+    });
+
+    document.getElementById('close-kafka-topics-btn').addEventListener('click', () => {
+        document.getElementById('kafka-topics-selector').classList.remove('visible');
+    });
+
+    document.getElementById('refresh-kafka-topics-btn').addEventListener('click', () => {
+        safeSend({
+            action: 'listTopics'
+        });
+    });
+
+    document.getElementById('apply-kafka-topics-btn').addEventListener('click', () => {
+        // For now, just close the modal
+        // In a real implementation, we would apply the topic selection
+        document.getElementById('kafka-topics-selector').classList.remove('visible');
+    });
+
+    document.getElementById('kafka-topics-search').addEventListener('input', () => {
+        renderTopicsList();
+    });
+
+    function handleTopics(topics) {
+        allTopics = topics;
+        renderTopicsList();
+    }
+
+    function renderTopicsList() {
+        const topicsList = document.getElementById('kafka-topics-list');
+        topicsList.innerHTML = '';
+
+        const filterText = document.getElementById('kafka-topics-search').value.toLowerCase();
+
+        const filteredTopics = filterText ?
+            allTopics.filter(topic => topic.name.toLowerCase().includes(filterText)) :
+            allTopics;
+
+        for (const topic of filteredTopics) {
+            const topicItem = document.createElement('div');
+            topicItem.className = 'pod-item';
+            topicItem.innerHTML = `
+                <div class="pod-name">${topic.name}</div>
+            `;
+
+            topicItem.addEventListener('click', () => {
+                // For now, just log the click
+                console.log('Topic clicked:', topic.name);
+            });
+
+            topicsList.appendChild(topicItem);
+        }
+    }
+
+    // Log clusters functionality
+    let logClusters = [];
+
+    document.getElementById('log-clusters-btn').addEventListener('click', () => {
+        document.getElementById('log-clusters-selector').classList.add('visible');
+        // Request log clusters data
+        safeSend({
+            action: 'refreshLogGroups'
+        });
+    });
+
+    document.getElementById('close-log-clusters-btn').addEventListener('click', () => {
+        document.getElementById('log-clusters-selector').classList.remove('visible');
+    });
+
+    function handleLogClusters(clusters) {
+        logClusters = clusters;
+        renderLogClustersList();
+    }
+
+    function renderLogClustersList() {
+        const clustersList = document.getElementById('log-clusters-list');
+        clustersList.innerHTML = '';
+
+        // Sort log clusters by count in descending order (most to least)
+        const sortedClusters = [...logClusters].sort((a, b) => b.count - a.count);
+
+        for (const cluster of sortedClusters) {
+            const clusterItem = document.createElement('div');
+            clusterItem.className = 'pod-item';
+            clusterItem.innerHTML = `
+                <div class="pod-name">${cluster.messagePattern}</div>
+                <div class="pod-version">${cluster.count} occurrences</div>
+            `;
+
+            clusterItem.addEventListener('click', () => {
+                // For now, just log the click
+                console.log('Cluster clicked:', cluster.messagePattern);
+            });
+
+            clustersList.appendChild(clusterItem);
+        }
+    }
+
+    // Chart data functionality
+    function handleChartData(chartData) {
+        console.log('Chart data received:', chartData);
+        // TODO: Implement chart visualization
+    }
+
+    // Lag info functionality
+    function handleLagInfo(lagInfo) {
+        console.log('Lag info received:', lagInfo);
+        renderLagInfo(lagInfo);
+    }
+    
+    function renderLagInfo(lagInfo) {
+        const lagList = document.getElementById('kafka-lag-list');
+        lagList.innerHTML = '';
+        
+        if (lagInfo.length === 0) {
+            const noDataItem = document.createElement('div');
+            noDataItem.className = 'pod-item';
+            noDataItem.textContent = 'No consumer lag information available.';
+            lagList.appendChild(noDataItem);
+            return;
+        }
+        
+        // Filter out entries with 0 lag
+        const nonZeroLagInfo = lagInfo.filter(info => info.lag > 0);
+        
+        // If all entries have 0 lag, show a message
+        if (nonZeroLagInfo.length === 0) {
+            const noLagItem = document.createElement('div');
+            noLagItem.className = 'pod-item';
+            noLagItem.textContent = 'All topics have zero lag.';
+            lagList.appendChild(noLagItem);
+            return;
+        }
+        
+        // Group lag info by topic
+        const topicLags = {};
+        nonZeroLagInfo.forEach(info => {
+            if (!topicLags[info.topic]) {
+                topicLags[info.topic] = [];
+            }
+            topicLags[info.topic].push(info);
+        });
+        
+        // Create an array of topics with their total lag for sorting
+        const topicsWithTotalLag = Object.entries(topicLags).map(([topic, infos]) => {
+            const totalLag = infos.reduce((sum, info) => sum + info.lag, 0);
+            return { topic, infos, totalLag };
+        });
+        
+        // Sort topics by total lag in descending order (most lag on top)
+        topicsWithTotalLag.sort((a, b) => b.totalLag - a.totalLag);
+        
+        // Render lag info for each topic
+        topicsWithTotalLag.forEach(({ topic, infos, totalLag }) => {
+            const topicHeader = document.createElement('div');
+            topicHeader.className = 'pod-item';
+            topicHeader.innerHTML = `<div class="pod-name"><strong>${topic}</strong></div>`;
+            lagList.appendChild(topicHeader);
+            
+            const totalItem = document.createElement('div');
+            totalItem.className = 'pod-item';
+            totalItem.innerHTML = `<div class="pod-name">Total Lag</div><div class="pod-version">${totalLag}</div>`;
+            lagList.appendChild(totalItem);
+            
+            // Sort partitions by lag in descending order
+            const sortedInfos = [...infos].sort((a, b) => b.lag - a.lag);
+            
+            // Render individual partition info
+            sortedInfos.forEach(info => {
+                const partitionItem = document.createElement('div');
+                partitionItem.className = 'pod-item';
+                partitionItem.innerHTML = `
+                    <div class="pod-name">Partition ${info.partition}</div>
+                    <div class="pod-version">
+                        ${info.currentOffset} → ${info.endOffset} (Lag: ${info.lag})
+                    </div>
+                `;
+                lagList.appendChild(partitionItem);
+            });
+        });
+    }
+    
+    // Kafka lag view functionality
+    document.getElementById('kafka-lag-btn').addEventListener('click', () => {
+        document.getElementById('kafka-lag-selector').classList.add('visible');
+        safeSend({
+            action: 'listLag'
+        });
+    });
+    
+    document.getElementById('close-kafka-lag-btn').addEventListener('click', () => {
+        document.getElementById('kafka-lag-selector').classList.remove('visible');
+    });
+    
+    document.getElementById('refresh-kafka-lag-btn').addEventListener('click', () => {
+        safeSend({
+            action: 'listLag'
+        });
+    });
+    
+    // Add days selection to Kafka topics
+    // Add a dropdown for days selection in the Kafka topics modal
+    function addDaysSelectionToTopicsModal() {
+        const modalHeader = document.querySelector('.kafka-topics-selector .pod-modal-header');
+        if (!modalHeader) return;
+        
+        // Check if days selection already exists
+        if (document.getElementById('kafka-days-selection')) return;
+        
+        const daysContainer = document.createElement('div');
+        daysContainer.id = 'kafka-days-selection';
+        daysContainer.style.display = 'flex';
+        daysContainer.style.alignItems = 'center';
+        daysContainer.style.marginLeft = '20px';
+        
+        const label = document.createElement('span');
+        label.textContent = 'Days back: ';
+        label.style.marginRight = '8px';
+        label.style.color = '#d4d4d4';
+        
+        const select = document.createElement('select');
+        select.id = 'kafka-days-select';
+        select.style.padding = '4px 8px';
+        select.style.backgroundColor = '#3c3c3c';
+        select.style.border = '1px solid #555';
+        select.style.color = '#d4d4d4';
+        select.style.borderRadius = '3px';
+        
+        // Add options for days (0-30)
+        for (let i = 0; i <= 30; i++) {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = i;
+            if (i === 1) option.selected = true; // Default to 1 day
+            select.appendChild(option);
+        }
+        
+        select.addEventListener('change', (e) => {
+            const days = parseInt(e.target.value);
+            // Send message to backend to update days
+            safeSend({
+                action: 'setKafkaDays',
+                days: days
+            });
+        });
+        
+        daysContainer.appendChild(label);
+        daysContainer.appendChild(select);
+        modalHeader.appendChild(daysContainer);
+    }
+    
+    // Call this function when the Kafka topics modal is opened
+    const originalKafkaTopicsClick = document.getElementById('kafka-topics-btn').onclick;
+    document.getElementById('kafka-topics-btn').onclick = function() {
+        if (originalKafkaTopicsClick) originalKafkaTopicsClick.apply(this, arguments);
+        setTimeout(addDaysSelectionToTopicsModal, 100); // Add after a short delay to ensure DOM is ready
+    };
 </script>
 </body>
 </html>

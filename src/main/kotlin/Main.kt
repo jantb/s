@@ -33,7 +33,7 @@ fun main(args: Array<String>) {
     Kafka()
 
     if (useWebUI) {
-        println("Starting web UI on port 8080")
+        println("Starting web UI on port 9999")
         WebServer().start()
     } else {
         SwingUtilities.invokeLater {
