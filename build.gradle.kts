@@ -15,19 +15,19 @@ repositories {
 }
 
 dependencies {
-    implementation("io.fabric8:kubernetes-client:7.1.0")
+    implementation("io.fabric8:kubernetes-client:7.3.1")
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.14")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    implementation("org.apache.kafka:kafka-clients:3.9.0")
-    implementation("io.confluent:kafka-avro-serializer:7.8.0")
+    implementation("org.apache.kafka:kafka-clients:3.9.1")
+    implementation("io.confluent:kafka-avro-serializer:8.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
-    implementation("io.ktor:ktor-server-core:3.1.3")
-    implementation("io.ktor:ktor-server-netty:3.1.3")
-    implementation("io.ktor:ktor-server-websockets:3.1.3")
-    implementation("io.ktor:ktor-server-content-negotiation:3.1.3")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.3")
-    implementation("io.ktor:ktor-server-html-builder:3.1.3")
+    implementation("io.ktor:ktor-server-core:3.2.2")
+    implementation("io.ktor:ktor-server-netty:3.2.2")
+    implementation("io.ktor:ktor-server-websockets:3.2.2")
+    implementation("io.ktor:ktor-server-content-negotiation:3.2.2")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.2.2")
+    implementation("io.ktor:ktor-server-html-builder:3.2.2")
     runtimeOnly("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.8.1")
     testImplementation(kotlin("test"))
 }
