@@ -26,17 +26,32 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
     fun highlightJson(text: String): List<ColoredText> {
         val result = mutableListOf<ColoredText>()
         var i = 0
+        var expectKey = true // Flag to track if we're expecting a key
         
         while (i < text.length) {
             val char = text[i]
             when (char) {
-                '{', '}', '[', ']', ':', ',' -> {
-                    // JSON structural characters
+                '{', '[', ',' -> {
+                    // JSON structural characters that indicate we're expecting a key next
+                    if (char == '{' || char == '[' || char == ',') {
+                        expectKey = true
+                    }
                     result.add(ColoredText(char.toString(), UiColors.teal))
                     i++
                 }
+                '}' , ']' -> {
+                    // Closing brackets
+                    result.add(ColoredText(char.toString(), UiColors.teal))
+                    i++
+                }
+                ':' -> {
+                    // Colon separates key from value
+                    result.add(ColoredText(char.toString(), UiColors.teal))
+                    expectKey = false // After colon, we expect a value
+                    i++
+                }
                 '"' -> {
-                    // String literals
+                    // String literals (keys or values)
                     val start = i
                     i++ // Skip opening quote
                     var escaped = false
@@ -49,10 +64,13 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
                         i++
                     }
                     if (i < text.length) i++ // Skip closing quote
-                    result.add(ColoredText(text.substring(start, i), UiColors.green))
+                    
+                    // Color the string based on whether it's a key or value
+                    val color = if (expectKey) UiColors.magenta else UiColors.green
+                    result.add(ColoredText(text.substring(start, i), color))
                 }
                 '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> {
-                    // Numbers
+                    // Numbers (always values)
                     val start = i
                     while (i < text.length && (text[i].isDigit() || text[i] == '.' || text[i] == 'e' || text[i] == 'E' || text[i] == '+' || text[i] == '-')) {
                         i++
@@ -60,12 +78,12 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
                     result.add(ColoredText(text.substring(start, i), UiColors.orange))
                 }
                 't', 'f', 'n' -> {
-                    // Boolean and null literals
+                    // Boolean and null literals (always values)
                     if (i + 3 < text.length && text.substring(i, i + 4) == "true") {
-                        result.add(ColoredText("true", UiColors.magenta))
+                        result.add(ColoredText("true", UiColors.orange))
                         i += 4
                     } else if (i + 4 < text.length && text.substring(i, i + 5) == "false") {
-                        result.add(ColoredText("false", UiColors.magenta))
+                        result.add(ColoredText("false", UiColors.orange))
                         i += 5
                     } else if (i + 3 < text.length && text.substring(i, i + 4) == "null") {
                         result.add(ColoredText("null", UiColors.magenta))

@@ -15,6 +15,7 @@ object UiColors {
     val selectionLine = Color(48 ,50 ,55, 200)
     val selectionText = Color(33 ,66 ,131)
     val highlightText = Color(18 ,73 ,87)
+    val purple = Color(186, 85, 211)  // Purple color for JSON keys
     val teal = Color(42 ,172 ,184)
     val highlightRect = Color(255, 255 ,255)
 
