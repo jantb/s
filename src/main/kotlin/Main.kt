@@ -1,6 +1,5 @@
 import app.App
 import app.Channels
-import app.KafkaSelectChangedText
 import app.QueryChanged
 import kafka.Kafka
 import kotlinx.coroutines.channels.trySendBlocking

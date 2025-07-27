@@ -182,7 +182,7 @@ class ModernTextViewer(
         return lines
     }
     
-    private fun highlightJson(text: String): List<ColoredText> {
+    fun highlightJson(text: String): List<ColoredText> {
         val result = mutableListOf<ColoredText>()
         var i = 0
         
@@ -253,7 +253,7 @@ class ModernTextViewer(
         return result
     }
     
-    private fun highlightStackTrace(text: String): List<ColoredText> {
+    fun highlightStackTrace(text: String): List<ColoredText> {
         val result = mutableListOf<ColoredText>()
         val lines = text.split('\n')
         
@@ -304,23 +304,23 @@ class ModernTextViewer(
         return result
     }
     
-    private fun highlightText(content: String, sectionLabel: String): List<ColoredText> {
+    fun highlightText(content: String, sectionLabel: String): List<ColoredText> {
         return when {
             sectionLabel == "Message" && (domain is LogLineDomain || domain is KafkaLineDomain) -> {
                 // Check if content looks like JSON
                 val trimmedContent = content.trimStart()
                 if (trimmedContent.startsWith("{") || trimmedContent.startsWith("[")) {
                     highlightJson(content)
-                } else if (domain is LogLineDomain && (domain as LogLineDomain).stacktrace != null &&
+                } else if (domain is LogLineDomain && domain.stacktrace != null &&
                            content.contains("\n") &&
                            (content.contains("Exception") || content.contains("Error") || content.contains("at "))) {
                     // This is likely a message with embedded stack trace
                     highlightStackTrace(content)
-                } else if (domain is LogLineDomain && (domain as LogLineDomain).stacktrace != null) {
+                } else if (domain is LogLineDomain && domain.stacktrace != null) {
                     // Separate stack trace handling
                     val fullContent = buildString {
                         append(content)
-                        (domain as LogLineDomain).stacktrace?.let { append("\n").append(it) }
+                        domain.stacktrace?.let { append("\n").append(it) }
                     }
                     highlightStackTrace(fullContent)
                 } else {

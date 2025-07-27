@@ -5,6 +5,7 @@ import kotlin.math.log2
 /**
  * Object pool for temporary arrays used during merging
  */
+@Suppress("UNCHECKED_CAST")
 class ArrayPool<T>(private val maxPoolSize: Int = 64) {
     private val pool = ConcurrentLinkedQueue<Array<Any?>>()
 
