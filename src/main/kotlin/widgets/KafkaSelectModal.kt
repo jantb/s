@@ -3,6 +3,7 @@ package widgets
 import SlidePanel
 import State
 import app.*
+import kotlinx.coroutines.channels.trySendBlocking
 import java.awt.event.KeyEvent
 
 /**
@@ -24,8 +25,8 @@ class KafkaSelectModal(panel: SlidePanel, x: Int, y: Int, width: Int, height: In
     }
     
     override fun refreshItems() {
-        // Stop listening to all topics first
-        Channels.kafkaChannel.put(UnListenToTopics)
+        // Store current selection state before refreshing
+        val previouslySelected = items.filter { it.selected }.map { it.name }.toSet()
         
         // Get fresh list of topics
         val listTopics = ListTopics()
@@ -37,7 +38,7 @@ class KafkaSelectModal(panel: SlidePanel, x: Int, y: Int, width: Int, height: In
             items.addAll(topics.map { topicName ->
                 TopicItem(
                     name = topicName,
-                    selected = false
+                    selected = previouslySelected.contains(topicName)
                 )
             })
         } catch (e: Exception) {
@@ -51,21 +52,49 @@ class KafkaSelectModal(panel: SlidePanel, x: Int, y: Int, width: Int, height: In
     }
     
     override fun onItemDeselected(item: TopicItem) {
-        // Individual topic deselection is handled in onModalClosed
-        // to avoid multiple listener updates
+        // Stop listening to this specific topic immediately and clear its cache
+        Channels.kafkaChannel.put(UnListenToTopics)
+        // Clear the cache entries for all partitions of this topic
+        // Kafka uses indexIdentifier format: "topicName#partitionNumber"
+        // We need to clear all partitions, so we'll use a pattern-based approach
+        clearTopicFromIndex(item.name)
     }
     
     override fun onModalClosed() {
         // Apply final selection state when modal is closed
-        val selectedTopics = items.filter { it.selected }.map { it.name }
+        val selectedTopics = items.filter { it.selected }
+        val unselectedTopics = items.filter { !it.selected }
         
-        // First stop all current listeners
+        // Stop listening to all topics first
         Channels.kafkaChannel.put(UnListenToTopics)
         
-        // Then start listening to selected topics if any
-        if (selectedTopics.isNotEmpty()) {
-            Channels.kafkaChannel.put(ListenToTopic(name = selectedTopics))
+        // Clear the cache entries for all partitions of unselected topics
+        unselectedTopics.forEach { topic ->
+            clearTopicFromIndex(topic.name)
         }
+        
+        // Start listening to selected topics
+        if (selectedTopics.isNotEmpty()) {
+            Channels.kafkaChannel.put(ListenToTopic(name = selectedTopics.map { it.name }))
+        }
+        
+        // Trigger a search query to start displaying streaming data
+        Channels.searchChannel.trySendBlocking(
+            QueryChanged(
+                query = "",
+                length = State.length.get(),
+                offset = State.offset.get()
+            )
+        )
+    }
+    
+    /**
+     * Clear all partition indexes for a given topic
+     * Kafka uses indexIdentifier format: "topicName#partitionNumber"
+     */
+    private fun clearTopicFromIndex(topicName: String) {
+        // Use the new ClearTopicIndexes command to efficiently clear all partitions
+        Channels.popChannel.trySendBlocking(ClearTopicIndexes(topicName = topicName))
     }
     
     override fun keyPressed(e: KeyEvent) {

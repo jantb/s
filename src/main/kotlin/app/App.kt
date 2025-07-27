@@ -79,6 +79,21 @@ class App : CoroutineScope {
                         }
                     }
 
+                    is ClearTopicIndexes -> {
+                        // Clear all indexes that start with "topicName#" (all partitions for the topic)
+                        val keysToRemove = valueStores.keys.filter { it.startsWith("${msg.topicName}#") }
+                        var totalRemoved = 0
+                        keysToRemove.forEach { key ->
+                            val removed = valueStores.remove(key)
+                            if (removed != null) {
+                                totalRemoved += removed.size
+                            }
+                        }
+                        if (totalRemoved > 0) {
+                            indexedLines.addAndGet(-totalRemoved)
+                        }
+                    }
+
                     is RefreshLogGroups -> {
                         logClusterCmdGuiChannel.put(LogClusterList(valueStores.values.map { it.getLogClusters() }
                             .flatten()))
@@ -174,6 +189,7 @@ sealed class CmdMessage
 class QueryChanged(val query: String, val length: Int, val offset: Int) : CmdMessage()
 
 class ClearNamedIndex(val name: String) : CmdMessage()
+class ClearTopicIndexes(val topicName: String) : CmdMessage()
 
 class AddToIndexDomainLine(val domainLine: DomainLine) : CmdMessage()
 data object RefreshLogGroups : CmdMessage()
