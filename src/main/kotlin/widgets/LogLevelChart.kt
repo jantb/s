@@ -208,9 +208,14 @@ class LogLevelChart(
         }
 
         val levels = allLogLevels.toList()
-        val timeSlotWidth = (width - 60).toFloat() / timePoints.size.coerceAtLeast(1)
+        
+        // Apply zoom and pan transformations
+        val chartWidth = (width - 60).toFloat()
+        val zoomedWidth = chartWidth * zoomLevel.toFloat()
+        val panPixels = (panOffset * chartWidth).toFloat()
+        val timeSlotWidth = zoomedWidth / timePoints.size.coerceAtLeast(1)
 
-        // Draw enhanced gridlines and axis
+        // Draw enhanced gridlines and axis (adjusted for header height)
         drawEnhancedGridlines(currentScaleMax)
         
         // Draw main axis with better styling
@@ -225,9 +230,15 @@ class LogLevelChart(
         // Track the last date to detect date changes
         var lastDate: String? = null
 
-        // Draw bars and time labels
+        // Draw bars and time labels with zoom and pan
         timePoints.forEachIndexed { index, timePoint ->
-            val xPosBase = 30 + (index * timeSlotWidth).toInt()
+            val xPosBase = 30 + (index * timeSlotWidth + panPixels).toInt()
+            
+            // Skip rendering if bar is outside visible area (performance optimization)
+            if (xPosBase + timeSlotWidth < 30 || xPosBase > width - 30) {
+                return@forEachIndexed
+            }
+            
             val javaInstant = timePoint.time.toJavaInstant()
 
             // Get current date string
@@ -240,12 +251,12 @@ class LogLevelChart(
                 val originalStroke = stroke
                 stroke = dateChangeStroke
                 color = UiColors.teal
-                drawLine(xPosBase, 40, xPosBase, height - 35)
+                drawLine(xPosBase, 55, xPosBase, height - 35)
                 stroke = originalStroke
 
                 // Add date label
                 font = Font("Monospaced", Font.BOLD, 12)
-                drawString(currentDate, xPosBase + 5, 55)
+                drawString(currentDate, xPosBase + 5, 70)
 
                 // Reset to regular color for other elements
                 color = Color.GRAY
@@ -266,13 +277,20 @@ class LogLevelChart(
                 if (level in State.levels.get()) {
                     val count = timePoint.getCount(level)
                     if (count > 0) {
-                        val barHeight = ((count.toFloat() / currentScaleMax) * (height - 80)).toInt().coerceAtLeast(1)
+                        val maxChartHeight = height - 55 - 35  // From header bottom (55) to axis (35 from bottom)
+                        val barHeight = ((count.toFloat() / currentScaleMax) * maxChartHeight).toInt().coerceAtLeast(1)
                         val barWidth = timeSlotWidth.toInt() - 2
                         val barX = xPosBase
                         val barY = height - 35 - currentHeight - barHeight
                         
-                        // Draw bar with gradient and rounded corners
-                        drawEnhancedBar(barX, barY, barWidth, barHeight, level, count, timePoint)
+                        // Ensure bar doesn't extend above header
+                        val adjustedBarY = barY.coerceAtLeast(55)
+                        val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
+                        
+                        // Draw bar with gradient and rounded corners (only if height > 0)
+                        if (adjustedBarHeight > 0) {
+                            drawEnhancedBar(barX, adjustedBarY, barWidth, adjustedBarHeight, level, count, timePoint)
+                        }
                         currentHeight += barHeight
                     }
                 }
@@ -300,7 +318,7 @@ class LogLevelChart(
         stroke = BasicStroke(2f)
         color = UiColors.defaultText.darker()
         drawLine(30, height - 35, width - 30, height - 35) // X-axis
-        drawLine(30, 40, 30, height - 35) // Y-axis
+        drawLine(30, 55, 30, height - 35) // Y-axis
         stroke = BasicStroke(1f)
         
         // Add "No Data" message
@@ -316,7 +334,7 @@ class LogLevelChart(
     
     private fun Graphics2D.drawEnhancedHeader(totalMessages: Int, avgMps: Float, durationSecs: Int) {
         // Create header background
-        val headerHeight = 35
+        val headerHeight = 50  // Increased height to accommodate two lines
         val gradient = GradientPaint(
             0f, 0f, Color(UiColors.background.red, UiColors.background.green, UiColors.background.blue, 200),
             0f, headerHeight.toFloat(), Color(UiColors.background.red, UiColors.background.green, UiColors.background.blue, 100)
@@ -334,31 +352,29 @@ class LogLevelChart(
         val startDateStr = dateFormatter.format(startTime.toJavaInstant())
         val endDateStr = dateFormatter.format(endTime.toJavaInstant())
         
+        // First line - Time range
         font = Font("JetBrains Mono", Font.BOLD, 11)
         color = UiColors.defaultText.brighter()
-        
-        // Left side - Time range
         val timeRangeText = if (startDateStr == endDateStr) {
             "$startDateStr ${timeFormatter.format(startTime.toJavaInstant())} - ${timeFormatter.format(endTime.toJavaInstant())}"
         } else {
             "$startDateStr ${timeFormatter.format(startTime.toJavaInstant())} - $endDateStr ${timeFormatter.format(endTime.toJavaInstant())}"
         }
-        drawString(timeRangeText, 10, 20)
+        drawString(timeRangeText, 10, 18)
         
-        // Center - Duration
-        val duration = endTime.minus(startTime)
+        // Second line - Duration and Statistics
         font = Font("JetBrains Mono", Font.PLAIN, 11)
         color = UiColors.defaultText
+        val duration = endTime.minus(startTime)
         val durationText = "Duration: $duration"
-        val durationWidth = fontMetrics.stringWidth(durationText)
-        drawString(durationText, (width - durationWidth) / 2, 20)
+        drawString(durationText, 10, 35)
         
-        // Right side - Statistics
+        // Right side - Statistics on second line
         font = Font("JetBrains Mono", Font.BOLD, 11)
         color = UiColors.teal
         val statsText = "Total: $totalMessages | Avg: %.1f/s".format(avgMps)
         val statsWidth = fontMetrics.stringWidth(statsText)
-        drawString(statsText, width - statsWidth - 10, 20)
+        drawString(statsText, width - statsWidth - 10, 35)
     }
     
     private fun Graphics2D.drawZoomIndicator() {
@@ -393,7 +409,7 @@ class LogLevelChart(
         color = Color(UiColors.defaultText.red, UiColors.defaultText.green, UiColors.defaultText.blue, 30)
         
         (1..5).forEach { i ->
-            val y = height - 35 - ((i.toFloat() / 5) * (height - 80)).toInt()
+            val y = height - 35 - ((i.toFloat() / 5) * (height - 105)).toInt()
             drawLine(30, y, width - 30, y)
         }
         
@@ -403,7 +419,7 @@ class LogLevelChart(
         font = Font("JetBrains Mono", Font.PLAIN, 11)
         
         (1..5).forEach { i ->
-            val y = height - 35 - ((i.toFloat() / 5) * (height - 80)).toInt()
+            val y = height - 35 - ((i.toFloat() / 5) * (height - 105)).toInt()
             val value = (maxCount * i / 5).toString()
             drawString(value, 5, y + 4)
         }
@@ -569,7 +585,8 @@ class LogLevelChart(
             KeyEvent.VK_LEFT -> {
                 // Pan left
                 if (zoomLevel > 1.0) {
-                    panOffset = (panOffset - 0.1).coerceAtLeast(-zoomLevel + 1)
+                    val minPan = -(zoomLevel - 1).coerceAtLeast(0.0)
+                    panOffset = (panOffset - 0.1).coerceAtLeast(minPan)
                 }
             }
             KeyEvent.VK_RIGHT -> {
@@ -613,9 +630,13 @@ class LogLevelChart(
         if (newZoomLevel != zoomLevel) {
             zoomLevel = newZoomLevel
             // Adjust pan offset to zoom towards mouse position
-            val mouseRatio = (e.x - 30).toDouble() / (width - 60)
+            val mouseRatio = (e.x - 30).toDouble() / (width - 60).coerceAtLeast(1)
             panOffset = (panOffset + mouseRatio) * zoomFactor - mouseRatio
-            panOffset = panOffset.coerceIn(-zoomLevel + 1, 0.0)
+            
+            // Fix the coerceIn range - ensure min <= max
+            val minPan = -(zoomLevel - 1).coerceAtLeast(0.0)
+            val maxPan = 0.0
+            panOffset = panOffset.coerceIn(minPan, maxPan)
         }
     }
     
@@ -624,19 +645,28 @@ class LogLevelChart(
             val deltaX = e.x - lastMouseX
             val panSensitivity = 0.001 * zoomLevel
             panOffset += deltaX * panSensitivity
-            panOffset = panOffset.coerceIn(-zoomLevel + 1, 0.0)
+            
+            // Fix the coerceIn range - ensure min <= max
+            val minPan = -(zoomLevel - 1).coerceAtLeast(0.0)
+            val maxPan = 0.0
+            panOffset = panOffset.coerceIn(minPan, maxPan)
         }
         lastMouseX = e.x
         lastMouseY = e.y
     }
     override fun mouseMoved(e: MouseEvent) {
-        // Handle hover effects for bars
-        val timeSlotWidth = (width - 60).toFloat() / timePoints.size.coerceAtLeast(1)
+        // Handle hover effects for bars with zoom and pan
+        val chartWidth = (width - 60).toFloat()
+        val zoomedWidth = chartWidth * zoomLevel.toFloat()
+        val panPixels = (panOffset * chartWidth).toFloat()
+        val timeSlotWidth = zoomedWidth / timePoints.size.coerceAtLeast(1)
         val mouseX = e.x - 30
         val mouseY = e.y
         
-        if (mouseX >= 0 && mouseX < width - 60 && mouseY >= 40 && mouseY <= height - 35) {
-            val timeIndex = (mouseX / timeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
+        if (mouseX >= 0 && mouseX < width - 60 && mouseY >= 55 && mouseY <= height - 35) {
+            // Adjust mouse position for zoom and pan
+            val adjustedMouseX = mouseX - panPixels
+            val timeIndex = (adjustedMouseX / timeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
             val timePoint = timePoints.getOrNull(timeIndex)
             
             if (timePoint != null) {
@@ -648,9 +678,14 @@ class LogLevelChart(
                     if (level in State.levels.get()) {
                         val count = timePoint.getCount(level)
                         if (count > 0) {
-                            val barHeight = ((count.toFloat() / currentScaleMax) * (height - 80)).toInt().coerceAtLeast(1)
-                            val barTop = height - 35 - currentHeight - barHeight
-                            val barBottom = height - 35 - currentHeight
+                            val maxChartHeight = height - 55 - 35  // From header bottom (55) to axis (35 from bottom)
+                            val barHeight = ((count.toFloat() / currentScaleMax) * maxChartHeight).toInt().coerceAtLeast(1)
+                            val barY = height - 35 - currentHeight - barHeight
+                            val adjustedBarY = barY.coerceAtLeast(55)
+                            val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
+                            
+                            val barTop = adjustedBarY
+                            val barBottom = adjustedBarY + adjustedBarHeight
                             
                             if (mouseY >= barTop && mouseY <= barBottom) {
                                 hoveredLevel = level
