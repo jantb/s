@@ -32,9 +32,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     private var indexOffset = 0
     private var visibleLines = 0
     private var hideLowSeverity = false
-    private var sortByCount = false
+    private var sortByCount = true  // Always sort by descending count
     private val hideButtonRect = Rectangle(0, 0, 200, 25)
-    private val sortButtonRect = Rectangle(0, 0, 200, 25)
     private val refreshButtonRect = Rectangle(0, 0, 200, 25)
     
     // Chart properties
@@ -68,7 +67,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         this.width = width
         this.height = height
 
-        val thread = Thread {
+        // Thread for receiving log cluster updates
+        val receiveThread = Thread {
             while (true) {
                 try {
                     when (val msg = logClusterCmdGuiChannel.take()) {
@@ -86,8 +86,22 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                 }
             }
         }
-        thread.isDaemon = true
-        thread.start()
+        receiveThread.isDaemon = true
+        receiveThread.start()
+
+        // Thread for auto-refreshing log clusters
+        val refreshThread = Thread {
+            while (true) {
+                try {
+                    Thread.sleep(5000) // Refresh every 5 seconds
+                    refreshChannel.trySend(RefreshLogGroups)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+        refreshThread.isDaemon = true
+        refreshThread.start()
     }
 
     private var selectedLineIndex = 0
@@ -160,7 +174,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                     else -> 0
                 }
             } ?: 0
-            maxOf(fontMetrics.stringWidth(header), maxDataWidth) + 20 // padding
+            val padding = if (index == 2) 40 else 20  // More padding for indexId column
+            maxOf(fontMetrics.stringWidth(header), maxDataWidth) + padding
         }
 
         // Calculate column x-offsets
@@ -183,10 +198,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             }
         }
 
-        // Sort by count if flag is set
-        if (sortByCount) {
-            currentClusters = currentClusters.sortedByDescending { it.count }
-        }
+        // Always sort by descending count
+        currentClusters = currentClusters.sortedByDescending { it.count }
 
         // Display visible items based on indexOffset
         val startIndex = indexOffset.coerceAtMost(maxOf(0, currentClusters.size - 1))
@@ -226,7 +239,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         // Show message if no clusters
         if (currentClusters.isEmpty()) {
             g2d.color = UiColors.defaultText
-            g2d.drawString("No log clusters available. Press Cmd+R to refresh.", 10, chartHeight + maxCharBounds.height.toInt() * 3)
+            g2d.drawString("No log clusters available.", 10, chartHeight + maxCharBounds.height.toInt() * 3)
         }
         
         // Draw tooltip if needed
@@ -245,8 +258,11 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         var total = 0L
         
         clusters.forEach { cluster ->
-            levelCounts[cluster.level] = levelCounts.getOrDefault(cluster.level, 0L) + cluster.count
-            total += cluster.count
+            // Filter out low severity logs if flag is set
+            if (!hideLowSeverity || (cluster.level != LogLevel.DEBUG && cluster.level != LogLevel.INFO && cluster.level != LogLevel.UNKNOWN)) {
+                levelCounts[cluster.level] = levelCounts.getOrDefault(cluster.level, 0L) + cluster.count
+                total += cluster.count
+            }
         }
         
         // Draw chart background
@@ -267,10 +283,10 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         val barHeight = 40
         val barY = 50
         val barSpacing = 15
-        val maxBarWidth = width - 40
+        val maxBarWidth = width - 80  // Increased padding from 40 to 80
         val maxValue = levelCounts.values.maxOrNull() ?: 1
         
-        var x = 20
+        var x = 40  // Increased padding from 20 to 40
         LogLevel.entries.forEach { level ->
             val count = levelCounts[level] ?: 0L
             if (count > 0) {
@@ -358,33 +374,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         val hideButtonY = hideButtonRect.y + (hideButtonRect.height + hideButtonMetrics.ascent) / 2 - 2
         g2d.drawString(hideButtonText, hideButtonX, hideButtonY)
 
-        // Sort button with enhanced styling
-        sortButtonRect.x = width - 420
-        sortButtonRect.y = chartHeight + 5
-        
-        // Button background with gradient
-        val sortButtonGradient = GradientPaint(
-            sortButtonRect.x.toFloat(), sortButtonRect.y.toFloat(), UiColors.selection.brighter(),
-            sortButtonRect.x.toFloat(), (sortButtonRect.y + sortButtonRect.height).toFloat(), UiColors.selection.darker()
-        )
-        g2d.paint = sortButtonGradient
-        g2d.fillRoundRect(sortButtonRect.x, sortButtonRect.y, sortButtonRect.width, sortButtonRect.height, 6, 6)
-        
-        // Button border
-        g2d.color = UiColors.defaultText.darker()
-        g2d.drawRoundRect(sortButtonRect.x, sortButtonRect.y, sortButtonRect.width, sortButtonRect.height, 6, 6)
-        
-        // Button text
-        g2d.font = buttonFont
-        g2d.color = UiColors.defaultText
-        val sortButtonText = if (sortByCount) "Unsort" else "Sort by Count"
-        val sortButtonMetrics = g2d.fontMetrics
-        val sortButtonX = sortButtonRect.x + (sortButtonRect.width - sortButtonMetrics.stringWidth(sortButtonText)) / 2
-        val sortButtonY = sortButtonRect.y + (sortButtonRect.height + sortButtonMetrics.ascent) / 2 - 2
-        g2d.drawString(sortButtonText, sortButtonX, sortButtonY)
-
         // Refresh button with enhanced styling
-        refreshButtonRect.x = width - 630
+        refreshButtonRect.x = width - 420  // Adjusted position since sort button is removed
         refreshButtonRect.y = chartHeight + 5
         
         // Button background with gradient
@@ -540,13 +531,6 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             indexOffset = 0
         }
 
-        if (e.x >= sortButtonRect.x && e.x <= sortButtonRect.x + sortButtonRect.width &&
-            e.y >= sortButtonRect.y && e.y <= sortButtonRect.y + sortButtonRect.height
-        ) {
-            sortByCount = !sortByCount
-            indexOffset = 0
-        }
-
         if (e.x >= refreshButtonRect.x && e.x <= refreshButtonRect.x + refreshButtonRect.width &&
             e.y >= refreshButtonRect.y && e.y <= refreshButtonRect.y + refreshButtonRect.height
         ) {
@@ -624,8 +608,11 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         var total = 0L
         
         clusters.forEach { cluster ->
-            levelCounts[cluster.level] = levelCounts.getOrDefault(cluster.level, 0L) + cluster.count
-            total += cluster.count
+            // Filter out low severity logs if flag is set
+            if (!hideLowSeverity || (cluster.level != LogLevel.DEBUG && cluster.level != LogLevel.INFO && cluster.level != LogLevel.UNKNOWN)) {
+                levelCounts[cluster.level] = levelCounts.getOrDefault(cluster.level, 0L) + cluster.count
+                total += cluster.count
+            }
         }
         
         // Check which bar is being hovered
