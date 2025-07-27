@@ -133,21 +133,13 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
     private fun select(g: Graphics) {
         val componentOwns = componentMap[State.mode]!!
 
+        // For modal selectors, we only need to display the main component
         g.drawImage(
             componentOwns[0].display(width, height, componentOwns[0].x, componentOwns[0].y),
             componentOwns[0].x,
             componentOwns[0].y,
             componentOwns[0].width,
             componentOwns[0].height,
-            null
-        )
-
-        g.drawImage(
-            componentOwns[1].display(width, height, componentOwns[1].x, height - 30),
-            componentOwns[1].x,
-            componentOwns[1].y,
-            componentOwns[1].width,
-            componentOwns[1].height,
             null
         )
 
@@ -166,18 +158,21 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
 
             (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) -> when (e.keyCode) {
                 KeyEvent.VK_P -> {
-                    State.mode = if (State.mode != Mode.podSelect) Mode.podSelect else Mode.viewer
+                    // Switch to pod select mode
+                    State.mode = Mode.podSelect
+                    // Pass the key event to the component to trigger modal opening
+                    componentMap[State.mode]?.forEach { it.keyPressed(e) }
                     repaint()
+                    return
                 }
 
                 KeyEvent.VK_K -> {
-                    if (State.mode != Mode.kafkaSelect) {
-                        State.mode = Mode.kafkaSelect
-                    } else {
-                        componentMap[State.mode]?.forEach { it.keyPressed(e) }
-                        State.mode = Mode.viewer
-                    }
+                    // Switch to kafka select mode
+                    State.mode = Mode.kafkaSelect
+                    // Pass the key event to the component to trigger modal opening
+                    componentMap[State.mode]?.forEach { it.keyPressed(e) }
                     repaint()
+                    return
                 }
 
                 KeyEvent.VK_G -> {
@@ -286,31 +281,23 @@ private fun buildViewer(panel: SlidePanel) {
 }
 
 private fun buildPodSelect(panel: SlidePanel) {
-    panel.componentMap.getOrPut(Mode.podSelect) { mutableListOf() } += PodSelect(
+    panel.componentMap.getOrPut(Mode.podSelect) { mutableListOf() } += PodSelectModal(
         panel,
         0,
         0,
         panel.width,
-        panel.height - 30
+        panel.height
     )
-    panel.componentMap.getOrPut(Mode.podSelect) { mutableListOf() } += InputTextLine(panel, 0, 30, panel.width, 30) { }
 }
 
 private fun buildKafkaSelect(panel: SlidePanel) {
-    panel.componentMap.getOrPut(Mode.kafkaSelect) { mutableListOf() } += KafkaSelect(
+    panel.componentMap.getOrPut(Mode.kafkaSelect) { mutableListOf() } += KafkaSelectModal(
         panel,
         0,
         0,
         panel.width,
-        panel.height - 30
+        panel.height
     )
-    panel.componentMap.getOrPut(Mode.kafkaSelect) { mutableListOf() } += InputTextLine(
-        panel,
-        0,
-        30,
-        panel.width,
-        30
-    ) { Channels.kafkaSelectChannel.put(KafkaSelectChangedText(it)) }
 }
 
 private fun buildKafkaLagView(panel: SlidePanel) {

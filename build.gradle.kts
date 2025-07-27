@@ -56,6 +56,7 @@ kotlin {
 
 application {
     mainClass.set("MainKt")
+    applicationDefaultJvmArgs = listOf("--add-exports=java.desktop/com.apple.eawt=ALL-UNNAMED")
 }
 
 
