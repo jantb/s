@@ -225,8 +225,7 @@ class LogLevelChart(
             cachedChartWidth = (width - 60).toFloat()
             cachedMaxChartHeight = height - 55 - 35
             cachedTimeSlotWidth = cachedChartWidth / timePoints.size.coerceAtLeast(1)
-            
-            // All time points are visible (no zoom/pan)
+
             cachedVisibleRange = 0 to (timePoints.size - 1)
         }
         
@@ -651,7 +650,7 @@ class LogLevelChart(
     }
 
     override fun mouseWheelMoved(e: MouseWheelEvent) {
-        // No zoom functionality - mouse wheel does nothing
+
     }
     
     override fun mouseDragged(e: MouseEvent) {
