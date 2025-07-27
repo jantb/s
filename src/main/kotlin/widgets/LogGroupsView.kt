@@ -11,13 +11,16 @@ import app.LogClusterList
 import app.RefreshLogGroups
 import util.Styles
 import util.UiColors
-import java.awt.Font
-import java.awt.Graphics2D
+import widgets.getLevelColor
+import java.awt.*
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
+import java.awt.geom.RoundRectangle2D
 import java.awt.image.BufferedImage
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
+import kotlin.math.max
+import kotlin.math.min
 
 class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int) : ComponentOwn(),
     KeyListener,
@@ -30,9 +33,34 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     private var visibleLines = 0
     private var hideLowSeverity = false
     private var sortByCount = false
-    private val hideButtonRect = java.awt.Rectangle(0, 0, 200, 20)
-    private val sortButtonRect = java.awt.Rectangle(0, 0, 200, 20)
-    private val refreshButtonRect = java.awt.Rectangle(0, 0, 200, 20)
+    private val hideButtonRect = Rectangle(0, 0, 200, 25)
+    private val sortButtonRect = Rectangle(0, 0, 200, 25)
+    private val refreshButtonRect = Rectangle(0, 0, 200, 25)
+    
+    // Chart properties
+    private var chartHeight = 120
+    private var hoveredBar: Pair<Int, LogLevel>? = null
+    private var tooltipInfo: TooltipInfo? = null
+    
+    // Enhanced UI properties
+    private var lastMouseX = 0
+    private var lastMouseY = 0
+    
+    // Pre-calculated fonts
+    private val headerBoldFont = Font(Styles.normalFont, Font.BOLD, 12)
+    private val headerPlainFont = Font(Styles.normalFont, Font.PLAIN, 12)
+    private val buttonFont = Font(Styles.normalFont, Font.PLAIN, 11)
+    private val tooltipFont = Font(Styles.normalFont, Font.BOLD, 12)
+    private val tooltipPlainFont = Font(Styles.normalFont, Font.PLAIN, 11)
+    private val emptyChartFont = Font(Styles.normalFont, Font.ITALIC, 14)
+    
+    private data class TooltipInfo(
+        val x: Int,
+        val y: Int,
+        val level: LogLevel,
+        val count: Int,
+        val percentage: Float
+    )
 
     init {
         this.x = x
@@ -76,7 +104,11 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                 g2d.dispose()
             }
             this.image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-            this.g2d = image.createGraphics()
+            this.g2d = image.createGraphics().apply {
+                setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+                setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+            }
             this.height = height
             this.width = width
             this.x = x
@@ -102,35 +134,15 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     private fun paint() {
         g2d.color = UiColors.defaultText
 
-        // Calculate visible lines
-        visibleLines = (height / maxCharBounds.height.toInt()) - 1 // -1 for header
+        // Calculate chart height and visible lines
+        chartHeight = 120
+        visibleLines = ((height - chartHeight) / maxCharBounds.height.toInt()) - 2 // -2 for header and spacing
 
-        // Draw buttons
-        // Hide/Show low severity button
-        hideButtonRect.x = width - 200
-        hideButtonRect.y = 0
-        g2d.color = UiColors.selection
-        g2d.fillRect(hideButtonRect.x, hideButtonRect.y, hideButtonRect.width, hideButtonRect.height)
-        g2d.color = UiColors.defaultText
-        val hideButtonText = if (hideLowSeverity) "Show All Levels" else "Hide Low Level"
-        g2d.drawString(hideButtonText, hideButtonRect.x + 10, hideButtonRect.y + 15)
-
-        // Sort button
-        sortButtonRect.x = width - 410
-        sortButtonRect.y = 0
-        g2d.color = UiColors.selection
-        g2d.fillRect(sortButtonRect.x, sortButtonRect.y, sortButtonRect.width, sortButtonRect.height)
-        g2d.color = UiColors.defaultText
-        val sortButtonText = if (sortByCount) "Unsort" else "Sort by Count"
-        g2d.drawString(sortButtonText, sortButtonRect.x + 10, sortButtonRect.y + 15)
-
-        // Refresh button
-        refreshButtonRect.x = width - 620
-        refreshButtonRect.y = 0
-        g2d.color = UiColors.selection
-        g2d.fillRect(refreshButtonRect.x, refreshButtonRect.y, refreshButtonRect.width, refreshButtonRect.height)
-        g2d.color = UiColors.defaultText
-        g2d.drawString("Refresh (Cmd + r)", refreshButtonRect.x + 10, refreshButtonRect.y + 15)
+        // Draw chart
+        drawChart()
+        
+        // Draw buttons with enhanced styling
+        drawButtons()
 
         // Measure column header widths
         val fontMetrics = g2d.fontMetrics
@@ -154,10 +166,11 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         // Calculate column x-offsets
         val columnOffsets = columnWidths.runningFold(0) { acc, w -> acc + w }
 
-        // Draw header
+        // Draw header with enhanced styling
+        g2d.font = headerBoldFont
         g2d.color = UiColors.magenta
         for (col in columnHeaders.indices) {
-            g2d.drawString(columnHeaders[col], columnOffsets[col], maxCharBounds.height.toInt())
+            g2d.drawString(columnHeaders[col], columnOffsets[col], chartHeight + maxCharBounds.height.toInt() + 10)
         }
 
         // Draw log clusters
@@ -179,12 +192,17 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         val startIndex = indexOffset.coerceAtMost(maxOf(0, currentClusters.size - 1))
         val endIndex = minOf(startIndex + visibleLines, currentClusters.size)
 
+        // Draw data rows with enhanced styling
+        g2d.font = Font(Styles.normalFont, Font.PLAIN, rowHeight)
         for (i in startIndex until endIndex) {
             val cluster = currentClusters[i]
             val lineColor = when (cluster.level) {
                 LogLevel.ERROR -> UiColors.red
                 LogLevel.WARN -> UiColors.orange
-                else -> UiColors.green
+                LogLevel.DEBUG -> UiColors.teal
+                LogLevel.INFO -> UiColors.green
+                LogLevel.KAFKA -> Color(0, 188, 212) // Material Cyan
+                else -> UiColors.defaultText
             }
             g2d.color = lineColor
 
@@ -200,7 +218,7 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                 g2d.drawString(
                     values[col],
                     columnOffsets[col],
-                    maxCharBounds.height.toInt() * ((i - startIndex) + 2)
+                    chartHeight + maxCharBounds.height.toInt() * ((i - startIndex) + 3) + 10
                 )
             }
         }
@@ -208,18 +226,239 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         // Show message if no clusters
         if (currentClusters.isEmpty()) {
             g2d.color = UiColors.defaultText
-            g2d.drawString("No log clusters available. Press Cmd+R to refresh.", 0, maxCharBounds.height.toInt() * 2)
+            g2d.drawString("No log clusters available. Press Cmd+R to refresh.", 10, chartHeight + maxCharBounds.height.toInt() * 3)
         }
+        
+        // Draw tooltip if needed
+        drawTooltip()
+    }
+    
+    private fun drawChart() {
+        val clusters = logClusters.get()
+        if (clusters.isEmpty()) {
+            drawEmptyChart()
+            return
+        }
+        
+        // Calculate level counts
+        val levelCounts = mutableMapOf<LogLevel, Long>()
+        var total = 0L
+        
+        clusters.forEach { cluster ->
+            levelCounts[cluster.level] = levelCounts.getOrDefault(cluster.level, 0L) + cluster.count
+            total += cluster.count
+        }
+        
+        // Draw chart background
+        g2d.color = Color(UiColors.background.red, UiColors.background.green, UiColors.background.blue, 200)
+        g2d.fillRect(0, 0, width, chartHeight)
+        
+        // Draw chart title
+        g2d.font = headerBoldFont
+        g2d.color = UiColors.defaultText.brighter()
+        g2d.drawString("Log Cluster Distribution by Level", 10, 20)
+        
+        // Draw total count
+        g2d.font = headerPlainFont
+        g2d.color = UiColors.teal
+        g2d.drawString("Total Clusters: $total", 10, 35)
+        
+        // Draw chart bars
+        val barHeight = 40
+        val barY = 50
+        val barSpacing = 15
+        val maxBarWidth = width - 40
+        val maxValue = levelCounts.values.maxOrNull() ?: 1
+        
+        var x = 20
+        LogLevel.entries.forEach { level ->
+            val count = levelCounts[level] ?: 0L
+            if (count > 0) {
+                val barWidth = ((count.toDouble() / maxValue) * maxBarWidth).toInt().coerceAtLeast(2)
+                val barColor = getLevelColor(level)
+                
+                // Check if this bar is hovered
+                val isHovered = hoveredBar?.second == level
+                
+                // Draw glow effect for hovered bar
+                if (isHovered) {
+                    g2d.color = Color(barColor.red, barColor.green, barColor.blue, 100)
+                    g2d.fillRoundRect(x - 2, barY - 2, barWidth + 4, barHeight + 4, 6, 6)
+                }
+                
+                // Draw main bar with gradient
+                val gradient = GradientPaint(
+                    x.toFloat(), barY.toFloat(), barColor.brighter(),
+                    x.toFloat(), (barY + barHeight).toFloat(), barColor.darker()
+                )
+                g2d.paint = gradient
+                g2d.fillRoundRect(x, barY, barWidth, barHeight, 4, 4)
+                
+                // Draw bar border
+                g2d.color = barColor.darker()
+                g2d.drawRoundRect(x, barY, barWidth, barHeight, 4, 4)
+                
+                // Draw level label
+                g2d.font = buttonFont
+                g2d.color = UiColors.defaultText
+                g2d.drawString(level.name, x, barY + barHeight + 15)
+                
+                // Draw count and percentage
+                val percentage = if (total > 0) (count.toDouble() / total * 100).toFloat() else 0f
+                g2d.color = UiColors.defaultText.darker()
+                g2d.drawString("$count (${String.format("%.1f", percentage)}%)", x, barY + barHeight + 30)
+                
+                x += barWidth + barSpacing
+            }
+        }
+        
+        // Draw chart border
+        g2d.color = UiColors.defaultText.darker()
+        g2d.drawRect(0, 0, width - 1, chartHeight - 1)
+    }
+    
+    private fun drawEmptyChart() {
+        g2d.color = Color(UiColors.background.red, UiColors.background.green, UiColors.background.blue, 200)
+        g2d.fillRect(0, 0, width, chartHeight)
+        
+        g2d.font = emptyChartFont
+        g2d.color = UiColors.defaultText.darker()
+        val message = "No log cluster data available"
+        val metrics = g2d.fontMetrics
+        val messageWidth = metrics.stringWidth(message)
+        g2d.drawString(message, (width - messageWidth) / 2, chartHeight / 2)
+        
+        g2d.color = UiColors.defaultText.darker()
+        g2d.drawRect(0, 0, width - 1, chartHeight - 1)
+    }
+    
+    private fun drawButtons() {
+        // Hide/Show low severity button with enhanced styling
+        hideButtonRect.x = width - 210
+        hideButtonRect.y = chartHeight + 5
+        
+        // Button background with gradient
+        val hideButtonGradient = GradientPaint(
+            hideButtonRect.x.toFloat(), hideButtonRect.y.toFloat(), UiColors.selection.brighter(),
+            hideButtonRect.x.toFloat(), (hideButtonRect.y + hideButtonRect.height).toFloat(), UiColors.selection.darker()
+        )
+        g2d.paint = hideButtonGradient
+        g2d.fillRoundRect(hideButtonRect.x, hideButtonRect.y, hideButtonRect.width, hideButtonRect.height, 6, 6)
+        
+        // Button border
+        g2d.color = UiColors.defaultText.darker()
+        g2d.drawRoundRect(hideButtonRect.x, hideButtonRect.y, hideButtonRect.width, hideButtonRect.height, 6, 6)
+        
+        // Button text
+        g2d.font = buttonFont
+        g2d.color = UiColors.defaultText
+        val hideButtonText = if (hideLowSeverity) "Show All Levels" else "Hide Low Level"
+        val hideButtonMetrics = g2d.fontMetrics
+        val hideButtonX = hideButtonRect.x + (hideButtonRect.width - hideButtonMetrics.stringWidth(hideButtonText)) / 2
+        val hideButtonY = hideButtonRect.y + (hideButtonRect.height + hideButtonMetrics.ascent) / 2 - 2
+        g2d.drawString(hideButtonText, hideButtonX, hideButtonY)
+
+        // Sort button with enhanced styling
+        sortButtonRect.x = width - 420
+        sortButtonRect.y = chartHeight + 5
+        
+        // Button background with gradient
+        val sortButtonGradient = GradientPaint(
+            sortButtonRect.x.toFloat(), sortButtonRect.y.toFloat(), UiColors.selection.brighter(),
+            sortButtonRect.x.toFloat(), (sortButtonRect.y + sortButtonRect.height).toFloat(), UiColors.selection.darker()
+        )
+        g2d.paint = sortButtonGradient
+        g2d.fillRoundRect(sortButtonRect.x, sortButtonRect.y, sortButtonRect.width, sortButtonRect.height, 6, 6)
+        
+        // Button border
+        g2d.color = UiColors.defaultText.darker()
+        g2d.drawRoundRect(sortButtonRect.x, sortButtonRect.y, sortButtonRect.width, sortButtonRect.height, 6, 6)
+        
+        // Button text
+        g2d.font = buttonFont
+        g2d.color = UiColors.defaultText
+        val sortButtonText = if (sortByCount) "Unsort" else "Sort by Count"
+        val sortButtonMetrics = g2d.fontMetrics
+        val sortButtonX = sortButtonRect.x + (sortButtonRect.width - sortButtonMetrics.stringWidth(sortButtonText)) / 2
+        val sortButtonY = sortButtonRect.y + (sortButtonRect.height + sortButtonMetrics.ascent) / 2 - 2
+        g2d.drawString(sortButtonText, sortButtonX, sortButtonY)
+
+        // Refresh button with enhanced styling
+        refreshButtonRect.x = width - 630
+        refreshButtonRect.y = chartHeight + 5
+        
+        // Button background with gradient
+        val refreshButtonGradient = GradientPaint(
+            refreshButtonRect.x.toFloat(), refreshButtonRect.y.toFloat(), UiColors.selection.brighter(),
+            refreshButtonRect.x.toFloat(), (refreshButtonRect.y + refreshButtonRect.height).toFloat(), UiColors.selection.darker()
+        )
+        g2d.paint = refreshButtonGradient
+        g2d.fillRoundRect(refreshButtonRect.x, refreshButtonRect.y, refreshButtonRect.width, refreshButtonRect.height, 6, 6)
+        
+        // Button border
+        g2d.color = UiColors.defaultText.darker()
+        g2d.drawRoundRect(refreshButtonRect.x, refreshButtonRect.y, refreshButtonRect.width, refreshButtonRect.height, 6, 6)
+        
+        // Button text
+        g2d.font = buttonFont
+        g2d.color = UiColors.defaultText
+        val refreshButtonText = "Refresh (Cmd + R)"
+        val refreshButtonMetrics = g2d.fontMetrics
+        val refreshButtonX = refreshButtonRect.x + (refreshButtonRect.width - refreshButtonMetrics.stringWidth(refreshButtonText)) / 2
+        val refreshButtonY = refreshButtonRect.y + (refreshButtonRect.height + refreshButtonMetrics.ascent) / 2 - 2
+        g2d.drawString(refreshButtonText, refreshButtonX, refreshButtonY)
     }
 
     private fun drawSelectedLine() {
         if (selectedLineIndex >= indexOffset && selectedLineIndex < indexOffset + visibleLines) {
             g2d.color = UiColors.selectionLine
             val lineHeight = maxCharBounds.height.toInt() + g2d.fontMetrics.maxDescent
-            g2d.fillRect(0, maxCharBounds.height.toInt() * (selectedLineIndex - indexOffset + 1), width, lineHeight)
+            g2d.fillRect(
+                0, 
+                chartHeight + maxCharBounds.height.toInt() * (selectedLineIndex - indexOffset + 3) + 10 - maxCharBounds.height.toInt(), 
+                width, 
+                lineHeight
+            )
         }
     }
-
+    
+    private fun drawTooltip() {
+        tooltipInfo?.let { tooltip ->
+            val tooltipWidth = 180
+            val tooltipHeight = 70
+            val padding = 8
+            
+            // Position tooltip to avoid edges
+            var tooltipX = tooltip.x + 10
+            var tooltipY = tooltip.y - tooltipHeight - 10
+            
+            if (tooltipX + tooltipWidth > width) tooltipX = tooltip.x - tooltipWidth - 10
+            if (tooltipY < chartHeight) tooltipY = tooltip.y + 20
+            
+            // Draw tooltip background with shadow
+            g2d.color = Color(0, 0, 0, 100)
+            g2d.fillRoundRect(tooltipX + 2, tooltipY + 2, tooltipWidth, tooltipHeight, 8, 8)
+            
+            g2d.color = Color(40, 42, 46)
+            g2d.fillRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
+            
+            g2d.color = UiColors.defaultText.darker()
+            g2d.stroke = BasicStroke(1f)
+            g2d.drawRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
+            
+            // Draw tooltip content
+            g2d.font = tooltipFont
+            g2d.color = UiColors.defaultText
+            
+            g2d.color = getLevelColor(tooltip.level)
+            g2d.drawString("${tooltip.level.name}: ${tooltip.count}", tooltipX + padding, tooltipY + padding + 15)
+            
+            g2d.color = UiColors.defaultText.darker()
+            g2d.font = tooltipPlainFont
+            g2d.drawString("Percentage: ${String.format("%.1f", tooltip.percentage)}%", tooltipX + padding, tooltipY + padding + 35)
+        }
+    }
+    
     override fun keyPressed(e: KeyEvent) {
         if (((e.isMetaDown && State.onMac) || (e.isControlDown && !State.onMac)) && e.keyCode == KeyEvent.VK_R) {
             refreshChannel.trySend(RefreshLogGroups)
@@ -288,6 +527,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     }
 
     override fun mousePressed(e: MouseEvent) {
+        lastMouseX = e.x
+        lastMouseY = e.y
         mouseposX = e.x - x
         mouseposY = e.y - y - 7
 
@@ -315,7 +556,12 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     }
 
     override fun mouseClicked(e: MouseEvent) {}
-    override fun mouseReleased(e: MouseEvent) {}
+    
+    override fun mouseReleased(e: MouseEvent) {
+        lastMouseX = e.x
+        lastMouseY = e.y
+    }
+    
     override fun mouseEntered(e: MouseEvent) {
         if (!mouseInside) {
             mouseInside = true
@@ -325,6 +571,8 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     override fun mouseExited(e: MouseEvent) {
         if (mouseInside) {
             mouseInside = false
+            hoveredBar = null
+            tooltipInfo = null
         }
     }
 
@@ -345,12 +593,68 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     override fun mouseDragged(e: MouseEvent) {
         mouseposX = e.x - x
         mouseposY = e.y - y - 7
+        lastMouseX = e.x
+        lastMouseY = e.y
         panel.repaint()
     }
 
     override fun mouseMoved(e: MouseEvent) {
         mouseposX = e.x - x
         mouseposY = e.y - y - 7
+        lastMouseX = e.x
+        lastMouseY = e.y
+        
+        // Handle chart hover interactions
+        if (e.y < chartHeight && e.y > 40) {
+            handleChartHover(e.x, e.y)
+        } else {
+            hoveredBar = null
+            tooltipInfo = null
+        }
+        
         panel.repaint()
+    }
+    
+    private fun handleChartHover(mouseX: Int, mouseY: Int) {
+        val clusters = logClusters.get()
+        if (clusters.isEmpty()) return
+        
+        // Calculate level counts
+        val levelCounts = mutableMapOf<LogLevel, Long>()
+        var total = 0L
+        
+        clusters.forEach { cluster ->
+            levelCounts[cluster.level] = levelCounts.getOrDefault(cluster.level, 0L) + cluster.count
+            total += cluster.count
+        }
+        
+        // Check which bar is being hovered
+        var x = 20
+        val barHeight = 40
+        val barY = 50
+        val barSpacing = 15
+        val maxBarWidth = width - 40
+        val maxValue = levelCounts.values.maxOrNull() ?: 1
+        
+        LogLevel.entries.forEach { level ->
+            val count = levelCounts[level] ?: 0L
+            if (count > 0) {
+                val barWidth = ((count.toDouble() / maxValue) * maxBarWidth).toInt().coerceAtLeast(2)
+                
+                // Check if mouse is over this bar
+                if (mouseX >= x && mouseX <= x + barWidth && mouseY >= barY && mouseY <= barY + barHeight) {
+                    val percentage = if (total > 0) (count.toDouble() / total * 100).toFloat() else 0f
+                    hoveredBar = 0 to level // Using 0 as dummy index since we're not tracking specific bars
+                    tooltipInfo = TooltipInfo(mouseX, mouseY, level, count.toInt(), percentage)
+                    return
+                }
+                
+                x += barWidth + barSpacing
+            }
+        }
+        
+        // If we get here, no bar is hovered
+        hoveredBar = null
+        tooltipInfo = null
     }
 }
