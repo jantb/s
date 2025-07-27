@@ -169,18 +169,10 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
 
     override fun mouseClicked(e: MouseEvent) {
         if (e.isShiftDown && !e.isControlDown && e.clickCount == 1) {
-            val textViewerLogLine =
-                when (domain) {
-                    is KafkaLineDomain -> TextViewerKafkaLine(
-                        title = "Inspect", domain as KafkaLineDomain,
-                    )
-                    is LogLineDomain -> TextViewerLogLine(
-                        title = "Inspect", domain as LogLineDomain,
-                    )
-                    null -> throw IllegalStateException()
-                }
-            textViewerLogLine.isVisible = true
-
+            domain?.let { domainLine ->
+                val viewer = ModernTextViewerWindow("Log Details", domainLine)
+                viewer.isVisible = true
+            }
         } else if (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) {
             inputTextLine.text = text.getHighlightedText()
             inputTextLine.cursorIndex = inputTextLine.text.length

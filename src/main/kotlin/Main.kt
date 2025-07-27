@@ -269,7 +269,7 @@ private fun buildViewer(panel: SlidePanel) {
                 )
             )
         }
-    panel.componentMap.getOrPut(Mode.viewer) { mutableListOf() } += ScrollableList(
+    val scrollableList = ScrollableList(
         panel,
         0,
         0,
@@ -277,6 +277,8 @@ private fun buildViewer(panel: SlidePanel) {
         panel.height - 30,
         inputTextLine
     )
+    
+    panel.componentMap.getOrPut(Mode.viewer) { mutableListOf() } += scrollableList
     panel.componentMap[Mode.viewer]!! += inputTextLine
 }
 
