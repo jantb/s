@@ -52,7 +52,6 @@ class WebServer(private val port: Int = 9999) {
                     clients[clientId] = this
                     clientPods[clientId] = mutableSetOf()
                     clientLocks[clientId] = Mutex()
-                    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
                     try {
                         // Send a welcome message to verify connection
@@ -93,162 +92,85 @@ class WebServer(private val port: Int = 9999) {
                             }
                         }
 
-                        // Start a job to periodically send stats to the client
-                        val statsJob = scope.launch {
-                            try {
-                                while (isActive) {
-                                    try {
+                        // Use structured concurrency with coroutineScope
+                        coroutineScope {
+                            // Stats job
+                            launch {
+                                try {
+                                    while (isActive) {
                                         safeSendWithLock(json.encodeToString(
                                             StatsMessage.serializer(),
                                             StatsMessage(State.indexedLines.get())
                                         ))
                                         delay(1000)
-                                    } catch (e: CancellationException) {
-                                        break
-                                    } catch (e: Exception) {
-                                        // Ignore other exceptions
                                     }
+                                } catch (e: CancellationException) {
+                                    // Expected during cleanup
                                 }
-                            } catch (e: CancellationException) {
-                                // Expected during cleanup
                             }
-                        }
 
-                        // Unified data processing job - handles all channel communications through single coroutine
-                        val dataProcessingJob = scope.launch {
-                            try {
-                                while (isActive) {
-                                    try {
-                                        // Process log updates and chart data from kafkaCmdGuiChannel
+                            // Simplified data processing job - only handles logs
+                            launch {
+                                try {
+                                    while (isActive) {
+                                        // Process log updates from kafkaCmdGuiChannel
                                         val kafkaMessage = Channels.kafkaCmdGuiChannel.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS)
                                         if (kafkaMessage is ResultChanged) {
-                                            try {
-                                                // Process log data
-                                                val logs = kafkaMessage.result.map { line ->
-                                                    when (line) {
-                                                        is LogLineDomain -> WebLogLine(
-                                                            timestamp = line.timestamp,
-                                                            level = line.level.toString(),
-                                                            message = line.serviceName + " " + line.message.take(5000),
-                                                            logger = line.logger,
-                                                            serviceName = line.serviceName
-                                                        )
-                                                        is KafkaLineDomain -> WebLogLine(
-                                                            timestamp = line.timestamp,
-                                                            level = "KAFKA",
-                                                            message = line.toString().take(5000),
-                                                            logger = "",
-                                                            serviceName = line.topic
-                                                        )
-                                                    }
-                                                }.take(500)
-
-                                                if (logs.isNotEmpty()) {
-                                                    safeSendWithLock(json.encodeToString(
-                                                        WebSocketMessage.serializer(),
-                                                        WebSocketMessage("logs", logs = logs)
-                                                    ))
+                                            // Process log data only
+                                            val logs = kafkaMessage.result.map { line ->
+                                                when (line) {
+                                                    is LogLineDomain -> WebLogLine(
+                                                        timestamp = line.timestamp,
+                                                        level = line.level.toString(),
+                                                        message = line.serviceName + " " + line.message.take(5000),
+                                                        logger = line.logger,
+                                                        serviceName = line.serviceName
+                                                    )
+                                                    is KafkaLineDomain -> WebLogLine(
+                                                        timestamp = line.timestamp,
+                                                        level = "KAFKA",
+                                                        message = line.toString().take(5000),
+                                                        logger = "",
+                                                        serviceName = line.topic
+                                                    )
                                                 }
+                                            }.take(500)
 
-                                                // Process chart data from the same message
-                                                val fullDataset = kafkaMessage.chartResult.ifEmpty { kafkaMessage.result }
-                                                
-                                                if (fullDataset.isNotEmpty()) {
-                                                    // Dynamically determine time range based on actual data
-                                                    val timestamps = fullDataset.map { it.timestamp }.sorted()
-                                                    val minTime = timestamps.first()
-                                                    val maxTime = timestamps.last()
-                                                    val timeRange = maxTime - minTime
-                                                    
-                                                    // Calculate appropriate number of time windows (aim for ~100 data points)
-                                                    val targetWindows = 100
-                                                    val timeWindowMs = if (timeRange > 0) {
-                                                        kotlin.math.max(60000L, timeRange / targetWindows) // At least 1 minute windows
-                                                    } else {
-                                                        60000L // Default to 1 minute if no time range
-                                                    }
-                                                    
-                                                    val actualWindows = ((timeRange / timeWindowMs).toInt() + 1).coerceAtMost(200) // Max 200 windows
-                                                    val timePoints = mutableListOf<TimePointData>()
-                                                    
-                                                    // Create time windows based on actual data range
-                                                    for (i in 0 until actualWindows) {
-                                                        val windowStart = minTime + (i * timeWindowMs)
-                                                        val windowEnd = windowStart + timeWindowMs
-                                                        
-                                                        // Count logs by level in this time window from the FULL dataset
-                                                        val levelCounts = mutableMapOf<String, Int>()
-                                                        fullDataset.forEach { log ->
-                                                            if (log.timestamp >= windowStart && log.timestamp < windowEnd) {
-                                                                val levelName = log.level.name
-                                                                levelCounts[levelName] = levelCounts.getOrDefault(levelName, 0) + 1
-                                                            }
-                                                        }
-                                                        
-                                                        // Convert to ordered counts array
-                                                        val levels = listOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN", "KAFKA")
-                                                        val counts = levels.map { levelCounts.getOrDefault(it, 0) }
-                                                        
-                                                        timePoints.add(TimePointData(windowStart, counts))
-                                                    }
-                                                    
-                                                    val maxCount = timePoints.flatMap { it.counts }.maxOrNull() ?: 1
-                                                    val chartData = LogLevelChartData(timePoints, listOf("INFO", "WARN", "DEBUG", "ERROR", "UNKNOWN", "KAFKA"), maxCount)
-                                                    
-                                                    safeSendWithLock(json.encodeToString(
-                                                        WebSocketMessage.serializer(),
-                                                        WebSocketMessage("chartData", chartData = chartData)
-                                                    ))
-                                                }
-
-                                            } catch (e: Exception) {
-                                                if (e !is CancellationException) {
-                                                    println("Error processing kafka message for client $clientId: ${e.message}")
-                                                }
+                                            if (logs.isNotEmpty()) {
+                                                safeSendWithLock(json.encodeToString(
+                                                    WebSocketMessage.serializer(),
+                                                    WebSocketMessage("logs", logs = logs)
+                                                ))
                                             }
                                         }
 
                                         // Process log cluster updates
                                         val clusterMessage = Channels.logClusterCmdGuiChannel.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS)
                                         if (clusterMessage is LogClusterList) {
-                                            try {
-                                                val clusters = clusterMessage.clusters.map { cluster ->
-                                                    LogClusterInfo(
-                                                        count = cluster.count.toInt(),
-                                                        level = cluster.level.name,
-                                                        indexIdentifier = cluster.indexIdentifier,
-                                                        messagePattern = cluster.block
-                                                    )
-                                                }
-
-                                                safeSendWithLock(json.encodeToString(
-                                                    WebSocketMessage.serializer(),
-                                                    WebSocketMessage("logClusters", logClusters = clusters)
-                                                ))
-                                            } catch (e: Exception) {
-                                                if (e !is CancellationException) {
-                                                    println("Error processing log cluster message for client $clientId: ${e.message}")
-                                                }
+                                            val clusters = clusterMessage.clusters.map { cluster ->
+                                                LogClusterInfo(
+                                                    count = cluster.count.toInt(),
+                                                    level = cluster.level.name,
+                                                    indexIdentifier = cluster.indexIdentifier,
+                                                    messagePattern = cluster.block
+                                                )
                                             }
+
+                                            safeSendWithLock(json.encodeToString(
+                                                WebSocketMessage.serializer(),
+                                                WebSocketMessage("logClusters", logClusters = clusters)
+                                            ))
                                         }
 
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        println("Error in data processing for client $clientId: ${e.message}")
+                                        yield()
                                     }
-                                    yield()
+                                } catch (e: CancellationException) {
+                                    // Expected during cleanup
                                 }
-                            } catch (e: CancellationException) {
-                                // Don't log cancellation as error - it's expected during cleanup
-                            } catch (e: Exception) {
-                                println("Data processing job error for client $clientId: ${e.message}")
                             }
-                        }
 
-
-                        // Set up message handler for incoming client messages
-                        val messageHandlerJob = scope.launch {
+                            // Message handler job
+                            launch {
                             try {
                                 for (frame in incoming) {
                                     when (frame) {
@@ -373,11 +295,8 @@ class WebServer(private val port: Int = 9999) {
                             } catch (e: CancellationException) {
                             } catch (e: Exception) {
                             }
+                            }
                         }
-
-                        // Wait for the session to complete
-                        messageHandlerJob.join()
-                        dataProcessingJob.join()
 
                     } catch (e: Exception) {
                         println("Error in WebSocket session for client $clientId: ${e.message}")
@@ -385,18 +304,11 @@ class WebServer(private val port: Int = 9999) {
                         // Clean up client-specific resources
                         clients.remove(clientId)
                         clientLocks.remove(clientId)
-                        try {
-                            // Cancel all coroutines in the scope
-                            scope.cancel("WebSocket session closed for client $clientId")
-
-                            // Stop listening to any pods this client was monitoring
-                            clientPods[clientId]?.forEach { podName ->
-                                Channels.podsChannel.put(UnListenToPod(podName))
-                            }
-                            clientPods.remove(clientId)
-                        } catch (e: Exception) {
-                            println("Error during cleanup for client $clientId: ${e.message}")
+                        // Stop listening to any pods this client was monitoring
+                        clientPods[clientId]?.forEach { podName ->
+                            Channels.podsChannel.put(UnListenToPod(podName))
                         }
+                        clientPods.remove(clientId)
                     }
                 }
             }
@@ -421,7 +333,6 @@ data class WebSocketMessage(
     val topics: List<KafkaTopic> = emptyList(),
     val lagInfo: List<KafkaLagInfo> = emptyList(),
     val logClusters: List<LogClusterInfo> = emptyList(),
-    val chartData: LogLevelChartData? = null
 )
 
 @Serializable
@@ -472,17 +383,4 @@ data class LogClusterInfo(
     val level: String,
     val indexIdentifier: String,
     val messagePattern: String
-)
-
-@Serializable
-data class LogLevelChartData(
-    val timePoints: List<TimePointData>,
-    val levels: List<String>,
-    val scaleMax: Int
-)
-
-@Serializable
-data class TimePointData(
-    val time: Long,
-    val counts: List<Int>
 )

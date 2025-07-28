@@ -29,13 +29,9 @@
         <span id="search-status" style="margin-left: 12px; color: #DCDCAA; font-size: 11px;"></span>
     </div>
 </div>
-<div class="chart-container">
-    <canvas id="log-level-chart" class="chart-canvas"></canvas>
-</div>
 <div class="log-viewer" id="log-viewer">
     <div class="log-container" id="log-container"></div>
 </div>
-<div class="chart-tooltip" id="chart-tooltip"></div>
 <div class="pod-selector" id="pod-selector">
     <div class="pod-modal">
         <div class="pod-modal-header">
@@ -76,9 +72,6 @@
             <div class="pod-modal-title">Log Clusters</div>
             <button class="pod-modal-close" id="close-log-clusters-btn">×</button>
         </div>
-        <div class="chart-container">
-            <canvas id="log-clusters-chart" class="chart-canvas"></canvas>
-        </div>
         <div class="pod-list" id="log-clusters-list"></div>
     </div>
 </div>
@@ -88,9 +81,6 @@
         <div class="pod-modal-header">
             <div class="pod-modal-title">Kafka Consumer Lag</div>
             <button class="pod-modal-close" id="close-kafka-lag-btn">×</button>
-        </div>
-        <div class="chart-container">
-            <canvas id="kafka-lag-chart" class="chart-canvas"></canvas>
         </div>
         <div class="pod-list" id="kafka-lag-list"></div>
         <div class="pod-modal-footer">
@@ -102,7 +92,6 @@
 <!-- JavaScript files -->
 <script src="core.js"></script>
 <script src="websocket.js"></script>
-<script src="charts.js"></script>
 <script src="modals.js"></script>
 </body>
 </html>

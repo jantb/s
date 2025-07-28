@@ -27,7 +27,7 @@ function connectWebSocket() {
         }
 
         if (searchQuery) {
-            fetchLogsWithVirtualCache(currentOffset);
+            fetchLogs(currentOffset);
         }
 
         if (selectedPods.size > 0) {
@@ -72,8 +72,6 @@ function connectWebSocket() {
                 updateStats(data);
             } else if (data.type === 'logClusters') {
                 handleLogClusters(data.logClusters);
-            } else if (data.type === 'chartData') {
-                handleChartData(data.chartData);
             } else if (data.type === 'topics') {
                 handleTopics(data.topics);
             } else if (data.type === 'lagInfo') {
@@ -132,16 +130,11 @@ function handleLogData(logs) {
         return;
     }
 
-    // Determine if this is an expansion request
-    const isExpansion = isVirtualCacheInitialized &&
-        (lastSentOffset < virtualCacheStartOffset ||
-         lastSentOffset >= virtualCacheStartOffset + virtualCache.length);
+    // Update current logs directly without caching
+    currentLogs = logs;
 
-    // Add to virtual cache
-    addToVirtualCache(lastSentOffset, logs, isExpansion);
-
-    searchStatus.textContent = `Showing logs from virtual cache (${virtualCache.length} cached)`;
-    console.log(`Received ${logs.length} logs at offset ${lastSentOffset}, virtual cache size: ${virtualCache.length}`);
+    searchStatus.textContent = `Showing ${logs.length} logs from offset ${lastSentOffset}`;
+    console.log(`Received ${logs.length} logs at offset ${lastSentOffset}`);
 
     renderVisibleLogs();
 }
@@ -159,18 +152,11 @@ function handleTopics(topics) {
 function handleLogClusters(clusters) {
     logClusters = clusters;
     renderLogClustersList();
-    updateLogClustersChart(clusters);
-}
-
-function handleChartData(chartData) {
-    console.log('Chart data received:', chartData);
-    updateLogLevelChart(chartData);
 }
 
 function handleLagInfo(lagInfo) {
     console.log('Lag info received:', lagInfo);
     renderLagInfo(lagInfo);
-    updateKafkaLagChart(lagInfo);
 }
 
 // Initialize WebSocket connection

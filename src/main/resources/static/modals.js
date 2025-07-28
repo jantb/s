@@ -253,14 +253,14 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Trigger a new search to fetch logs from the newly selected pods
         if (podsToListen.length > 0) {
-            // Clear existing logs and reset offset
-            allLogs = [];
+            // Clear current logs and reset offset
+            currentLogs = [];
             currentOffset = 0;
             lastSentOffset = -1;
             
             // Trigger search to get logs from new pods
             setTimeout(() => {
-                fetchLogsWithOffset(0);
+                fetchLogs(0);
             }, 100); // Small delay to ensure pod listening is established
         }
     });
