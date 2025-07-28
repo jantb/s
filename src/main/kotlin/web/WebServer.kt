@@ -11,7 +11,7 @@ import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.channels.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -22,7 +22,9 @@ import kafka.Kafka
 class WebServer(private val port: Int = 9999) {
     private val clients = ConcurrentHashMap<String, WebSocketSession>()
     private val clientPods = ConcurrentHashMap<String, MutableSet<String>>()
-    private val clientLocks = ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+    private val clientChannels = ConcurrentHashMap<String, Channel<String>>()
+    private val clientTopics = ConcurrentHashMap<String, MutableSet<String>>()
+    private val clientMutex = Mutex()
     private val json = kotlinx.serialization.json.Json {
         ignoreUnknownKeys = true
         prettyPrint = false
@@ -49,9 +51,19 @@ class WebServer(private val port: Int = 9999) {
                 // WebSocket endpoint for log streaming
                 webSocket("/logs") {
                     val clientId = System.currentTimeMillis().toString()
-                    clients[clientId] = this
-                    clientPods[clientId] = mutableSetOf()
-                    clientLocks[clientId] = Mutex()
+                    
+                    // Initialize client state atomically
+                    clientMutex.withLock {
+                        clients[clientId] = this
+                        clientPods[clientId] = mutableSetOf()
+                        clientTopics[clientId] = mutableSetOf()
+                        
+                        // Create a dedicated channel for this client with buffering
+                        val clientChannel = Channel<String>(capacity = Channel.BUFFERED)
+                        clientChannels[clientId] = clientChannel
+                    }
+                    
+                    val clientChannel = clientChannels[clientId]!!
 
                     try {
                         // Send a welcome message to verify connection
@@ -66,39 +78,41 @@ class WebServer(private val port: Int = 9999) {
                             )))
                         )))
 
-                        // Safe send function with mutex locking and proper error handling
-                        suspend fun safeSendWithLock(message: String): Boolean {
-                            val mutex = clientLocks[clientId] ?: return false
+                        // Safe send function using channel-based approach
+                        suspend fun safeSend(message: String): Boolean {
                             return try {
-                                mutex.withLock {
-                                    if (isActive && !incoming.isClosedForReceive) {
-                                        withTimeout(2000) {
-                                            send(Frame.Text(message))
-                                            true
-                                        }
-                                    } else {
-                                        false
-                                    }
-                                }
-                            } catch (e: CancellationException) {
-                                // Channel was cancelled, don't log as error
-                                false
+                                clientChannel.trySend(message).isSuccess
                             } catch (e: Exception) {
-                                // Only log non-cancellation errors
-                                if (e !is kotlinx.coroutines.channels.ClosedSendChannelException) {
-                                    println("Failed to send message for client $clientId: ${e.message}")
-                                }
                                 false
                             }
                         }
 
                         // Use structured concurrency with coroutineScope
                         coroutineScope {
+                            // Channel sender job - handles outgoing messages
+                            launch {
+                                try {
+                                    for (message in clientChannel) {
+                                        if (isActive && !incoming.isClosedForReceive) {
+                                            withTimeout(2000) {
+                                                send(Frame.Text(message))
+                                            }
+                                        } else {
+                                            break
+                                        }
+                                    }
+                                } catch (e: CancellationException) {
+                                    // Expected during cleanup
+                                } catch (e: Exception) {
+                                    println("Error sending message for client $clientId: ${e.message}")
+                                }
+                            }
+
                             // Stats job
                             launch {
                                 try {
                                     while (isActive) {
-                                        safeSendWithLock(json.encodeToString(
+                                        safeSend(json.encodeToString(
                                             StatsMessage.serializer(),
                                             StatsMessage(State.indexedLines.get())
                                         ))
@@ -109,12 +123,12 @@ class WebServer(private val port: Int = 9999) {
                                 }
                             }
 
-                            // Simplified data processing job - only handles logs
+                            // Data processing job using proper channel consumption
                             launch {
                                 try {
                                     while (isActive) {
-                                        // Process log updates from kafkaCmdGuiChannel
-                                        val kafkaMessage = Channels.kafkaCmdGuiChannel.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                        // Check for kafka command GUI messages
+                                        val kafkaMessage = Channels.kafkaCmdGuiChannel.poll()
                                         if (kafkaMessage is ResultChanged) {
                                             // Process log data only
                                             val logs = kafkaMessage.result.map { line ->
@@ -137,15 +151,15 @@ class WebServer(private val port: Int = 9999) {
                                             }.take(500)
 
                                             if (logs.isNotEmpty()) {
-                                                safeSendWithLock(json.encodeToString(
+                                                safeSend(json.encodeToString(
                                                     WebSocketMessage.serializer(),
                                                     WebSocketMessage("logs", logs = logs)
                                                 ))
                                             }
                                         }
 
-                                        // Process log cluster updates
-                                        val clusterMessage = Channels.logClusterCmdGuiChannel.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                        // Check for log cluster messages
+                                        val clusterMessage = Channels.logClusterCmdGuiChannel.poll()
                                         if (clusterMessage is LogClusterList) {
                                             val clusters = clusterMessage.clusters.map { cluster ->
                                                 LogClusterInfo(
@@ -156,13 +170,14 @@ class WebServer(private val port: Int = 9999) {
                                                 )
                                             }
 
-                                            safeSendWithLock(json.encodeToString(
+                                            safeSend(json.encodeToString(
                                                 WebSocketMessage.serializer(),
                                                 WebSocketMessage("logClusters", logClusters = clusters)
                                             ))
                                         }
-
-                                        yield()
+                                        
+                                        // Small delay to prevent busy waiting
+                                        delay(50)
                                     }
                                 } catch (e: CancellationException) {
                                     // Expected during cleanup
@@ -171,144 +186,169 @@ class WebServer(private val port: Int = 9999) {
 
                             // Message handler job
                             launch {
-                            try {
-                                for (frame in incoming) {
-                                    when (frame) {
-                                        is Frame.Text -> {
-                                            try {
-                                                val message = json.decodeFromString<ClientMessage>(frame.readText())
-                                                when (message.action) {
-                                                    "listPods" -> {
-                                                        val listPods = ListPods()
-                                                        Channels.podsChannel.put(listPods)
-                                                        val pods = listPods.result.get()
-                                                        val podMaps = pods.map { pod ->
-                                                            mapOf(
-                                                                "name" to pod.name,
-                                                                "version" to pod.version,
-                                                                "creationTimestamp" to pod.creationTimestamp
-                                                            )
+                                try {
+                                    for (frame in incoming) {
+                                        when (frame) {
+                                            is Frame.Text -> {
+                                                try {
+                                                    val message = json.decodeFromString<ClientMessage>(frame.readText())
+                                                    when (message.action) {
+                                                        "listPods" -> {
+                                                            val listPods = ListPods()
+                                                            Channels.podsChannel.offer(listPods)
+                                                            val pods = listPods.result.get()
+                                                            val podMaps = pods.map { pod ->
+                                                                mapOf(
+                                                                    "name" to pod.name,
+                                                                    "version" to pod.version,
+                                                                    "creationTimestamp" to pod.creationTimestamp
+                                                                )
+                                                            }
+                                                            safeSend(json.encodeToString(
+                                                                WebSocketMessage.serializer(),
+                                                                WebSocketMessage("pods", podMaps = podMaps)
+                                                            ))
                                                         }
-                                                        safeSendWithLock(json.encodeToString(
-                                                            WebSocketMessage.serializer(),
-                                                            WebSocketMessage("pods", podMaps = podMaps)
-                                                        ))
-                                                    }
-                                                    "listenPod" -> {
-                                                        message.podName?.let {
-                                                            Channels.podsChannel.put(ListenToPod(it))
-                                                            clientPods[clientId]?.add(it)
+                                                        "listenPod" -> {
+                                                            message.podName?.let {
+                                                                Channels.podsChannel.offer(ListenToPod(it))
+                                                                clientMutex.withLock {
+                                                                    clientPods[clientId]?.add(it)
+                                                                }
+                                                            }
                                                         }
-                                                    }
-                                                    "unlistenPod" -> {
-                                                        message.podName?.let {
-                                                            Channels.podsChannel.put(UnListenToPod(it))
-                                                            clientPods[clientId]?.remove(it)
+                                                        "unlistenPod" -> {
+                                                            message.podName?.let {
+                                                                Channels.podsChannel.offer(UnListenToPod(it))
+                                                                clientMutex.withLock {
+                                                                    clientPods[clientId]?.remove(it)
+                                                                }
+                                                            }
                                                         }
-                                                    }
-                                                    "search" -> {
-                                                        message.query?.let {
-                                                            try {
-                                                                Channels.searchChannel.trySendBlocking(
-                                                                    QueryChanged(
-                                                                        it,
-                                                                        length = message.length,
-                                                                        offset = message.offset
+                                                        "search" -> {
+                                                            message.query?.let {
+                                                                try {
+                                                                    Channels.searchChannel.trySend(
+                                                                        QueryChanged(
+                                                                            it,
+                                                                            length = message.length,
+                                                                            offset = message.offset
+                                                                        )
                                                                     )
-                                                                )
+                                                                } catch (e: Exception) {
+                                                                    println("Error sending search query for client $clientId: ${e.message}")
+                                                                }
+                                                            }
+                                                        }
+                                                        "ping" -> {
+                                                            // Respond to ping to keep connection alive
+                                                        }
+                                                        "listTopics" -> {
+                                                            val listTopics = ListTopics()
+                                                            Channels.kafkaChannel.offer(listTopics)
+                                                            try {
+                                                                val topics = listTopics.result.get()
+                                                                val topicList = topics.map { KafkaTopic(it) }
+                                                                safeSend(json.encodeToString(
+                                                                    WebSocketMessage.serializer(),
+                                                                    WebSocketMessage("topics", topics = topicList)
+                                                                ))
                                                             } catch (e: Exception) {
-                                                                println("Error sending search query for client $clientId: ${e.message}")
+                                                                println("Error listing Kafka topics for client $clientId: ${e.message}")
+                                                            }
+                                                        }
+                                                        "listenToTopics" -> {
+                                                            message.topics?.let { topics ->
+                                                                Channels.kafkaChannel.offer(ListenToTopic(topics))
+                                                                clientMutex.withLock {
+                                                                    clientTopics[clientId]?.addAll(topics)
+                                                                }
+                                                            }
+                                                        }
+                                                        "unlistenToTopics" -> {
+                                                            Channels.kafkaChannel.offer(UnListenToTopics)
+                                                            clientMutex.withLock {
+                                                                clientTopics[clientId]?.clear()
+                                                            }
+                                                        }
+                                                        "listLag" -> {
+                                                            try {
+                                                                val msg = ListLag()
+                                                                Channels.kafkaChannel.offer(msg)
+                                                                val result = msg.result.await()
+                                                                val lagInfoList = result.map { lagInfo ->
+                                                                    KafkaLagInfo(
+                                                                        groupId = lagInfo.groupId,
+                                                                        topic = lagInfo.topic,
+                                                                        partition = lagInfo.partition,
+                                                                        currentOffset = lagInfo.currentOffset,
+                                                                        endOffset = lagInfo.endOffset,
+                                                                        lag = lagInfo.lag
+                                                                    )
+                                                                }
+                                                                safeSend(json.encodeToString(
+                                                                    WebSocketMessage.serializer(),
+                                                                    WebSocketMessage("lagInfo", lagInfo = lagInfoList)
+                                                                ))
+                                                            } catch (e: Exception) {
+                                                                println("Error listing Kafka lag for client $clientId: ${e.message}")
+                                                            }
+                                                        }
+                                                        "refreshLogGroups" -> {
+                                                            try {
+                                                                Channels.refreshChannel.trySend(RefreshLogGroups)
+                                                            } catch (e: Exception) {
+                                                                println("Error refreshing log groups for client $clientId: ${e.message}")
+                                                            }
+                                                        }
+                                                        "setKafkaDays" -> {
+                                                            message.days?.let {
+                                                                State.kafkaDays.set(it.toLong())
                                                             }
                                                         }
                                                     }
-                                                    "ping" -> {
-                                                    }
-                                                    "listTopics" -> {
-                                                        val listTopics = ListTopics()
-                                                        Channels.kafkaChannel.put(listTopics)
-                                                        try {
-                                                            val topics = listTopics.result.get()
-                                                            val topicList = topics.map { KafkaTopic(it) }
-                                                            safeSendWithLock(json.encodeToString(
-                                                                WebSocketMessage.serializer(),
-                                                                WebSocketMessage("topics", topics = topicList)
-                                                            ))
-                                                        } catch (e: Exception) {
-                                                            println("Error listing Kafka topics for client $clientId: ${e.message}")
-                                                        }
-                                                    }
-                                                    "listenToTopics" -> {
-                                                        message.topics?.let {
-                                                            Channels.kafkaChannel.put(ListenToTopic(it))
-                                                        }
-                                                    }
-                                                    "unlistenToTopics" -> {
-                                                        Channels.kafkaChannel.put(UnListenToTopics)
-                                                    }
-                                                    "listLag" -> {
-                                                        try {
-                                                            val msg = ListLag()
-                                                            Channels.kafkaChannel.put(msg)
-                                                            val result = msg.result.await()
-                                                            val lagInfoList = result.map { lagInfo ->
-                                                                KafkaLagInfo(
-                                                                    groupId = lagInfo.groupId,
-                                                                    topic = lagInfo.topic,
-                                                                    partition = lagInfo.partition,
-                                                                    currentOffset = lagInfo.currentOffset,
-                                                                    endOffset = lagInfo.endOffset,
-                                                                    lag = lagInfo.lag
-                                                                )
-                                                            }
-                                                            safeSendWithLock(json.encodeToString(
-                                                                WebSocketMessage.serializer(),
-                                                                WebSocketMessage("lagInfo", lagInfo = lagInfoList)
-                                                            ))
-                                                        } catch (e: Exception) {
-                                                            println("Error listing Kafka lag for client $clientId: ${e.message}")
-                                                        }
-                                                    }
-                                                    "refreshLogGroups" -> {
-                                                        try {
-                                                            Channels.refreshChannel.trySend(RefreshLogGroups)
-                                                        } catch (e: Exception) {
-                                                            println("Error refreshing log groups for client $clientId: ${e.message}")
-                                                        }
-                                                    }
-                                                    "setKafkaDays" -> {
-                                                        message.days?.let {
-                                                            State.kafkaDays.set(it.toLong())
-                                                        }
-                                                    }
+                                                } catch (e: Exception) {
+                                                    println("Error parsing client message for client $clientId: ${e.message}")
                                                 }
-                                            } catch (e: Exception) {
-                                                println("Error parsing client message for client $clientId: ${e.message}")
+                                            }
+                                            is Frame.Close -> {
+                                                break // Exit the loop to trigger cleanup
+                                            }
+                                            else -> {
+                                                // Handle other frame types if needed
                                             }
                                         }
-                                        is Frame.Close -> {
-                                            break // Exit the loop to trigger cleanup
-                                        }
-                                        else -> {
-                                        }
                                     }
+                                } catch (e: CancellationException) {
+                                    // Expected during cleanup
+                                } catch (e: Exception) {
+                                    println("Error in message handler for client $clientId: ${e.message}")
                                 }
-                            } catch (e: CancellationException) {
-                            } catch (e: Exception) {
-                            }
                             }
                         }
 
                     } catch (e: Exception) {
                         println("Error in WebSocket session for client $clientId: ${e.message}")
                     } finally {
-                        // Clean up client-specific resources
-                        clients.remove(clientId)
-                        clientLocks.remove(clientId)
-                        // Stop listening to any pods this client was monitoring
-                        clientPods[clientId]?.forEach { podName ->
-                            Channels.podsChannel.put(UnListenToPod(podName))
+                        // Clean up client-specific resources atomically
+                        clientMutex.withLock {
+                            clients.remove(clientId)
+                            clientChannels.remove(clientId)?.close()
+                            
+                            // Stop listening to any pods this client was monitoring
+                            clientPods[clientId]?.forEach { podName ->
+                                Channels.podsChannel.offer(UnListenToPod(podName))
+                            }
+                            clientPods.remove(clientId)
+                            
+                            // Stop listening to any Kafka topics this client was monitoring
+                            clientTopics[clientId]?.let { topics ->
+                                if (topics.isNotEmpty()) {
+                                    Channels.kafkaChannel.offer(UnListenToTopics)
+                                }
+                            }
+                            clientTopics.remove(clientId)
                         }
-                        clientPods.remove(clientId)
                     }
                 }
             }

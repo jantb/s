@@ -5,6 +5,8 @@ let maxReconnectInterval = 30000;
 let reconnectTimer = null;
 let isConnected = false;
 let pingInterval = null;
+let messageQueue = [];
+let isReconnecting = false;
 
 function connectWebSocket() {
     if (socket) {
@@ -14,16 +16,27 @@ function connectWebSocket() {
     }
 
     clearInterval(pingInterval);
+    isReconnecting = true;
     document.getElementById('stats-counter').textContent = `Connecting...`;
 
     socket = new WebSocket(`ws://${location.host}/logs`);
 
     socket.onopen = () => {
+        console.log('WebSocket connected');
         isConnected = true;
+        isReconnecting = false;
         reconnectInterval = 1000;
 
         if (!logViewer) {
             initVirtualScroll();
+        }
+
+        // Process any queued messages
+        while (messageQueue.length > 0) {
+            const queuedMessage = messageQueue.shift();
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(queuedMessage));
+            }
         }
 
         if (searchQuery) {
@@ -89,16 +102,22 @@ function connectWebSocket() {
         document.getElementById('stats-counter').textContent = `Disconnected - reconnecting...`;
         isConnected = false;
         clearInterval(pingInterval);
-        clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(() => {
-            reconnectInterval = Math.min(reconnectInterval * 1.5, maxReconnectInterval);
-            connectWebSocket();
-        }, reconnectInterval);
+        
+        // Only attempt reconnection if not already reconnecting
+        if (!isReconnecting) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(() => {
+                reconnectInterval = Math.min(reconnectInterval * 1.5, maxReconnectInterval);
+                connectWebSocket();
+            }, reconnectInterval);
+        }
     };
 
     socket.onerror = (error) => {
         console.error('WebSocket error:', error);
-        socket.close();
+        if (socket.readyState !== WebSocket.CLOSED) {
+            socket.close();
+        }
     };
 }
 
@@ -108,6 +127,10 @@ function updateStats(stats) {
 
 function safeSend(data) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
+        // Queue the message if we're not connected
+        if (!isConnected && messageQueue.length < 100) { // Limit queue size
+            messageQueue.push(data);
+        }
         return false;
     }
 
@@ -115,6 +138,11 @@ function safeSend(data) {
         socket.send(JSON.stringify(data));
         return true;
     } catch (e) {
+        console.error('Error sending message:', e);
+        // Queue the message for retry if it's important
+        if (data.action === 'search' && messageQueue.length < 100) {
+            messageQueue.push(data);
+        }
         return false;
     }
 }
