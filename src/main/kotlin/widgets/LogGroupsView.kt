@@ -281,24 +281,30 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         // Draw chart title
         g2d.font = headerBoldFont
         g2d.color = UiColors.defaultText.brighter()
-        g2d.drawString("Log Cluster Distribution by Level", 10, 20)
+        g2d.drawString("Log Cluster Distribution by Level (Horizontal)", 10, 20)
         
         // Draw total count
         g2d.font = headerPlainFont
         g2d.color = UiColors.teal
         g2d.drawString("Total Clusters: $total", 10, 35)
         
-        // Draw chart bars
-        val barHeight = 40
-        val barY = 50
-        val barSpacing = 15
-        val maxBarWidth = width - 120  // Increased padding to prevent cut off
-        val maxValue = levelCounts.values.maxOrNull() ?: 1
+        // Sort levels by severity: ERROR, WARN, INFO, DEBUG, KAFKA, UNKNOWN
+        val severityOrder = listOf(LogLevel.ERROR, LogLevel.WARN, LogLevel.INFO, LogLevel.DEBUG, LogLevel.KAFKA, LogLevel.UNKNOWN)
+        val sortedLevels = severityOrder.filter { levelCounts[it] != null && levelCounts[it]!! > 0 }
         
-        var x = 40  // Increased padding from 20 to 40
-        LogLevel.entries.forEach { level ->
+        // Draw horizontal stacked bars - thinner bars and better positioning
+        val barHeight = 18  // Made thinner (was 25)
+        val barSpacing = 8
+        val labelSpace = 100  // More space for labels
+        val maxBarWidth = width - labelSpace - 150  // Leave more space for labels and values
+        val maxValue = levelCounts.values.maxOrNull() ?: 1
+        val startY = 55
+        val barStartX = labelSpace  // Start bars further to the right
+        
+        sortedLevels.forEachIndexed { index, level ->
             val count = levelCounts[level] ?: 0L
             if (count > 0) {
+                val y = startY + index * (barHeight + barSpacing)
                 val barWidth = ((count.toDouble() / maxValue) * maxBarWidth).toInt().coerceAtLeast(2)
                 val barColor = getLevelColor(level)
                 
@@ -308,32 +314,32 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
                 // Draw glow effect for hovered bar
                 if (isHovered) {
                     g2d.color = Color(barColor.red, barColor.green, barColor.blue, 100)
-                    g2d.fillRoundRect(x - 2, barY - 2, barWidth + 4, barHeight + 4, 6, 6)
+                    g2d.fillRoundRect(barStartX - 2, y - 2, barWidth + 4, barHeight + 4, 6, 6)
                 }
                 
                 // Draw main bar with gradient
                 val gradient = GradientPaint(
-                    x.toFloat(), barY.toFloat(), barColor.brighter(),
-                    x.toFloat(), (barY + barHeight).toFloat(), barColor.darker()
+                    barStartX.toFloat(), y.toFloat(), barColor.brighter(),
+                    (barStartX + barWidth).toFloat(), y.toFloat(), barColor.darker()
                 )
                 g2d.paint = gradient
-                g2d.fillRoundRect(x, barY, barWidth, barHeight, 4, 4)
+                g2d.fillRoundRect(barStartX, y, barWidth, barHeight, 4, 4)
                 
                 // Draw bar border
                 g2d.color = barColor.darker()
-                g2d.drawRoundRect(x, barY, barWidth, barHeight, 4, 4)
+                g2d.drawRoundRect(barStartX, y, barWidth, barHeight, 4, 4)
                 
-                // Draw level label
+                // Draw level label on the left - better positioned
                 g2d.font = buttonFont
                 g2d.color = UiColors.defaultText
-                g2d.drawString(level.name, x, barY + barHeight + 15)
+                val labelWidth = g2d.fontMetrics.stringWidth(level.name)
+                g2d.drawString(level.name, barStartX - labelWidth - 15, y + barHeight / 2 + 4)
                 
-                // Draw count and percentage
+                // Draw count and percentage on the right
                 val percentage = if (total > 0) (count.toDouble() / total * 100).toFloat() else 0f
                 g2d.color = UiColors.defaultText.darker()
-                g2d.drawString("$count (${String.format("%.1f", percentage)}%)", x, barY + barHeight + 30)
-                
-                x += barWidth + barSpacing
+                val valueText = "$count (${String.format("%.1f", percentage)}%)"
+                g2d.drawString(valueText, barStartX + barWidth + 15, y + barHeight / 2 + 4)
             }
         }
         
@@ -595,28 +601,32 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             }
         }
         
-        // Check which bar is being hovered
-        var x = 40  // Match the padding used in drawChart
-        val barHeight = 40
-        val barY = 50
-        val barSpacing = 15
-        val maxBarWidth = width - 80  // Match the padding used in drawChart
-        val maxValue = levelCounts.values.maxOrNull() ?: 1
+        // Sort levels by severity: ERROR, WARN, INFO, DEBUG, KAFKA, UNKNOWN
+        val severityOrder = listOf(LogLevel.ERROR, LogLevel.WARN, LogLevel.INFO, LogLevel.DEBUG, LogLevel.KAFKA, LogLevel.UNKNOWN)
+        val sortedLevels = severityOrder.filter { levelCounts[it] != null && levelCounts[it]!! > 0 }
         
-        LogLevel.entries.forEach { level ->
+        // Check which horizontal bar is being hovered - updated positioning
+        val barHeight = 18  // Match the thinner bars
+        val barSpacing = 8
+        val labelSpace = 100
+        val maxBarWidth = width - labelSpace - 150
+        val maxValue = levelCounts.values.maxOrNull() ?: 1
+        val startY = 55
+        val barStartX = labelSpace
+        
+        sortedLevels.forEachIndexed { index, level ->
             val count = levelCounts[level] ?: 0L
             if (count > 0) {
+                val y = startY + index * (barHeight + barSpacing)
                 val barWidth = ((count.toDouble() / maxValue) * maxBarWidth).toInt().coerceAtLeast(2)
                 
-                // Check if mouse is over this bar
-                if (mouseX >= x && mouseX <= x + barWidth && mouseY >= barY && mouseY <= barY + barHeight) {
+                // Check if mouse is over this horizontal bar
+                if (mouseX >= barStartX && mouseX <= barStartX + barWidth && mouseY >= y && mouseY <= y + barHeight) {
                     val percentage = if (total > 0) (count.toDouble() / total * 100).toFloat() else 0f
-                    hoveredBar = 0 to level // Using 0 as dummy index since we're not tracking specific bars
+                    hoveredBar = index to level
                     tooltipInfo = TooltipInfo(mouseX, mouseY, level, count.toInt(), percentage)
                     return
                 }
-                
-                x += barWidth + barSpacing
             }
         }
         

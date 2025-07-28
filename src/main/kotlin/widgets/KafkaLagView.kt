@@ -30,9 +30,7 @@ class KafkaLagView(
     private var indexOffset = 0
     private var visibleLines = 0
     private var hideTopicsWithoutLag = false
-    private var sortByLag = false
     private val hideButtonRect = Rectangle(0, 0, 200, 25)
-    private val sortButtonRect = Rectangle(0, 0, 200, 25)
     private val refreshButtonRect = Rectangle(0, 0, 200, 25)
     
     // Chart properties
@@ -55,9 +53,10 @@ class KafkaLagView(
     private data class TooltipInfo(
         val x: Int,
         val y: Int,
-        val topic: String,
+        val category: String,
         val lag: Long,
-        val percentage: Float
+        val percentage: Float,
+        val topics: List<String>
     )
 
     private var selectedLineIndex = 0
@@ -168,13 +167,12 @@ class KafkaLagView(
             g2d.drawString(columnHeaders[col], columnOffsets[col], chartHeight + maxCharBounds.height.toInt() + 10)
         }
 
-        // Filter and sort data if necessary
+        // Filter data if necessary and always sort by lag (descending)
         if (hideTopicsWithoutLag) {
             currentLagInfo = currentLagInfo.filter { it.lag > 0 }
         }
-        if (sortByLag) {
-            currentLagInfo = currentLagInfo.sortedByDescending { it.lag }
-        }
+        // Always sort by lag in descending order
+        currentLagInfo = currentLagInfo.sortedByDescending { it.lag }
 
         // Only display the visible items based on indexOffset
         val startIndex = indexOffset.coerceAtMost(maxOf(0, currentLagInfo.size - 1))
@@ -231,14 +229,32 @@ class KafkaLagView(
             return
         }
         
-        // Calculate topic lags (aggregate by topic)
-        val topicLags = mutableMapOf<String, Long>()
+        // Group lag data into severity categories and collect topics
+        var highLagCount = 0L    // 100+
+        var mediumLagCount = 0L  // 10-100
+        var lowLagCount = 0L     // 0-10
         var totalLag = 0L
+        val highLagTopics = mutableSetOf<String>()
+        val mediumLagTopics = mutableSetOf<String>()
+        val lowLagTopics = mutableSetOf<String>()
         
         lagData.forEach { info ->
             if (!hideTopicsWithoutLag || info.lag > 0) {
-                topicLags[info.topic] = topicLags.getOrDefault(info.topic, 0L) + info.lag
                 totalLag += info.lag
+                when {
+                    info.lag >= 100 -> {
+                        highLagCount += info.lag
+                        highLagTopics.add(info.topic)
+                    }
+                    info.lag >= 10 -> {
+                        mediumLagCount += info.lag
+                        mediumLagTopics.add(info.topic)
+                    }
+                    info.lag > 0 -> {
+                        lowLagCount += info.lag
+                        lowLagTopics.add(info.topic)
+                    }
+                }
             }
         }
         
@@ -249,62 +265,66 @@ class KafkaLagView(
         // Draw chart title
         g2d.font = headerBoldFont
         g2d.color = UiColors.defaultText.brighter()
-        g2d.drawString("Kafka Consumer Lag by Topic", 10, 20)
+        g2d.drawString("Kafka Consumer Lag by Severity", 10, 20)
         
         // Draw total lag
         g2d.font = headerPlainFont
         g2d.color = UiColors.teal
         g2d.drawString("Total Lag: $totalLag", 10, 35)
         
-        // Draw chart bars
-        val barHeight = 40
-        val barY = 50
-        val barSpacing = 15
-        val maxBarWidth = width - 120  // Increased padding to prevent cut off
-        val maxValue = topicLags.values.maxOrNull() ?: 1
+        // Define severity categories with topics (sorted by severity like ERROR, WARN, INFO)
+        val severityCategories = listOf(
+            Pair(Triple("High (100+)", highLagCount, UiColors.red), highLagTopics.toList()),      // Like ERROR
+            Pair(Triple("Medium (10-100)", mediumLagCount, UiColors.orange), mediumLagTopics.toList()), // Like WARN
+            Pair(Triple("Low (0-10)", lowLagCount, UiColors.green), lowLagTopics.toList())       // Like INFO
+        ).filter { it.first.second > 0 }
         
-        var x = 40  // Increased padding
-        topicLags.entries.sortedByDescending { it.value }.forEach { entry ->
-            val topic = entry.key
-            val lag = entry.value
-            if (lag > 0) {
-                val barWidth = ((lag.toDouble() / maxValue) * maxBarWidth).toInt().coerceAtLeast(2)
-                val barColor = UiColors.red // Red color for lag
-                
-                // Check if this bar is hovered
-                val isHovered = hoveredBar?.second == topic
-                
-                // Draw glow effect for hovered bar
-                if (isHovered) {
-                    g2d.color = Color(barColor.red, barColor.green, barColor.blue, 100)
-                    g2d.fillRoundRect(x - 2, barY - 2, barWidth + 4, barHeight + 4, 6, 6)
-                }
-                
-                // Draw main bar with gradient
-                val gradient = GradientPaint(
-                    x.toFloat(), barY.toFloat(), barColor.brighter(),
-                    x.toFloat(), (barY + barHeight).toFloat(), barColor.darker()
-                )
-                g2d.paint = gradient
-                g2d.fillRoundRect(x, barY, barWidth, barHeight, 4, 4)
-                
-                // Draw bar border
-                g2d.color = barColor.darker()
-                g2d.drawRoundRect(x, barY, barWidth, barHeight, 4, 4)
-                
-                // Draw topic label (truncated if too long)
-                g2d.font = buttonFont
-                g2d.color = UiColors.defaultText
-                val topicLabel = if (topic.length > 20) topic.take(17) + "..." else topic
-                g2d.drawString(topicLabel, x, barY + barHeight + 15)
-                
-                // Draw lag and percentage
-                val percentage = if (totalLag > 0) (lag.toDouble() / totalLag * 100).toFloat() else 0f
-                g2d.color = UiColors.defaultText.darker()
-                g2d.drawString("$lag (${String.format("%.1f", percentage)}%)", x, barY + barHeight + 30)
-                
-                x += barWidth + barSpacing
+        // Draw horizontal stacked bars - thinner bars and better positioning
+        val barHeight = 18  // Made thinner (was 25)
+        val barSpacing = 8
+        val labelSpace = 120  // More space for labels
+        val maxBarWidth = width - labelSpace - 150  // Leave more space for labels and values
+        val maxValue = severityCategories.maxOfOrNull { it.first.second } ?: 1
+        val startY = 55
+        val barStartX = labelSpace  // Start bars further to the right
+        
+        severityCategories.forEachIndexed { index, (categoryInfo, topics) ->
+            val (label, count, color) = categoryInfo
+            val y = startY + index * (barHeight + barSpacing)
+            val barWidth = ((count.toDouble() / maxValue) * maxBarWidth).toInt().coerceAtLeast(2)
+            
+            // Check if this bar is hovered
+            val isHovered = hoveredBar?.second == label
+            
+            // Draw glow effect for hovered bar
+            if (isHovered) {
+                g2d.color = Color(color.red, color.green, color.blue, 100)
+                g2d.fillRoundRect(barStartX - 2, y - 2, barWidth + 4, barHeight + 4, 6, 6)
             }
+            
+            // Draw main bar with gradient
+            val gradient = GradientPaint(
+                barStartX.toFloat(), y.toFloat(), color.brighter(),
+                (barStartX + barWidth).toFloat(), y.toFloat(), color.darker()
+            )
+            g2d.paint = gradient
+            g2d.fillRoundRect(barStartX, y, barWidth, barHeight, 4, 4)
+            
+            // Draw bar border
+            g2d.color = color.darker()
+            g2d.drawRoundRect(barStartX, y, barWidth, barHeight, 4, 4)
+            
+            // Draw severity label on the left - better positioned
+            g2d.font = buttonFont
+            g2d.color = UiColors.defaultText
+            val labelWidth = g2d.fontMetrics.stringWidth(label)
+            g2d.drawString(label, barStartX - labelWidth - 15, y + barHeight / 2 + 4)
+            
+            // Draw count and percentage on the right
+            val percentage = if (totalLag > 0) (count.toDouble() / totalLag * 100).toFloat() else 0f
+            g2d.color = UiColors.defaultText.darker()
+            val valueText = "$count (${String.format("%.1f", percentage)}%)"
+            g2d.drawString(valueText, barStartX + barWidth + 15, y + barHeight / 2 + 4)
         }
         
         // Draw chart border
@@ -353,33 +373,8 @@ class KafkaLagView(
         val hideButtonY = hideButtonRect.y + (hideButtonRect.height + hideButtonMetrics.ascent) / 2 - 2
         g2d.drawString(hideButtonText, hideButtonX, hideButtonY)
 
-        // Sort button with enhanced styling
-        sortButtonRect.x = width - 420
-        sortButtonRect.y = chartHeight + 5
-        
-        // Button background with gradient
-        val sortButtonGradient = GradientPaint(
-            sortButtonRect.x.toFloat(), sortButtonRect.y.toFloat(), UiColors.selection.brighter(),
-            sortButtonRect.x.toFloat(), (sortButtonRect.y + sortButtonRect.height).toFloat(), UiColors.selection.darker()
-        )
-        g2d.paint = sortButtonGradient
-        g2d.fillRoundRect(sortButtonRect.x, sortButtonRect.y, sortButtonRect.width, sortButtonRect.height, 6, 6)
-        
-        // Button border
-        g2d.color = UiColors.defaultText.darker()
-        g2d.drawRoundRect(sortButtonRect.x, sortButtonRect.y, sortButtonRect.width, sortButtonRect.height, 6, 6)
-        
-        // Button text
-        g2d.font = buttonFont
-        g2d.color = UiColors.defaultText
-        val sortButtonText = if (sortByLag) "Unsort" else "Sort by Lag (Most to Least)"
-        val sortButtonMetrics = g2d.fontMetrics
-        val sortButtonX = sortButtonRect.x + (sortButtonRect.width - sortButtonMetrics.stringWidth(sortButtonText)) / 2
-        val sortButtonY = sortButtonRect.y + (sortButtonRect.height + sortButtonMetrics.ascent) / 2 - 2
-        g2d.drawString(sortButtonText, sortButtonX, sortButtonY)
-
-        // Refresh button with enhanced styling (kept as requested)
-        refreshButtonRect.x = width - 630
+        // Refresh button with enhanced styling - moved to replace sort button position
+        refreshButtonRect.x = width - 420
         refreshButtonRect.y = chartHeight + 5
         
         // Button background with gradient
@@ -419,8 +414,14 @@ class KafkaLagView(
     
     private fun drawTooltip() {
         tooltipInfo?.let { tooltip ->
-            val tooltipWidth = 180
-            val tooltipHeight = 70
+            val topicsText = if (tooltip.topics.isNotEmpty()) {
+                "Topics: ${tooltip.topics.take(3).joinToString(", ")}${if (tooltip.topics.size > 3) "..." else ""}"
+            } else {
+                "No topics"
+            }
+            
+            val tooltipWidth = 250
+            val tooltipHeight = 90 + if (tooltip.topics.isNotEmpty()) 20 else 0
             val padding = 8
             
             // Position tooltip to avoid edges
@@ -446,11 +447,17 @@ class KafkaLagView(
             g2d.color = UiColors.defaultText
             
             g2d.color = UiColors.red
-            g2d.drawString("${tooltip.topic}: ${tooltip.lag}", tooltipX + padding, tooltipY + padding + 15)
+            g2d.drawString("${tooltip.category}: ${tooltip.lag}", tooltipX + padding, tooltipY + padding + 15)
             
             g2d.color = UiColors.defaultText.darker()
             g2d.font = tooltipPlainFont
             g2d.drawString("Percentage: ${String.format("%.1f", tooltip.percentage)}%", tooltipX + padding, tooltipY + padding + 35)
+            
+            // Draw topics if available
+            if (tooltip.topics.isNotEmpty()) {
+                g2d.drawString(topicsText, tooltipX + padding, tooltipY + padding + 55)
+                g2d.drawString("Total topics: ${tooltip.topics.size}", tooltipX + padding, tooltipY + padding + 75)
+            }
         }
     }
 
@@ -521,12 +528,6 @@ class KafkaLagView(
             indexOffset = 0
         }
 
-        // Sort button
-        if (e.x in sortButtonRect.x until (sortButtonRect.x + sortButtonRect.width) &&
-            e.y in sortButtonRect.y until (sortButtonRect.y + sortButtonRect.height)) {
-            sortByLag = !sortByLag
-            indexOffset = 0
-        }
 
         // Refresh button (kept as requested)
         if (e.x in refreshButtonRect.x until (refreshButtonRect.x + refreshButtonRect.width) &&
@@ -592,40 +593,62 @@ class KafkaLagView(
         val lagData = lagInfo.get()
         if (lagData.isEmpty()) return
         
-        // Calculate topic lags (aggregate by topic)
-        val topicLags = mutableMapOf<String, Long>()
+        // Group lag data into severity categories and collect topics
+        var highLagCount = 0L    // 100+
+        var mediumLagCount = 0L  // 10-100
+        var lowLagCount = 0L     // 0-10
         var totalLag = 0L
+        val highLagTopics = mutableSetOf<String>()
+        val mediumLagTopics = mutableSetOf<String>()
+        val lowLagTopics = mutableSetOf<String>()
         
         lagData.forEach { info ->
             if (!hideTopicsWithoutLag || info.lag > 0) {
-                topicLags[info.topic] = topicLags.getOrDefault(info.topic, 0L) + info.lag
                 totalLag += info.lag
+                when {
+                    info.lag >= 100 -> {
+                        highLagCount += info.lag
+                        highLagTopics.add(info.topic)
+                    }
+                    info.lag >= 10 -> {
+                        mediumLagCount += info.lag
+                        mediumLagTopics.add(info.topic)
+                    }
+                    info.lag > 0 -> {
+                        lowLagCount += info.lag
+                        lowLagTopics.add(info.topic)
+                    }
+                }
             }
         }
         
-        // Check which bar is being hovered
-        var x = 40  // Match the padding used in drawChart
-        val barHeight = 40
-        val barY = 50
-        val barSpacing = 15
-        val maxBarWidth = width - 80  // Match the padding used in drawChart
-        val maxValue = topicLags.values.maxOrNull() ?: 1
+        // Define severity categories with topics (sorted by severity)
+        val severityCategories = listOf(
+            Pair(Triple("High (100+)", highLagCount, UiColors.red), highLagTopics.toList()),
+            Pair(Triple("Medium (10-100)", mediumLagCount, UiColors.orange), mediumLagTopics.toList()),
+            Pair(Triple("Low (0-10)", lowLagCount, UiColors.green), lowLagTopics.toList())
+        ).filter { it.first.second > 0 }
         
-        topicLags.entries.sortedByDescending { it.value }.forEach { entry ->
-            val topic = entry.key
-            val lag = entry.value
-            if (lag > 0) {
-                val barWidth = ((lag.toDouble() / maxValue) * maxBarWidth).toInt().coerceAtLeast(2)
-                
-                // Check if mouse is over this bar
-                if (mouseX >= x && mouseX <= x + barWidth && mouseY >= barY && mouseY <= barY + barHeight) {
-                    val percentage = if (totalLag > 0) (lag.toDouble() / totalLag * 100).toFloat() else 0f
-                    hoveredBar = 0 to topic // Using 0 as dummy index since we're not tracking specific bars
-                    tooltipInfo = TooltipInfo(mouseX, mouseY, topic, lag, percentage)
-                    return
-                }
-                
-                x += barWidth + barSpacing
+        // Check which horizontal bar is being hovered - updated positioning
+        val barHeight = 18  // Match the thinner bars
+        val barSpacing = 8
+        val labelSpace = 120
+        val maxBarWidth = width - labelSpace - 150
+        val maxValue = severityCategories.maxOfOrNull { it.first.second } ?: 1
+        val startY = 55
+        val barStartX = labelSpace
+        
+        severityCategories.forEachIndexed { index, (categoryInfo, topics) ->
+            val (label, count, _) = categoryInfo
+            val y = startY + index * (barHeight + barSpacing)
+            val barWidth = ((count.toDouble() / maxValue) * maxBarWidth).toInt().coerceAtLeast(2)
+            
+            // Check if mouse is over this horizontal bar
+            if (mouseX >= barStartX && mouseX <= barStartX + barWidth && mouseY >= y && mouseY <= y + barHeight) {
+                val percentage = if (totalLag > 0) (count.toDouble() / totalLag * 100).toFloat() else 0f
+                hoveredBar = index to label
+                tooltipInfo = TooltipInfo(mouseX, mouseY, label, count, percentage, topics)
+                return
             }
         }
         
