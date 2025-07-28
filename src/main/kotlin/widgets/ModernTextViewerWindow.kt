@@ -266,14 +266,14 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
     private fun createHeaderPanel(): JPanel {
         val headerPanel = JPanel(BorderLayout()).apply {
             background = UiColors.backgroundTeal
-            border = EmptyBorder(10, 15, 10, 15)
-            preferredSize = Dimension(0, 50)
+            border = EmptyBorder(6, 12, 6, 12)
+            preferredSize = Dimension(0, 32)
         }
         
         // Title label
         val titleLabel = JLabel("${if (domain is KafkaLineDomain) "Kafka" else "Log"} Line Details").apply {
             foreground = UiColors.defaultText
-            font = Font(Styles.normalFont, Font.BOLD, 14)
+            font = Font(Styles.normalFont, Font.BOLD, 12)
         }
         headerPanel.add(titleLabel, BorderLayout.CENTER)
         
@@ -300,7 +300,7 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
         val fieldsPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             background = UiColors.background
-            border = EmptyBorder(10, 0, 10, 0)
+            border = EmptyBorder(6, 0, 6, 0)
         }
         
         when (domain) {
@@ -334,15 +334,15 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
     private fun addField(parent: JPanel, label: String, value: String) {
         val fieldPanel = JPanel(BorderLayout()).apply {
             background = UiColors.background
-            border = EmptyBorder(5, 0, 5, 0)
-            maximumSize = Dimension(Int.MAX_VALUE, 35)
+            border = EmptyBorder(2, 0, 2, 0)
+            maximumSize = Dimension(Int.MAX_VALUE, 26)
         }
         
         // Label
         val labelComponent = JLabel("$label:").apply {
             foreground = UiColors.teal
-            font = Font(Styles.normalFont, Font.BOLD, fontSize)
-            preferredSize = Dimension(150, 25)
+            font = Font(Styles.normalFont, Font.BOLD, fontSize - 1)
+            preferredSize = Dimension(120, 20)
         }
         fieldPanel.add(labelComponent, BorderLayout.WEST)
         
@@ -355,19 +355,19 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
             isEditable = false
             background = UiColors.selectionLine
             foreground = UiColors.defaultText
-            font = Font(Styles.monoFont, Font.PLAIN, fontSize)
-            border = EmptyBorder(5, 10, 5, 10)
+            font = Font(Styles.monoFont, Font.PLAIN, fontSize - 1)
+            border = EmptyBorder(3, 8, 3, 8)
             caretColor = UiColors.defaultText
         }
         valuePanel.add(valueField, BorderLayout.CENTER)
         
         val copyButton = JButton("Copy").apply {
-            preferredSize = Dimension(60, 25)
+            preferredSize = Dimension(50, 20)
             background = UiColors.backgroundTeal
             foreground = UiColors.defaultText
             border = null
             isFocusPainted = false
-            font = Font(Styles.normalFont, Font.PLAIN, 10)
+            font = Font(Styles.normalFont, Font.PLAIN, 9)
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             
             addActionListener {
@@ -394,14 +394,14 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
     private fun createMessagePanel(): JPanel {
         val messagePanel = JPanel(BorderLayout()).apply {
             background = UiColors.background
-            border = EmptyBorder(10, 0, 0, 0)
+            border = EmptyBorder(6, 0, 0, 0)
         }
         
         // Message label
         val messageLabel = JLabel("Message:").apply {
             foreground = UiColors.teal
             font = Font(Styles.normalFont, Font.BOLD, fontSize)
-            border = EmptyBorder(0, 0, 10, 0)
+            border = EmptyBorder(0, 0, 6, 0)
         }
         messagePanel.add(messageLabel, BorderLayout.NORTH)
         
@@ -412,7 +412,7 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
             background = UiColors.selectionLine
             foreground = UiColors.defaultText
             font = Font(Styles.monoFont, Font.PLAIN, fontSize)
-            border = EmptyBorder(10, 10, 10, 10)
+            border = EmptyBorder(8, 8, 8, 8)
             caretColor = UiColors.defaultText
             
             // Set the styled text with syntax highlighting
