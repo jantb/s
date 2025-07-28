@@ -288,13 +288,13 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         g2d.color = UiColors.teal
         g2d.drawString("Total Clusters: $total", 10, 35)
         
-        // Sort levels by severity: ERROR, WARN, INFO, DEBUG, KAFKA, UNKNOWN
-        val severityOrder = listOf(LogLevel.ERROR, LogLevel.WARN, LogLevel.INFO, LogLevel.DEBUG, LogLevel.KAFKA, LogLevel.UNKNOWN)
+        // Sort levels by severity: ERROR, WARN, INFO, DEBUG, KAFKA (5 main levels, UNKNOWN excluded from chart)
+        val severityOrder = listOf(LogLevel.ERROR, LogLevel.WARN, LogLevel.INFO, LogLevel.DEBUG, LogLevel.KAFKA)
         val sortedLevels = severityOrder.filter { levelCounts[it] != null && levelCounts[it]!! > 0 }
         
-        // Draw horizontal stacked bars - thinner bars and better positioning
-        val barHeight = 18  // Made thinner (was 25)
-        val barSpacing = 8
+        // Draw horizontal stacked bars - optimized for 5 levels
+        val barHeight = 20  // Slightly increased for better visibility
+        val barSpacing = 6   // Reduced spacing to fit 5 levels better
         val labelSpace = 100  // More space for labels
         val maxBarWidth = width - labelSpace - 150  // Leave more space for labels and values
         val maxValue = levelCounts.values.maxOrNull() ?: 1
@@ -601,13 +601,13 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
             }
         }
         
-        // Sort levels by severity: ERROR, WARN, INFO, DEBUG, KAFKA, UNKNOWN
-        val severityOrder = listOf(LogLevel.ERROR, LogLevel.WARN, LogLevel.INFO, LogLevel.DEBUG, LogLevel.KAFKA, LogLevel.UNKNOWN)
+        // Sort levels by severity: ERROR, WARN, INFO, DEBUG, KAFKA (5 main levels, UNKNOWN excluded from chart)
+        val severityOrder = listOf(LogLevel.ERROR, LogLevel.WARN, LogLevel.INFO, LogLevel.DEBUG, LogLevel.KAFKA)
         val sortedLevels = severityOrder.filter { levelCounts[it] != null && levelCounts[it]!! > 0 }
         
         // Check which horizontal bar is being hovered - updated positioning
-        val barHeight = 18  // Match the thinner bars
-        val barSpacing = 8
+        val barHeight = 20  // Match the updated bar height
+        val barSpacing = 6   // Match the reduced spacing
         val labelSpace = 100
         val maxBarWidth = width - labelSpace - 150
         val maxValue = levelCounts.values.maxOrNull() ?: 1

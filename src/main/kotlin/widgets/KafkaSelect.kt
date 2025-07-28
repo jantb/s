@@ -176,18 +176,27 @@ class KafkaSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, hei
 
     override fun mousePressed(e: MouseEvent) {
         mouseposX = e.x - x
-        mouseposY = e.y - y - 7
+        mouseposY = e.y - y  // Removed the -7 offset that was causing issues
         mouseposXPressed = mouseposX
         mouseposYPressed = mouseposY
         mouseposXReleased = mouseposX
         mouseposYReleased = mouseposY
         selectedText = ""
+        
+        // Handle click-to-select functionality
+        val clickedLineIndex = (mouseposY / maxCharBounds.height.toInt()).coerceAtLeast(0) - 1
+        if (clickedLineIndex >= 0 && clickedLineIndex < items.get().size) {
+            selectedLineIndex = clickedLineIndex
+            val item = items.get()[selectedLineIndex]
+            item.selected = !item.selected
+        }
+        
         panel.repaint()
     }
 
     override fun mouseReleased(e: MouseEvent) {
         mouseposX = e.x - x
-        mouseposY = e.y - y
+        mouseposY = e.y - y  // Consistent offset removal
         mouseposXReleased = mouseposX
         mouseposYReleased = mouseposY
         selectedText = getSelectedTextFromMouseIndex(
@@ -266,7 +275,7 @@ class KafkaSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, hei
 
     override fun mouseDragged(e: MouseEvent) {
         mouseposX = e.x - x
-        mouseposY = e.y - y - 7
+        mouseposY = e.y - y  // Consistent offset removal
         mouseposXReleased = mouseposX
         mouseposYReleased = mouseposY
         cursorIndex = getCharIndexFromMouse(text, mouseposX)
@@ -275,7 +284,7 @@ class KafkaSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, hei
 
     override fun mouseMoved(e: MouseEvent) {
         mouseposX = e.x - x
-        mouseposY = e.y - y - 7
+        mouseposY = e.y - y  // Consistent offset removal
 
         panel.repaint()
     }
