@@ -701,14 +701,14 @@ class KafkaLagView(
         val kafka = Kafka()
         
         // Fetch the message at the next offset (which is the lagging message that can't be processed)
-        val kafkaLine = kafka.fetchMessage(lagInfo.topic, lagInfo.partition, lagInfo.currentOffset + 1)
+        val kafkaLine = kafka.fetchMessage(lagInfo.topic, lagInfo.partition, lagInfo.currentOffset)
         
         if (kafkaLine != null) {
             // Display the message using ModernTextViewerWindow
             displayKafkaMessage(kafkaLine)
         } else {
             // Show an error message
-            displayErrorMessage("Failed to fetch Kafka message for topic: ${lagInfo.topic}, partition: ${lagInfo.partition}, offset: ${lagInfo.currentOffset + 1}")
+            displayErrorMessage("Failed to fetch Kafka message for topic: ${lagInfo.topic}, partition: ${lagInfo.partition}, offset: ${lagInfo.currentOffset}")
         }
     }
     
