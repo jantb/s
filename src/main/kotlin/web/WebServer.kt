@@ -271,6 +271,17 @@ class WebServer(private val port: Int = 9999) {
                                                                 clientTopics[clientId]?.clear()
                                                             }
                                                         }
+                                                        
+                                                        "unassignTopics" -> {
+                                                            message.topics?.let { topics ->
+                                                                Channels.kafkaChannel.offer(UnassignTopics(topics))
+                                                                clientMutex.withLock {
+                                                                    topics.forEach { topic ->
+                                                                        clientTopics[clientId]?.remove(topic)
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                         "listLag" -> {
                                                             try {
                                                                 val msg = ListLag()

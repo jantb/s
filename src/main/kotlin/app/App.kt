@@ -181,6 +181,7 @@ data class ListLag(val result: CompletableDeferred<List<Kafka.LagInfo>> = Comple
 class ListenToPod(val podName: String) : PodsMessage()
 class PublishToTopic(val topic: String, val key: String, val value: String) : KafkaMessage()
 class ListenToTopic(val name: List<String>) : KafkaMessage()
+class UnassignTopics(val topics: List<String>) : KafkaMessage()
 class UnListenToPod(val podName: String) : PodsMessage()
 object UnListenToPods : PodsMessage()
 class KafkaSelectChangedText(val text: String) : KafkaSelectMessage()

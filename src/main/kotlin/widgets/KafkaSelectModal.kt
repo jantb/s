@@ -53,7 +53,7 @@ class KafkaSelectModal(panel: SlidePanel, x: Int, y: Int, width: Int, height: In
     
     override fun onItemDeselected(item: TopicItem) {
         // Stop listening to this specific topic immediately and clear its cache
-        Channels.kafkaChannel.put(UnListenToTopics)
+        Channels.kafkaChannel.put(UnassignTopics(listOf(item.name)))
         // Clear the cache entries for all partitions of this topic
         // Kafka uses indexIdentifier format: "topicName#partitionNumber"
         // We need to clear all partitions, so we'll use a pattern-based approach
@@ -65,12 +65,14 @@ class KafkaSelectModal(panel: SlidePanel, x: Int, y: Int, width: Int, height: In
         val selectedTopics = items.filter { it.selected }
         val unselectedTopics = items.filter { !it.selected }
         
-        // Stop listening to all topics first
-        Channels.kafkaChannel.put(UnListenToTopics)
-        
-        // Clear the cache entries for all partitions of unselected topics
-        unselectedTopics.forEach { topic ->
-            clearTopicFromIndex(topic.name)
+        // Unassign unselected topics
+        if (unselectedTopics.isNotEmpty()) {
+            Channels.kafkaChannel.put(UnassignTopics(unselectedTopics.map { it.name }))
+            
+            // Clear the cache entries for all partitions of unselected topics
+            unselectedTopics.forEach { topic ->
+                clearTopicFromIndex(topic.name)
+            }
         }
         
         // Start listening to selected topics

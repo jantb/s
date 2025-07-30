@@ -110,6 +110,17 @@ class Kafka {
                             latch.await()
                         }
                     }
+                    
+                    is UnassignTopics -> {
+                        lock.withLock {
+                            val currentAssignment = kafkaConsumer.assignment()
+                            val partitionsToUnassign = currentAssignment.filter { topicPartition ->
+                                topicPartition.topic() in msg.topics
+                            }
+                            val newAssignment = currentAssignment - partitionsToUnassign
+                            kafkaConsumer.assign(newAssignment)
+                        }
+                    }
 
                     is PublishToTopic -> {
                         val producerConfigs = mapOf("bootstrap.servers" to "localhost:19092")
