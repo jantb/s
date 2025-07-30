@@ -9,6 +9,8 @@ import kafka.Kafka
 import kafka.Kafka.LagInfo
 import util.UiColors
 import util.Styles
+import kotlinx.datetime.Instant
+import widgets.ModernTextViewerWindow
 import java.awt.*
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
@@ -32,6 +34,9 @@ class KafkaLagView(
     private var hideTopicsWithoutLag = false
     private val hideButtonRect = Rectangle(0, 0, 200, 25)
     private val refreshButtonRect = Rectangle(0, 0, 200, 25)
+    
+    // Store positions of lag entries for click detection
+    private val lagEntryRects = mutableMapOf<Rectangle, LagInfo>()
     
     // Chart properties
     private var chartHeight = 140
@@ -174,6 +179,9 @@ class KafkaLagView(
         // Always sort by lag in descending order
         currentLagInfo = currentLagInfo.sortedByDescending { it.lag }
 
+        // Clear previous lag entry positions
+        lagEntryRects.clear()
+
         // Only display the visible items based on indexOffset
         val startIndex = indexOffset.coerceAtMost(maxOf(0, currentLagInfo.size - 1))
         val endIndex = minOf(startIndex + visibleLines, currentLagInfo.size)
@@ -182,6 +190,14 @@ class KafkaLagView(
         g2d.font = Font(Styles.normalFont, Font.PLAIN, rowHeight)
         for (i in startIndex until endIndex) {
             val info = currentLagInfo[i]
+            
+            // Calculate row position and height
+            val rowY = chartHeight + maxCharBounds.height.toInt() * ((i - startIndex) + 3) + 10 - maxCharBounds.height.toInt()
+            val rowHeight = maxCharBounds.height.toInt() + g2d.fontMetrics.maxDescent
+            
+            // Store the position of this lag entry for click detection
+            val rowRect = Rectangle(0, rowY, width, rowHeight)
+            lagEntryRects[rowRect] = info
             
             // Draw each value in its column with different colors
             val values = listOf(
@@ -515,7 +531,17 @@ class KafkaLagView(
         panel.repaint()
     }
 
-    override fun mouseClicked(e: MouseEvent) { }
+    override fun mouseClicked(e: MouseEvent) {
+        // Check if any lag entry was clicked
+        val clickY = e.y - y - 7
+        for ((rect, lagInfo) in lagEntryRects) {
+            if (clickY >= rect.y && clickY <= rect.y + rect.height) {
+                // A lag entry was clicked, fetch the corresponding Kafka message
+                fetchKafkaMessage(lagInfo)
+                break
+            }
+        }
+    }
 
     override fun mousePressed(e: MouseEvent) {
         lastMouseX = e.x
@@ -667,6 +693,41 @@ class KafkaLagView(
             val result = msg.result.await()
             lagInfo.set(result)
             SwingUtilities.invokeLater { panel.repaint() }
+        }
+    }
+    
+    private fun fetchKafkaMessage(lagInfo: LagInfo) {
+        // Create a new Kafka instance to fetch the message
+        val kafka = Kafka()
+        
+        // Fetch the message at the next offset (which is the lagging message that can't be processed)
+        val kafkaLine = kafka.fetchMessage(lagInfo.topic, lagInfo.partition, lagInfo.currentOffset + 1)
+        
+        if (kafkaLine != null) {
+            // Display the message using ModernTextViewerWindow
+            displayKafkaMessage(kafkaLine)
+        } else {
+            // Show an error message
+            displayErrorMessage("Failed to fetch Kafka message for topic: ${lagInfo.topic}, partition: ${lagInfo.partition}, offset: ${lagInfo.currentOffset + 1}")
+        }
+    }
+    
+    private fun displayKafkaMessage(kafkaLine: KafkaLineDomain) {
+        // Create and show the ModernTextViewerWindow
+        SwingUtilities.invokeLater {
+            val viewer = ModernTextViewerWindow("Kafka Message Details", kafkaLine)
+            viewer.isVisible = true
+        }
+    }
+    
+    private fun displayErrorMessage(error: String) {
+        SwingUtilities.invokeLater {
+            javax.swing.JOptionPane.showMessageDialog(
+                null,
+                error,
+                "Error",
+                javax.swing.JOptionPane.ERROR_MESSAGE
+            )
         }
     }
 }

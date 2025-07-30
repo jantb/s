@@ -226,6 +226,54 @@ class Kafka {
         }
     }
 
+    fun fetchMessage(topic: String, partition: Int, offset: Long): KafkaLineDomain? {
+        // Create a temporary consumer for fetching the specific message
+        val tempConsumer = KafkaConsumer<String, ByteArray>(configs)
+        val tempSchemaRegistryClient = schemaRegistryClient
+        
+        try {
+            val topicPartition = TopicPartition(topic, partition)
+            tempConsumer.assign(listOf(topicPartition))
+            tempConsumer.seek(topicPartition, offset)
+            
+            val records = tempConsumer.poll(Duration.ofMillis(1000))
+            val record = records.records(topicPartition).firstOrNull()
+            
+            if (record != null) {
+                val value = try {
+                    KafkaAvroDeserializer(tempSchemaRegistryClient).deserialize(record.topic(), record.value())
+                        .toString()
+                } catch (e: Exception) {
+                    String(record.value() ?: ByteArray(0))
+                }
+                
+                val headers = record.headers().toList()
+                return KafkaLineDomain(
+                    seq = seq.getAndAdd(1),
+                    level = LogLevel.KAFKA,
+                    timestamp = record.timestamp(),
+                    key = record.key(),
+                    message = value,
+                    indexIdentifier = "${record.topic()}#${record.partition()}",
+                    offset = record.offset(),
+                    partition = record.partition(),
+                    topic = record.topic(),
+                    headers = headers.joinToString(" | ") { "${it.key()} : ${it.value()?.toString(Charsets.UTF_8)}" },
+                    correlationId = headers.associate { it.key() to it.value() }["X-Correlation-Id"]?.let { String(it) },
+                    requestId = headers.associate { it.key() to it.value() }["X-Request-Id"]?.let { String(it) },
+                    compositeEventId = "${record.topic()}#${record.partition()}#${record.offset()}"
+                )
+            }
+            return null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
+        } finally {
+            // Close the temporary consumer
+            tempConsumer.close()
+        }
+    }
+
     data class LagInfo(
         val groupId: String,
         val topic: String,
