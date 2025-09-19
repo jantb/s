@@ -573,12 +573,10 @@ class KafkaLagView(
     }
 
     override fun mouseClicked(e: MouseEvent) {
-        // Check if any lag entry was clicked
         val clickY = e.y - y - 7
         for ((rect, lagInfo) in lagEntryRects) {
             if (clickY >= rect.y && clickY <= rect.y + rect.height) {
-                // A lag entry was clicked, fetch the corresponding Kafka message
-                if (lagInfo.lag != 0L) {
+                if (e.isShiftDown && lagInfo.lag != 0L) {
                     fetchKafkaMessage(lagInfo)
                 }
                 break
