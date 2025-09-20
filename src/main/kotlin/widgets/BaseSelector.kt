@@ -310,7 +310,7 @@ abstract class BaseSelector<T : SelectableItem>(
         filterText = ""
         selectedLineIndex = 0
         onModalClosed()
-        
+
         // Switch back to viewer mode
         State.mode = Mode.viewer
         panel.repaint()

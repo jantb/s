@@ -102,6 +102,19 @@ class KafkaSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, hei
             g2d.color = if (it.selected) UiColors.green else UiColors.defaultText
             g2d.drawString(it.name, 0, maxCharBounds.height.toInt() * (index + 1))
         }
+
+        // Show status message at the bottom
+        val selectedCount = items.get().count { it.selected }
+        if (selectedCount > 0) {
+            g2d.color = UiColors.green
+            g2d.font = Font(Styles.normalFont, Font.BOLD, 10)
+            val statusMessage = "Selected: $selectedCount topic${if (selectedCount > 1) "s" else ""} - Press Enter or click to start listening"
+            g2d.drawString(statusMessage, 0, height - 10)
+        } else if (open) {
+            g2d.color = UiColors.defaultText.darker()
+            g2d.font = Font(Styles.normalFont, Font.PLAIN, 10)
+            g2d.drawString("Select topics and press Enter to start listening", 0, height - 10)
+        }
     }
 
     private fun drawSelectedLine() {
@@ -156,6 +169,14 @@ class KafkaSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, hei
         } else if (e.keyCode == KeyEvent.VK_ENTER) {
             val item = items.get()[selectedLineIndex]
             item.selected = !item.selected
+
+            // If we have selected topics and the modal is open, automatically close it and start listening
+            val selectedTopics = items.get().filter { it.selected }
+            if (selectedTopics.isNotEmpty() && open) {
+                open = false
+                Channels.kafkaChannel.put(ListenToTopic(name = selectedTopics.map { it.name }))
+            }
+
             panel.repaint()
 
         } else if (e.keyCode == KeyEvent.VK_K && State.onMac && e.isMetaDown) {
@@ -189,6 +210,13 @@ class KafkaSelect(private val panel: SlidePanel, x: Int, y: Int, width: Int, hei
             selectedLineIndex = clickedLineIndex
             val item = items.get()[selectedLineIndex]
             item.selected = !item.selected
+
+            // If we have selected topics and the modal is open, automatically close it and start listening
+            val selectedTopics = items.get().filter { it.selected }
+            if (selectedTopics.isNotEmpty() && open) {
+                open = false
+                Channels.kafkaChannel.put(ListenToTopic(name = selectedTopics.map { it.name }))
+            }
         }
         
         panel.repaint()
