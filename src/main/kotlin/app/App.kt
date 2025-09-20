@@ -76,6 +76,7 @@ class App : CoroutineScope {
 
                         // Record metrics for dashboard
                         dashboardService.recordLogMessage(msg.domainLine)
+                        dashboardService.recordLogMessageWithTimestamp(msg.domainLine)
                     }
 
                     is ClearNamedIndex -> {
