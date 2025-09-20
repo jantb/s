@@ -87,6 +87,9 @@ class LogLevelChart(
     private val widthDivision = 6
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.of("UTC"))
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.of("UTC"))
+
+    // Dynamic margin calculation
+    private var leftMargin = 30 // Default left margin, will be adjusted based on label width
     
     // Enhanced UI properties
     private var hoveredBar: Pair<Int, LogLevel>? = null
@@ -218,23 +221,47 @@ class LogLevelChart(
     /** Pre-calculates values that are used frequently in rendering */
     private fun updateRenderingCache(width: Int, height: Int) {
         val needsUpdate = lastRenderWidth != width || lastRenderHeight != height || cachedVisibleRange == null
-        
+
         if (needsUpdate) {
             lastRenderWidth = width
             lastRenderHeight = height
-            cachedChartWidth = (width - 60).toFloat()
+
+            // Calculate dynamic left margin based on label width
+            leftMargin = calculateLeftMargin()
+            cachedChartWidth = (width - leftMargin - 30).toFloat() // 30px right margin
             cachedMaxChartHeight = height - 55 - 35
             cachedTimeSlotWidth = cachedChartWidth / timePoints.size.coerceAtLeast(1)
 
             cachedVisibleRange = 0 to (timePoints.size - 1)
         }
-        
+
         // Initialize color cache if needed
         if (colorCache.isEmpty()) {
             allLogLevels.forEach { level ->
                 colorCache[level] = getLevelColor(level)
             }
         }
+    }
+
+    /** Calculates the left margin needed to accommodate Y-axis labels */
+    private fun calculateLeftMargin(): Int {
+        if (timePoints.isEmpty()) return 30
+
+        val font = Font("JetBrains Mono", Font.PLAIN, 11)
+        val maxCount = timePoints.maxOfOrNull { it.getTotal() } ?: 0
+        val maxLabel = (maxCount * 5 / 5).toString() // Get the maximum label value
+
+        // Create a temporary graphics context to measure text width
+        val tempImage = BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB)
+        val tempG2d = tempImage.createGraphics()
+        tempG2d.font = font
+        val metrics = tempG2d.fontMetrics
+        val labelWidth = metrics.stringWidth(maxLabel)
+        tempG2d.dispose()
+
+        // Labels are drawn at x=5, so chart area should start after label + padding
+        // labelWidth is the width of the text, so chart should start at 5 + labelWidth + 15 (more padding)
+        return 5 + labelWidth + 15
     }
     
     /** Gets cached gradient for a level, creating if necessary */
@@ -299,7 +326,7 @@ class LogLevelChart(
         // Draw main axis with better styling
         stroke = BasicStroke(2f)
         color = UiColors.defaultText.darker()
-        drawLine(30, height - 35, width - 30, height - 35)
+        drawLine(leftMargin, height - 35, width - 30, height - 35)
         stroke = BasicStroke(1f)
 
         // Track the last date to detect date changes
@@ -307,7 +334,7 @@ class LogLevelChart(
 
         // Iterate through all time points
         timePoints.forEachIndexed { index, timePoint ->
-            val xPosBase = 30 + (index * cachedTimeSlotWidth).toInt()
+            val xPosBase = leftMargin + (index * cachedTimeSlotWidth).toInt()
             
             val javaInstant = timePoint.time.toJavaInstant()
 
@@ -386,8 +413,8 @@ class LogLevelChart(
         // Draw main axes with better styling
         stroke = BasicStroke(2f)
         color = UiColors.defaultText.darker()
-        drawLine(30, height - 35, width - 30, height - 35) // X-axis
-        drawLine(30, 55, 30, height - 35) // Y-axis
+        drawLine(leftMargin, height - 35, width - 30, height - 35) // X-axis
+        drawLine(leftMargin, 55, leftMargin, height - 35) // Y-axis
         stroke = BasicStroke(1f)
         
         // Add "No Data" message with cached font
@@ -453,14 +480,14 @@ class LogLevelChart(
         
         (1..5).forEach { i ->
             val y = height - 35 - ((i.toFloat() / 5) * (height - 105)).toInt()
-            drawLine(30, y, width - 30, y)
+            drawLine(leftMargin, y, width - 30, y)
         }
         
         // Draw Y-axis labels with better styling
         stroke = BasicStroke(1f)
-        color = UiColors.defaultText.brighter()
+        color = Color.GRAY  // Grey color like date labels
         font = Font("JetBrains Mono", Font.PLAIN, 11)
-        
+
         (1..5).forEach { i ->
             val y = height - 35 - ((i.toFloat() / 5) * (height - 105)).toInt()
             val value = (maxCount * i / 5).toString()
@@ -625,7 +652,7 @@ class LogLevelChart(
     
     override fun mouseReleased(e: MouseEvent) {
         // Check if we clicked on a bar in the chart area
-        if (e.y >= 55 && e.y <= height - 35 && e.x >= 30 && e.x <= width - 30) {
+        if (e.y >= 55 && e.y <= height - 35 && e.x >= leftMargin && e.x <= width - 30) {
             handleBarClick(e.x, e.y)
         }
     }
@@ -634,7 +661,7 @@ class LogLevelChart(
         if (timePoints.isEmpty()) return
         
         // Calculate which time point was clicked
-        val chartX = mouseX - 30
+        val chartX = mouseX - leftMargin
         val timeIndex = (chartX / cachedTimeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
         
         // Pass the time index to the parent so it can calculate the correct offset
@@ -659,7 +686,7 @@ class LogLevelChart(
     }
     override fun mouseMoved(e: MouseEvent) {
         // Early exit if mouse is outside chart area
-        val mouseX = e.x - 30
+        val mouseX = e.x - leftMargin
         val mouseY = e.y
         
         if (mouseX < 0 || mouseX >= width - 60 || mouseY < 55 || mouseY > height - 35) {
