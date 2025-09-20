@@ -377,8 +377,8 @@ class ScrollableList(
         val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
             0
         } else {
-            // Adjust for chart height
-            ((height - chartHeight - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
+            // Adjust for chart height and leave margin at bottom for status messages
+            ((height - chartHeight - maxCharBounds.height.toInt() - 15) / maxCharBounds.height.toInt()) + 1
         }
         State.offset.set(indexOffset)
         State.length.set(length)
@@ -398,8 +398,8 @@ class ScrollableList(
         val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
             0
         } else {
-            // Adjust for chart height
-            ((height - chartHeight - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
+            // Adjust for chart height and leave margin at bottom for status messages
+            ((height - chartHeight - maxCharBounds.height.toInt() - 15) / maxCharBounds.height.toInt()) + 1
         }
         if (lineList.size - 1 != length && ::maxCharBounds.isInitialized) {
             lineList = (0..length).map {

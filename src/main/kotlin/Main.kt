@@ -93,11 +93,12 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
             Mode.kafkaSelect -> select(g)
             Mode.kafkaLag -> select(g)
             Mode.logGroups -> select(g)
+            Mode.dashboard -> select(g)
         }
 
         // Draw info line with commands
         g.color = magenta
-        val infoString = "Commands: Cmd+P (Pod Select), Cmd+K (Kafka Select), Cmd+G (Kafka Lag), Cmd+I (Log Groups), Cmd+Q (Quit)"
+        val infoString = "Commands: Cmd+P (Pod Select), Cmd+K (Kafka Select), Cmd+G (Kafka Lag), Cmd+I (Log Groups), Cmd+D (Dashboard), Cmd+Q (Quit)"
         val infoBounds = g.fontMetrics.getStringBounds(infoString, g)
         g.drawString(infoString, width - infoBounds.width.toInt() - 10, height - 30)
     }
@@ -158,7 +159,7 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
             e.keyCode == KeyEvent.VK_ESCAPE -> {
                 // Escape key returns to viewer mode from any modal view
                 when (State.mode) {
-                    Mode.kafkaLag, Mode.podSelect, Mode.kafkaSelect, Mode.logGroups -> {
+                    Mode.kafkaLag, Mode.podSelect, Mode.kafkaSelect, Mode.logGroups, Mode.dashboard -> {
                         State.mode = Mode.viewer
                         repaint()
                         return
@@ -199,6 +200,17 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
                 KeyEvent.VK_I -> {
                     if (State.mode != Mode.logGroups) {
                         State.mode = Mode.logGroups
+                    } else {
+                        componentMap[State.mode]?.forEach { it.keyPressed(e) }
+                        State.mode = Mode.viewer
+                    }
+                    repaint()
+                }
+
+                KeyEvent.VK_D -> {
+                    if (State.mode != Mode.dashboard) {
+                        State.mode = Mode.dashboard
+                        buildDashboardView(this)
                     } else {
                         componentMap[State.mode]?.forEach { it.keyPressed(e) }
                         State.mode = Mode.viewer
@@ -347,6 +359,16 @@ private fun buildLogGroupsView(panel: SlidePanel) {
     ) { }
 }
 
+private fun buildDashboardView(panel: SlidePanel) {
+    panel.componentMap.getOrPut(Mode.dashboard) { mutableListOf() } += DashboardView(
+        panel,
+        0,
+        0,
+        panel.width,
+        panel.height
+    )
+}
+
 object State {
     val onMac: Boolean
     val changedAt = AtomicLong(0)
@@ -375,7 +397,8 @@ enum class Mode {
     podSelect,
     kafkaSelect,
     kafkaLag,
-    logGroups
+    logGroups,
+    dashboard
 }
 
 enum class LogLevel {

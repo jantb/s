@@ -17,6 +17,7 @@ import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
 import kotlinx.coroutines.selects.select
 import kube.PodUnit
 import merge
+import widgets.DashboardService
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
@@ -24,6 +25,8 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.time.measureTimedValue
 
 class App : CoroutineScope {
+
+    private val dashboardService = DashboardService.getInstance()
 
     private class CachedList {
         private var query = ""
@@ -70,6 +73,9 @@ class App : CoroutineScope {
                         valueStores.computeIfAbsent(msg.domainLine.indexIdentifier) { ValueStore() }
                             .put(msg.domainLine)
                         changedAt.set(System.nanoTime())
+
+                        // Record metrics for dashboard
+                        dashboardService.recordLogMessage(msg.domainLine)
                     }
 
                     is ClearNamedIndex -> {

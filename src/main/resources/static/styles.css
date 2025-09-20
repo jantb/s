@@ -282,6 +282,7 @@ body {
     overflow-y: auto;
     background-color: #1e1e1e;
     max-height: none;
+    margin-bottom: 20px; /* Add margin to prevent last item from overlapping with footer */
 }
 
 .pod-modal {
@@ -360,6 +361,7 @@ body {
     overflow-y: auto;
     background-color: #1e1e1e;
     max-height: 400px;
+    margin-bottom: 20px; /* Add margin to prevent last item from overlapping with footer */
 }
 
 .log-clusters-modal .pod-list {
@@ -367,6 +369,7 @@ body {
     overflow-y: auto;
     background-color: #1e1e1e;
     max-height: none;
+    margin-bottom: 20px; /* Add margin to prevent last item from overlapping with footer */
 }
 
 .pod-item {

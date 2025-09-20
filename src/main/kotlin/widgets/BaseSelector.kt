@@ -125,7 +125,7 @@ abstract class BaseSelector<T : SelectableItem>(
     
     private fun drawItemsList() {
         val listStartY = modalY + 70
-        val listHeight = modalHeight - 120
+        val listHeight = modalHeight - 160  // Reserve more space for instructions at bottom
         val lineHeight = maxCharBounds.height.toInt() + 4
         val maxVisibleItems = listHeight / lineHeight
         

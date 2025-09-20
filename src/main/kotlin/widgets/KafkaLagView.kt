@@ -737,6 +737,18 @@ class KafkaLagView(
             // Wait for the result from the Kafka consumer thread.
             val result = msg.result.await()
             lagInfo.set(result)
+
+            // Update dashboard service with lag information
+            try {
+                val dashboardService = Class.forName("widgets.DashboardService")
+                    .getDeclaredMethod("getInstance")
+                    .invoke(null) as? Any
+                dashboardService?.javaClass?.getDeclaredMethod("updateKafkaLag", List::class.java)
+                    ?.invoke(dashboardService, result)
+            } catch (e: Exception) {
+                // Dashboard service not available, continue silently
+            }
+
             SwingUtilities.invokeLater { panel.repaint() }
         }
     }
