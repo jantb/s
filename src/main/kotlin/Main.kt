@@ -155,6 +155,18 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
         when {
             e.keyCode == KeyEvent.VK_Q && State.onMac && e.isMetaDown -> exitProcess(0)
 
+            e.keyCode == KeyEvent.VK_ESCAPE -> {
+                // Escape key returns to viewer mode from any modal view
+                when (State.mode) {
+                    Mode.kafkaLag, Mode.podSelect, Mode.kafkaSelect, Mode.logGroups -> {
+                        State.mode = Mode.viewer
+                        repaint()
+                        return
+                    }
+                    else -> {} // Do nothing for viewer mode
+                }
+            }
+
             (e.isMetaDown && State.onMac || e.isControlDown && !State.onMac) -> when (e.keyCode) {
                 KeyEvent.VK_P -> {
                     // Switch to pod select mode

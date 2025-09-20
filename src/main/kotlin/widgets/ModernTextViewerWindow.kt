@@ -289,6 +289,71 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
         }
         headerPanel.add(titleLabel, BorderLayout.CENTER)
 
+        // Always on top button - Custom implementation
+        val alwaysOnTopButton = object : JButton("Always on Top") {
+            private var isAlwaysOnTopState = false
+
+            init {
+                preferredSize = Dimension(100, 20)
+                background = UiColors.backgroundTeal
+                foreground = UiColors.defaultText
+                border = null
+                isFocusPainted = false
+                font = Font(Styles.normalFont, Font.PLAIN, 9)
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+
+                // Custom painting for better control
+                isOpaque = true
+                isContentAreaFilled = false
+
+                addActionListener {
+                    isAlwaysOnTopState = !isAlwaysOnTopState
+                    text = if (isAlwaysOnTopState) "Always on Top ✓" else "Always on Top"
+                    isAlwaysOnTop = isAlwaysOnTopState
+                    repaint()
+                }
+
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseEntered(e: MouseEvent) {
+                        repaint()
+                    }
+
+                    override fun mouseExited(e: MouseEvent) {
+                        repaint()
+                    }
+                })
+            }
+
+            override fun paintComponent(g: Graphics) {
+                val g2d = g as Graphics2D
+                g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+
+                // Determine colors based on state and hover
+                val isHovered = model.isRollover
+                val currentBackground = when {
+                    isAlwaysOnTopState && isHovered -> UiColors.teal
+                    isAlwaysOnTopState -> UiColors.teal.darker()
+                    isHovered -> UiColors.backgroundTeal.brighter()
+                    else -> UiColors.backgroundTeal
+                }
+
+                val currentForeground = if (isAlwaysOnTopState) Color.WHITE else UiColors.defaultText
+
+                // Draw background
+                g2d.color = currentBackground
+                g2d.fillRoundRect(0, 0, width, height, 6, 6)
+
+                // Draw text
+                g2d.color = currentForeground
+                g2d.font = font
+                val fm = g2d.fontMetrics
+                val textX = (width - fm.stringWidth(text)) / 2
+                val textY = (height + fm.ascent - fm.descent) / 2
+                g2d.drawString(text, textX, textY)
+            }
+        }
+        headerPanel.add(alwaysOnTopButton, BorderLayout.EAST)
+
         return headerPanel
     }
 
