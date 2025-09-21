@@ -61,7 +61,7 @@ class App : CoroutineScope {
         launch(CoroutineName("indexUpdaterScheduler")) {
             val valueStores = mutableMapOf<String, ValueStore>()
             var offsetLock = 0L
-            var buffer = CachedList()
+            val buffer = CachedList()
             while (true) {
                 when (val msg = select {
                     searchChannel.onReceive { it }

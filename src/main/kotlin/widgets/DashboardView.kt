@@ -10,9 +10,9 @@ import java.awt.*
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
-import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
 import kotlin.math.min
+import kotlin.time.ExperimentalTime
 
 class DashboardView(private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int) : ComponentOwn(),
     KeyListener,
@@ -21,7 +21,6 @@ class DashboardView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     MouseMotionListener {
 
     private val dashboardService = DashboardService.getInstance()
-    private val metrics = AtomicReference<DashboardService.DashboardMetrics>()
     private var visibleLines = 0
     private var rowHeight = 12
     private lateinit var image: BufferedImage
@@ -44,11 +43,9 @@ class DashboardView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     // Pre-calculated fonts
     private val headerBoldFont = Font(Styles.normalFont, Font.BOLD, 14)
     private val headerPlainFont = Font(Styles.normalFont, Font.PLAIN, 12)
-    private val buttonFont = Font(Styles.normalFont, Font.PLAIN, 11)
     private val tooltipFont = Font(Styles.normalFont, Font.BOLD, 12)
     private val tooltipPlainFont = Font(Styles.normalFont, Font.PLAIN, 11)
     private val metricFont = Font(Styles.normalFont, Font.BOLD, 16)
-    private val valueFont = Font(Styles.normalFont, Font.PLAIN, 14)
 
     private data class TooltipInfo(
         val x: Int,
@@ -265,6 +262,7 @@ class DashboardView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
         }
     }
 
+    @OptIn(ExperimentalTime::class)
     private fun drawThroughputChart() {
         val chartY = 130  // Moved down to account for time range buttons
         val chartHeight = 80
