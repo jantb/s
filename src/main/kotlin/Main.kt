@@ -157,15 +157,15 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
             e.keyCode == KeyEvent.VK_Q && State.onMac && e.isMetaDown -> exitProcess(0)
 
             e.keyCode == KeyEvent.VK_ESCAPE -> {
-                // For kafkaSelect mode, let the modal handle the escape key completely
-                // to ensure selected topics start streaming before closing
-                if (State.mode == Mode.kafkaSelect) {
+                // For kafkaSelect and podSelect modes, let the modal handle the escape key completely
+                // to ensure selected topics/pods start streaming before closing
+                if (State.mode == Mode.kafkaSelect || State.mode == Mode.podSelect) {
                     componentMap[State.mode]?.forEach { it.keyPressed(e) }
                     // Don't handle mode switching here - let the modal handle it
                 } else {
                     // Escape key returns to viewer mode from other modal views
                     when (State.mode) {
-                        Mode.kafkaLag, Mode.podSelect, Mode.logGroups, Mode.dashboard -> {
+                        Mode.kafkaLag, Mode.logGroups, Mode.dashboard -> {
                             State.mode = Mode.viewer
                             repaint()
                             return
