@@ -12,16 +12,19 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 /**
- * Event-driven, bucketed data collector.
+ * Event-driven, bucketed data collector optimized for very fast inserts.
  *
- * - All calculations are done on insert (no background loops, no periodic snapshots).
- * - All datapoints (except Kafka lag) are bucketed.
- * - "Live" metrics are derived from buckets; no separate live/high-res counters.
- * - Buckets are pruned on insert by time retention and optional max size.
+ * Key changes from the LinkedHashMap design:
+ * - Fixed-size ring buffers per (retention, window) spec. O(1) insert.
+ * - No pruning passes on insert. Retention is enforced by ring overwrites.
+ * - Live counters are also bucketed (e.g., 5 min -> 10s windows).
+ * - Aggregates reuse per-slot objects; their maps are allocated lazily.
  *
- * Buckets:
- * - 5-minute bucket uses 10s windows (fine-grained live view).
- * - 15, 60, 360, 1440-minute buckets use full-window aggregation.
+ * Windows:
+ * - 5 minutes -> 10-second windows (fine-grained live view).
+ * - 15, 60, 360, 1440 minutes -> 60-second windows.
+ *
+ * All calculations are done on insert; reads materialize immutable DTOs.
  */
 @OptIn(ExperimentalTime::class)
 class DataCollector private constructor() {
@@ -36,28 +39,165 @@ class DataCollector private constructor() {
             }
     }
 
+    // --------------------------------------------------------------------------------------------
     // Configuration
-    private val maxBucketSize = 1000
-    private val intervals = listOf(5, 15, 60, 360, 1440)
-    private val bucketSpecs: Map<Int, BucketSpec> =
-        intervals.associateWith { minutes ->
-            BucketSpec(retention = minutes.minutes, windowSizeSeconds = 1)
-        }
+    // --------------------------------------------------------------------------------------------
 
     private data class BucketSpec(
         val retention: Duration,
-        val windowSizeSeconds: Int
+        val window: Duration
+    ) {
+        val windowSeconds: Long = window.inWholeSeconds
+        val retentionSeconds: Long = retention.inWholeSeconds
+        val capacity: Int = ((retentionSeconds + windowSeconds - 1) / windowSeconds).toInt().coerceAtLeast(1)
+    }
+
+    // Keep the same intervals; change windows per doc comment
+    private val intervals = listOf(5, 15, 60, 360, 1440)
+    private val bucketSpecs: Map<Int, BucketSpec> = mapOf(
+        5 to BucketSpec(5.minutes, 10.seconds),
+        15 to BucketSpec(15.minutes, 60.seconds),
+        60 to BucketSpec(60.minutes, 60.seconds),
+        360 to BucketSpec(360.minutes, 60.seconds),
+        1440 to BucketSpec(1440.minutes, 60.seconds)
     )
 
+    // --------------------------------------------------------------------------------------------
+    // Aggregates (internal, mutable, reused per ring slot)
+    // --------------------------------------------------------------------------------------------
+
+    private interface ResettableAggregate {
+        fun reset()
+        fun isEmpty(): Boolean
+    }
+
+    private class MutableAggregatedThroughput : ResettableAggregate {
+        // Lazily allocate maps to minimize memory footprint
+        var totalPodThroughput: MutableMap<String, Long>? = null
+        var totalQueueThroughput: MutableMap<String, Long>? = null
+        var events: Int = 0
+
+        fun incPod(pod: String) {
+            val map = totalPodThroughput ?: HashMap<String, Long>().also { totalPodThroughput = it }
+            map[pod] = (map[pod] ?: 0L) + 1L
+            events++
+        }
+
+        fun incQueue(topic: String) {
+            val map = totalQueueThroughput ?: HashMap<String, Long>().also { totalQueueThroughput = it }
+            map[topic] = (map[topic] ?: 0L) + 1L
+            events++
+        }
+
+        override fun reset() {
+            totalPodThroughput?.clear()
+            totalQueueThroughput?.clear()
+            events = 0
+        }
+
+        override fun isEmpty(): Boolean = events == 0
+    }
+
+    private class MutableAggregatedLogLevel : ResettableAggregate {
+        var totalCounts: MutableMap<LogLevel, Long>? = null
+        var events: Int = 0
+
+        fun inc(level: LogLevel) {
+            val map = totalCounts ?: HashMap<LogLevel, Long>().also { totalCounts = it }
+            map[level] = (map[level] ?: 0L) + 1L
+            events++
+        }
+
+        override fun reset() {
+            totalCounts?.clear()
+            events = 0
+        }
+
+        override fun isEmpty(): Boolean = events == 0
+    }
+
+    // --------------------------------------------------------------------------------------------
+    // Ring buffer buckets
+    // --------------------------------------------------------------------------------------------
+
+    private class RingBucket<A : ResettableAggregate>(
+        private val spec: BucketSpec,
+        factory: () -> A
+    ) {
+        private val capacity = spec.capacity
+        private val windowSeconds = spec.windowSeconds
+
+        // Sentinel for "uninitialized"
+        private val UNSET = Long.MIN_VALUE
+
+        // Per-slot window start epoch seconds; used to detect window rollover
+        private val starts = LongArray(capacity) { UNSET }
+        private val aggregates: MutableList<A> = MutableList(capacity) { factory() }
+
+        private fun alignToWindowStart(epochSeconds: Long): Long =
+            epochSeconds - (epochSeconds % windowSeconds)
+
+        private fun indexForStart(startEpochSeconds: Long): Int {
+            val windowIndex = startEpochSeconds / windowSeconds
+            var idx = (windowIndex % capacity).toInt()
+            if (idx < 0) idx += capacity
+            return idx
+        }
+
+        fun update(ts: Instant, updater: (A) -> Unit) {
+            val startEpoch = alignToWindowStart(ts.epochSeconds)
+            val idx = indexForStart(startEpoch)
+            if (starts[idx] != startEpoch) {
+                aggregates[idx].reset()
+                starts[idx] = startEpoch
+            }
+            updater(aggregates[idx])
+        }
+
+        /**
+         * Returns non-empty windows within retention, oldest -> newest.
+         * Returned pairs are (windowEndInstant, aggregate).
+         */
+        fun collect(now: Instant): List<Pair<Instant, A>> {
+            val cutoffEpoch = now.epochSeconds - spec.retentionSeconds
+            val items = ArrayList<Triple<Long, Long, A>>(capacity)
+            for (i in 0 until capacity) {
+                val s = starts[i]
+                if (s == UNSET) continue
+                val e = s + windowSeconds
+                if (e <= cutoffEpoch) continue
+                val agg = aggregates[i]
+                if (agg.isEmpty()) continue
+                items += Triple(s, e, agg)
+            }
+            items.sortBy { it.second } // end time ascending
+            return items.map { (_, end, agg) -> Instant.fromEpochSeconds(end) to agg }
+        }
+
+        fun recentKeys(now: Instant, selector: (A) -> Map<String, Long>?): Set<String> {
+            val cutoffEpoch = now.epochSeconds - spec.retentionSeconds
+            val acc = mutableSetOf<String>()
+            for (i in 0 until capacity) {
+                val s = starts[i]
+                if (s == UNSET) continue
+                val e = s + windowSeconds
+                if (e <= cutoffEpoch) continue
+                val map = selector(aggregates[i]) ?: emptyMap()
+                if (map.isNotEmpty()) acc += map.keys
+            }
+            return acc
+        }
+    }
+
+    // --------------------------------------------------------------------------------------------
     // State
-    // - We keep per-interval, per-window aggregates keyed by windowStart (Instant).
-    // - LinkedHashMap preserves insertion order; we prune by time and bound by size.
+    // --------------------------------------------------------------------------------------------
 
-    private val throughputBuckets: MutableMap<Int, LinkedHashMap<Instant, MutableAggregatedThroughput>> =
-        intervals.associateWith { LinkedHashMap<Instant, MutableAggregatedThroughput>() }.toMutableMap()
+    private val throughputBuckets: Map<Int, RingBucket<MutableAggregatedThroughput>> =
+        bucketSpecs.mapValues { RingBucket(it.value) { MutableAggregatedThroughput() } }
 
-    private val logLevelBuckets: MutableMap<Int, LinkedHashMap<Instant, MutableAggregatedLogLevel>> =
-        intervals.associateWith { LinkedHashMap<Instant, MutableAggregatedLogLevel>() }.toMutableMap()
+    private val logLevelBuckets: Map<Int, RingBucket<MutableAggregatedLogLevel>> =
+        bucketSpecs.mapValues { RingBucket(it.value) { MutableAggregatedLogLevel() } }
 
     private val activePods = mutableSetOf<String>() // explicitly registered/known pods
     private val kafkaLagData = mutableMapOf<String, Kafka.LagInfo>()
@@ -65,31 +205,18 @@ class DataCollector private constructor() {
     // Thread-safety
     private val lock = Any()
 
-    // Internal mutable aggregates (converted to immutable DTOs when reading)
-    private data class MutableAggregatedThroughput(
-        val start: Instant,
-        val end: Instant,
-        val totalPodThroughput: MutableMap<String, Long> = mutableMapOf(),
-        val totalQueueThroughput: MutableMap<String, Long> = mutableMapOf(),
-        var events: Int = 0
-    )
+    // --------------------------------------------------------------------------------------------
+    // Public immutable DTOs (unchanged)
+    // --------------------------------------------------------------------------------------------
 
-    private data class MutableAggregatedLogLevel(
-        val start: Instant,
-        val end: Instant,
-        val totalCounts: MutableMap<LogLevel, Long> = mutableMapOf(),
-        var events: Int = 0
-    )
-
-    // Public immutable DTOs
     data class ThroughputDataPoint(
-        val messageTimestamp: Instant, // bucket end
+        val messageTimestamp: Instant, // window end
         val podThroughput: Map<String, Long>,
         val queueThroughput: Map<String, Long>
     )
 
     data class LogLevelDataPoint(
-        val messageTimestamp: Instant, // bucket end
+        val messageTimestamp: Instant, // window end
         val counts: Map<LogLevel, Long>
     )
 
@@ -115,7 +242,9 @@ class DataCollector private constructor() {
         val dataPointCount: Int
     )
 
-    // Public interface ---------------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------
+    // Public interface
+    // --------------------------------------------------------------------------------------------
 
     fun recordLogMessage(line: DomainLine) {
         val ts = Clock.System.now()
@@ -142,34 +271,39 @@ class DataCollector private constructor() {
     }
 
     fun getActivePods(): Set<String> = synchronized(lock) {
-        (recentPodsFromBuckets(5) + activePods).toSet()
+        val now = Clock.System.now()
+        (recentPodsFromBuckets(now, 5) + activePods).toSet()
     }
 
     fun getActivePodsCount(): Int = getActivePods().size
 
-    // Data retrieval -----------------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------
+    // Data retrieval
+    // --------------------------------------------------------------------------------------------
 
     fun getThroughputData(minutes: Int = 5): List<ThroughputDataPoint> = synchronized(lock) {
-        val bucket = throughputBuckets[minutes] ?: return@synchronized emptyList()
-        bucket.values
-            .sortedBy { it.end }
-            .map {
+        val now = Clock.System.now()
+        val ring = throughputBuckets[minutes] ?: return@synchronized emptyList()
+        ring
+            .collect(now)
+            .map { (end, agg) ->
                 ThroughputDataPoint(
-                    messageTimestamp = it.end,
-                    podThroughput = it.totalPodThroughput.toMap(),
-                    queueThroughput = it.totalQueueThroughput.toMap()
+                    messageTimestamp = end,
+                    podThroughput = agg.totalPodThroughput?.toMap() ?: emptyMap(),
+                    queueThroughput = agg.totalQueueThroughput?.toMap() ?: emptyMap()
                 )
             }
     }
 
     fun getLogLevelData(minutes: Int = 5): List<LogLevelDataPoint> = synchronized(lock) {
-        val bucket = logLevelBuckets[minutes] ?: return@synchronized emptyList()
-        bucket.values
-            .sortedBy { it.end }
-            .map {
+        val now = Clock.System.now()
+        val ring = logLevelBuckets[minutes] ?: return@synchronized emptyList()
+        ring
+            .collect(now)
+            .map { (end, agg) ->
                 LogLevelDataPoint(
-                    messageTimestamp = it.end,
-                    counts = it.totalCounts.toMap()
+                    messageTimestamp = end,
+                    counts = agg.totalCounts?.toMap() ?: emptyMap()
                 )
             }
     }
@@ -221,7 +355,7 @@ class DataCollector private constructor() {
 
     fun getHighResThroughputData(seconds: Int = 60): List<ThroughputDataPoint> {
         val cutoff = Clock.System.now() - seconds.seconds
-        // 5-min bucket has 10s resolution; filter it
+        // 5-min bucket uses 10s windows; filter it
         return getThroughputData(5).filter { it.messageTimestamp > cutoff }
     }
 
@@ -281,7 +415,9 @@ class DataCollector private constructor() {
             .toList()
     }
 
-    // Metrics (from buckets only) ----------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------
+    // Metrics (from buckets only)
+    // --------------------------------------------------------------------------------------------
 
     fun getRawMetricsFromBuckets(): Triple<Long, Long, Double> =
         getAggregatedMetricsFromBucketsInternal(minutes = 5)
@@ -292,15 +428,18 @@ class DataCollector private constructor() {
     fun getMetricsFromHistory(minutes: Int): Triple<Long, Long, Double> =
         getAggregatedMetricsFromBucketsInternal(minutes)
 
-    // Lifecycle ----------------------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------
+    // Lifecycle
+    // --------------------------------------------------------------------------------------------
 
     fun shutdown() {
-        // No background jobs anymore. Kept for interface compatibility.
+        // No background jobs
     }
 
-    // DashboardService helpers -------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------
+    // DashboardService helpers (derived purely from buckets)
+    // --------------------------------------------------------------------------------------------
 
-    // Note: these are derived from the 24h bucket (1440 minutes).
     fun getCurrentTotalMessages(): Long {
         val ll = getLogLevelData(1440)
         return ll.sumOf { it.counts.values.sum() }
@@ -328,95 +467,32 @@ class DataCollector private constructor() {
         // No-op; event-driven model updates synchronously on insert.
     }
 
-    // Internals ----------------------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------
+    // Internals
+    // --------------------------------------------------------------------------------------------
 
     private fun recordLogMessageAt(line: DomainLine, ts: Instant) = synchronized(lock) {
         // Throughput increments (pod or queue)
-        val podIncrement: (MutableAggregatedThroughput) -> Unit = when (line) {
-            is LogLineDomain -> { acc ->
+        when (line) {
+            is LogLineDomain -> {
                 val pod = line.serviceName
-                acc.totalPodThroughput[pod] = (acc.totalPodThroughput[pod] ?: 0L) + 1L
+                throughputBuckets.forEach { (_, ring) -> ring.update(ts) { it.incPod(pod) } }
             }
-            is KafkaLineDomain -> { acc ->
+            is KafkaLineDomain -> {
                 val topic = line.topic
-                acc.totalQueueThroughput[topic] = (acc.totalQueueThroughput[topic] ?: 0L) + 1L
+                throughputBuckets.forEach { (_, ring) -> ring.update(ts) { it.incQueue(topic) } }
             }
-            else -> { _ -> } // Unknown line type: ignore throughput
+            else -> Unit // Unknown line type: ignore throughput
         }
 
         // Log level increment
-        val lvlInc: (MutableAggregatedLogLevel) -> Unit = { acc ->
-            val lvl = line.level
-            acc.totalCounts[lvl] = (acc.totalCounts[lvl] ?: 0L) + 1L
-        }
-
-        // Update all buckets and prune
-        bucketSpecs.forEach { (minutes, spec) ->
-            upsertThroughput(minutes, spec, ts, podIncrement)
-            upsertLogLevel(minutes, spec, ts, lvlInc)
-        }
-
-        pruneAllBuckets(now = Clock.System.now())
+        val lvl = line.level
+        logLevelBuckets.forEach { (_, ring) -> ring.update(ts) { it.inc(lvl) } }
     }
 
-    private fun upsertThroughput(
-        minutes: Int,
-        spec: BucketSpec,
-        ts: Instant,
-        increment: (MutableAggregatedThroughput) -> Unit
-    ) {
-        val (start, end) = windowRange(ts, spec)
-        val bucket = throughputBuckets.getValue(minutes)
-        val agg = bucket.getOrPut(start) { MutableAggregatedThroughput(start = start, end = end) }
-        increment(agg)
-        agg.events += 1
-    }
-
-    private fun upsertLogLevel(
-        minutes: Int,
-        spec: BucketSpec,
-        ts: Instant,
-        increment: (MutableAggregatedLogLevel) -> Unit
-    ) {
-        val (start, end) = windowRange(ts, spec)
-        val bucket = logLevelBuckets.getValue(minutes)
-        val agg = bucket.getOrPut(start) { MutableAggregatedLogLevel(start = start, end = end) }
-        increment(agg)
-        agg.events += 1
-    }
-
-    private fun pruneAllBuckets(now: Instant) {
-        bucketSpecs.forEach { (minutes, spec) ->
-            val cutoff = now - spec.retention
-            pruneBucket(throughputBuckets.getValue(minutes), cutoff)
-            pruneBucket(logLevelBuckets.getValue(minutes), cutoff)
-        }
-    }
-
-    private fun pruneBucket(bucket: LinkedHashMap<Instant, *>, cutoff: Instant) {
-        // Time-based pruning
-        val it = bucket.entries.iterator()
-        while (it.hasNext()) {
-            val entry = it.next()
-            val start = entry.key
-            val end = start + (when (val value = entry.value) {
-                is MutableAggregatedThroughput -> (value.end - value.start)
-                is MutableAggregatedLogLevel -> (value.end - value.start)
-                else -> 0.seconds
-            })
-            if (end < cutoff) it.remove()
-        }
-
-        // Size bound (best-effort; remove oldest entries)
-        while (bucket.size > maxBucketSize) {
-            val oldestKey = bucket.keys.minByOrNull { it } ?: break
-            bucket.remove(oldestKey)
-        }
-    }
-
-    private fun recentPodsFromBuckets(minutes: Int): Set<String> {
-        val tps = throughputBuckets[minutes]?.values ?: return emptySet()
-        return tps.flatMap { it.totalPodThroughput.keys }.toSet()
+    private fun recentPodsFromBuckets(now: Instant, minutes: Int): Set<String> {
+        val ring = throughputBuckets[minutes] ?: return emptySet()
+        return ring.recentKeys(now) { it.totalPodThroughput }
     }
 
     private fun getAggregatedMetricsFromBucketsInternal(minutes: Int): Triple<Long, Long, Double> {
@@ -438,18 +514,9 @@ class DataCollector private constructor() {
         return Triple(totalMessages, totalErrors, avg)
     }
 
-    // Utils --------------------------------------------------------------------------------------
-
-    private fun windowRange(ts: Instant, spec: BucketSpec): Pair<Instant, Instant> {
-        val start = ts.alignToInterval(spec.windowSizeSeconds.toLong())
-        val end = start + spec.windowSizeSeconds.seconds
-        return start to end
-    }
-
-    private fun Instant.alignToInterval(intervalSeconds: Long): Instant {
-        val aligned = epochSeconds - (epochSeconds % intervalSeconds)
-        return Instant.fromEpochSeconds(aligned)
-    }
+    // --------------------------------------------------------------------------------------------
+    // Utils
+    // --------------------------------------------------------------------------------------------
 
     private fun Instant.roundDown(bucketSizeSeconds: Int): Instant {
         val aligned = epochSeconds - (epochSeconds % bucketSizeSeconds)
