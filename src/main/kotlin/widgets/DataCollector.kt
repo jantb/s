@@ -1,11 +1,14 @@
 package widgets
 
 import LogLevel
-import app.*
+import app.DomainLine
+import app.KafkaLineDomain
+import app.LogLineDomain
 import kafka.Kafka
 import kotlin.math.max
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.ExperimentalTime
@@ -14,15 +17,23 @@ import kotlin.time.Instant
 /**
  * Event-driven, bucketed data collector optimized for very fast inserts.
  *
- * Key changes from the LinkedHashMap design:
+ * Key changes vs. prior iteration:
+ * - Ring buffers now use millisecond windows sized to provide >= 1000 points per bucket.
  * - Fixed-size ring buffers per (retention, window) spec. O(1) insert.
  * - No pruning passes on insert. Retention is enforced by ring overwrites.
- * - Live counters are also bucketed (e.g., 5 min -> 10s windows).
+ * - Live counters are also bucketed.
  * - Aggregates reuse per-slot objects; their maps are allocated lazily.
+ * - Kafka queue throughput is keyed by topic name (as requested).
+ * - Pod throughput is incremented for both log and kafka lines using the pod/service identity.
  *
  * Windows:
- * - 5 minutes -> 10-second windows (fine-grained live view).
- * - 15, 60, 360, 1440 minutes -> 60-second windows.
+ * - Computed dynamically so that each (retention) bucket has at least TARGET_POINTS windows.
+ *   Example (approx):
+ *     5m    -> ~300ms windows  (≈1000 points)
+ *     15m   -> ~900ms windows  (≈1000 points)
+ *     60m   -> ~3600ms windows (≈1000 points)
+ *     360m  -> ~21600ms windows(≈1000 points)
+ *     1440m -> ~86400ms windows(≈1000 points)
  *
  * All calculations are done on insert; reads materialize immutable DTOs.
  */
@@ -37,6 +48,8 @@ class DataCollector private constructor() {
             instance ?: synchronized(this) {
                 instance ?: DataCollector().also { instance = it }
             }
+
+        private const val TARGET_POINTS: Int = 1000
     }
 
     // --------------------------------------------------------------------------------------------
@@ -47,20 +60,29 @@ class DataCollector private constructor() {
         val retention: Duration,
         val window: Duration
     ) {
-        val windowSeconds: Long = window.inWholeSeconds
-        val retentionSeconds: Long = retention.inWholeSeconds
-        val capacity: Int = ((retentionSeconds + windowSeconds - 1) / windowSeconds).toInt().coerceAtLeast(1)
+        val windowMillis: Long = window.inWholeMilliseconds.coerceAtLeast(1)
+        val retentionMillis: Long = retention.inWholeMilliseconds
+        val capacity: Int =
+            ((retentionMillis + windowMillis - 1) / windowMillis)
+                .toInt()
+                .coerceAtLeast(TARGET_POINTS)
     }
 
-    // Keep the same intervals; change windows per doc comment
+    // Set of intervals to expose
     private val intervals = listOf(5, 15, 60, 360, 1440)
-    private val bucketSpecs: Map<Int, BucketSpec> = mapOf(
-        5 to BucketSpec(5.minutes, 10.seconds),
-        15 to BucketSpec(15.minutes, 60.seconds),
-        60 to BucketSpec(60.minutes, 60.seconds),
-        360 to BucketSpec(360.minutes, 60.seconds),
-        1440 to BucketSpec(1440.minutes, 60.seconds)
-    )
+
+    private fun windowForRetention(retention: Duration): Duration {
+        val ms = retention.inWholeMilliseconds
+        // Smallest window to get at least TARGET_POINTS data points
+        val step = (ms / TARGET_POINTS).coerceAtLeast(1)
+        return step.milliseconds
+    }
+
+    private val bucketSpecs: Map<Int, BucketSpec> =
+        intervals.associateWith { minutes ->
+            val retention = minutes.minutes
+            BucketSpec(retention = retention, window = windowForRetention(retention))
+        }
 
     // --------------------------------------------------------------------------------------------
     // Aggregates (internal, mutable, reused per ring slot)
@@ -117,7 +139,7 @@ class DataCollector private constructor() {
     }
 
     // --------------------------------------------------------------------------------------------
-    // Ring buffer buckets
+    // Ring buffer buckets (time-indexed, millisecond windows)
     // --------------------------------------------------------------------------------------------
 
     private class RingBucket<A : ResettableAggregate>(
@@ -125,27 +147,27 @@ class DataCollector private constructor() {
         factory: () -> A
     ) {
         private val capacity = spec.capacity
-        private val windowSeconds = spec.windowSeconds
+        private val windowMillis = spec.windowMillis
 
         // Sentinel for "uninitialized"
         private val UNSET = Long.MIN_VALUE
 
-        // Per-slot window start epoch seconds; used to detect window rollover
+        // Per-slot window start epoch millis; used to detect window rollover
         private val starts = LongArray(capacity) { UNSET }
         private val aggregates: MutableList<A> = MutableList(capacity) { factory() }
 
-        private fun alignToWindowStart(epochSeconds: Long): Long =
-            epochSeconds - (epochSeconds % windowSeconds)
+        private fun alignToWindowStart(epochMillis: Long): Long =
+            epochMillis - (epochMillis % windowMillis)
 
-        private fun indexForStart(startEpochSeconds: Long): Int {
-            val windowIndex = startEpochSeconds / windowSeconds
+        private fun indexForStart(startEpochMillis: Long): Int {
+            val windowIndex = startEpochMillis / windowMillis
             var idx = (windowIndex % capacity).toInt()
             if (idx < 0) idx += capacity
             return idx
         }
 
         fun update(ts: Instant, updater: (A) -> Unit) {
-            val startEpoch = alignToWindowStart(ts.epochSeconds)
+            val startEpoch = alignToWindowStart(ts.toEpochMilliseconds())
             val idx = indexForStart(startEpoch)
             if (starts[idx] != startEpoch) {
                 aggregates[idx].reset()
@@ -159,28 +181,28 @@ class DataCollector private constructor() {
          * Returned pairs are (windowEndInstant, aggregate).
          */
         fun collect(now: Instant): List<Pair<Instant, A>> {
-            val cutoffEpoch = now.epochSeconds - spec.retentionSeconds
+            val cutoffEpoch = now.toEpochMilliseconds() - spec.retentionMillis
             val items = ArrayList<Triple<Long, Long, A>>(capacity)
             for (i in 0 until capacity) {
                 val s = starts[i]
                 if (s == UNSET) continue
-                val e = s + windowSeconds
+                val e = s + windowMillis
                 if (e <= cutoffEpoch) continue
                 val agg = aggregates[i]
                 if (agg.isEmpty()) continue
                 items += Triple(s, e, agg)
             }
             items.sortBy { it.second } // end time ascending
-            return items.map { (_, end, agg) -> Instant.fromEpochSeconds(end) to agg }
+            return items.map { (_, end, agg) -> Instant.fromEpochMilliseconds(end) to agg }
         }
 
         fun recentKeys(now: Instant, selector: (A) -> Map<String, Long>?): Set<String> {
-            val cutoffEpoch = now.epochSeconds - spec.retentionSeconds
+            val cutoffEpoch = now.toEpochMilliseconds() - spec.retentionMillis
             val acc = mutableSetOf<String>()
             for (i in 0 until capacity) {
                 val s = starts[i]
                 if (s == UNSET) continue
-                val e = s + windowSeconds
+                val e = s + windowMillis
                 if (e <= cutoffEpoch) continue
                 val map = selector(aggregates[i]) ?: emptyMap()
                 if (map.isNotEmpty()) acc += map.keys
@@ -206,7 +228,7 @@ class DataCollector private constructor() {
     private val lock = Any()
 
     // --------------------------------------------------------------------------------------------
-    // Public immutable DTOs (unchanged)
+    // Public immutable DTOs
     // --------------------------------------------------------------------------------------------
 
     data class ThroughputDataPoint(
@@ -337,7 +359,10 @@ class DataCollector private constructor() {
     fun getCurrentPodThroughput(): Map<String, Double> {
         val now = Clock.System.now()
         val since = now - 60.seconds
-        val recent = getThroughputData(5).filter { it.messageTimestamp > since }.sortedBy { it.messageTimestamp }
+        val recent = getThroughputData(5)
+            .filter { it.messageTimestamp > since }
+            .sortedBy { it.messageTimestamp }
+
         if (recent.isEmpty()) return emptyMap()
 
         val spanSeconds = max(
@@ -355,7 +380,6 @@ class DataCollector private constructor() {
 
     fun getHighResThroughputData(seconds: Int = 60): List<ThroughputDataPoint> {
         val cutoff = Clock.System.now() - seconds.seconds
-        // 5-min bucket uses 10s windows; filter it
         return getThroughputData(5).filter { it.messageTimestamp > cutoff }
     }
 
@@ -453,11 +477,17 @@ class DataCollector private constructor() {
     fun getCurrentAverageThroughput(): Double {
         val now = Clock.System.now()
         val since = now - 10.seconds
-        val recent = getThroughputData(5).filter { it.messageTimestamp > since }.sortedBy { it.messageTimestamp }
+        val recent = getThroughputData(5)
+            .filter { it.messageTimestamp > since }
+            .sortedBy { it.messageTimestamp }
 
         if (recent.isEmpty()) return 0.0
         val span = max(1L, (recent.last().messageTimestamp - recent.first().messageTimestamp).inWholeSeconds)
-        val total = recent.sumOf { it.podThroughput.values.sum() + it.queueThroughput.values.sum() }
+
+        // Use max(podSum, queueSum) per-window to avoid double counting if both were incremented.
+        val total = recent.sumOf {
+            max(it.podThroughput.values.sum(), it.queueThroughput.values.sum())
+        }
         return total.toDouble() / span
     }
 
@@ -472,17 +502,31 @@ class DataCollector private constructor() {
     // --------------------------------------------------------------------------------------------
 
     private fun recordLogMessageAt(line: DomainLine, ts: Instant) = synchronized(lock) {
-        // Throughput increments (pod or queue)
+        // Determine pod identity; prefer podName if available/filled, else fall back to serviceName.
+        // This aligns better with "pod throughput" expectations.
+        val podNameFromLog = when (line) {
+            is LogLineDomain ->  line.serviceName
+            is KafkaLineDomain -> line.topic
+
+        }
+
+        // Throughput increments (pod and/or queue)
         when (line) {
             is LogLineDomain -> {
-                val pod = line.serviceName
-                throughputBuckets.forEach { (_, ring) -> ring.update(ts) { it.incPod(pod) } }
+                podNameFromLog?.let { pod ->
+                    throughputBuckets.forEach { (_, ring) -> ring.update(ts) { it.incPod(pod) } }
+                }
             }
             is KafkaLineDomain -> {
+                // Queue throughput by topic name (requested)
                 val topic = line.topic
                 throughputBuckets.forEach { (_, ring) -> ring.update(ts) { it.incQueue(topic) } }
+
+                // Also attribute to the producing/consuming pod (improves "pod throughput" coverage)
+                podNameFromLog.let { pod ->
+                    throughputBuckets.forEach { (_, ring) -> ring.update(ts) { it.incPod(pod) } }
+                }
             }
-            else -> Unit // Unknown line type: ignore throughput
         }
 
         // Log level increment
@@ -508,7 +552,10 @@ class DataCollector private constructor() {
         val last = sorted.last().messageTimestamp
         val spanSeconds = max(1L, (last - first).inWholeSeconds)
 
-        val totalThroughput = sorted.sumOf { it.podThroughput.values.sum() + it.queueThroughput.values.sum() }
+        // Avoid double counting if both pod and queue were incremented for the same event.
+        val totalThroughput = sorted.sumOf {
+            max(it.podThroughput.values.sum(), it.queueThroughput.values.sum())
+        }
         val avg = totalThroughput.toDouble() / spanSeconds
 
         return Triple(totalMessages, totalErrors, avg)
@@ -519,7 +566,7 @@ class DataCollector private constructor() {
     // --------------------------------------------------------------------------------------------
 
     private fun Instant.roundDown(bucketSizeSeconds: Int): Instant {
-        val aligned = epochSeconds - (epochSeconds % bucketSizeSeconds)
-        return Instant.fromEpochSeconds(aligned)
+        val alignedSeconds = epochSeconds - (epochSeconds % bucketSizeSeconds)
+        return Instant.fromEpochSeconds(alignedSeconds)
     }
 }

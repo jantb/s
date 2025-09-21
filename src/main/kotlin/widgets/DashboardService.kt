@@ -1,9 +1,9 @@
 package widgets
 
-import app.DomainLine
+import app.*
 import kafka.Kafka
-import kotlinx.datetime.Instant
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 
 /**
  * Service for providing dashboard metrics interface (thread-safe, idiomatic Kotlin)
@@ -19,6 +19,13 @@ class DashboardService private constructor() {
             instance ?: synchronized(this) {
                 instance ?: DashboardService().also { instance = it }
             }
+
+        // The only allowed/supported minute intervals in DataCollector
+        private val SUPPORTED_MINUTES = listOf(5, 15, 60, 360, 1440)
+
+        // Snap UI-selected minutes to the closest supported interval
+        private fun normalizeMinutes(minutes: Int): Int =
+            SUPPORTED_MINUTES.minBy { abs(it - minutes) }
     }
 
     // Data collector instance
@@ -27,8 +34,8 @@ class DashboardService private constructor() {
     // Instant update callback
     private var onDataUpdateCallback: (() -> Unit)? = null
 
-    // Selected UI range
-    private val selectedRangeMinutes = AtomicLong(5)
+    // Selected UI range (always stored as a supported interval)
+    private val selectedRangeMinutes = AtomicInteger(5)
 
     data class DashboardMetrics(
         val totalMessages: Long,
@@ -38,19 +45,16 @@ class DashboardService private constructor() {
         val kafkaLag: Map<String, Kafka.LagInfo>
     )
 
-    init {
-        // No initialization needed - DataCollector handles its own lifecycle
-    }
-
     fun setOnDataUpdateCallback(callback: () -> Unit) {
         onDataUpdateCallback = callback
-        // Also set callback on data collector to ensure updates are propagated
         dataCollector.setOnDataUpdateCallback(callback)
     }
 
     fun setSelectedTimeRange(minutes: Int) {
-        selectedRangeMinutes.set(minutes.toLong())
+        selectedRangeMinutes.set(normalizeMinutes(minutes))
     }
+
+    private fun selectedMinutes(): Int = selectedRangeMinutes.get()
 
     fun recordLogMessage(line: DomainLine) {
         dataCollector.recordLogMessage(line)
@@ -77,14 +81,10 @@ class DashboardService private constructor() {
     fun getActivePods(): Set<String> = dataCollector.getActivePods()
 
     fun getDashboardMetrics(): DashboardMetrics {
-        val minutes = selectedRangeMinutes.get().toInt()
-        val (total, errors, avg) = when (minutes) {
-            5 -> dataCollector.getRawMetricsFromBuckets()
-            15, 60, 360, 1440 -> dataCollector.getAggregatedMetricsFromBuckets(minutes)
-            else -> dataCollector.getMetricsFromHistory(minutes)
-        }
-
+        val minutes = selectedMinutes()
+        val (total, errors, avg) = dataCollector.getAggregatedMetricsFromBuckets(minutes)
         val errorRate = if (total > 0) (errors.toDouble() / total) * 100 else 0.0
+
         return DashboardMetrics(
             totalMessages = total,
             averageThroughput = avg,
@@ -94,25 +94,33 @@ class DashboardService private constructor() {
         )
     }
 
-    fun getLogLevelData(minutes: Int = 5): List<DataCollector.LogLevelDataPoint> {
-        return dataCollector.getLogLevelData(minutes)
+    // If caller passes an arbitrary minutes value, normalize it to supported intervals
+    fun getLogLevelData(minutes: Int = selectedMinutes()): List<DataCollector.LogLevelDataPoint> {
+        val m = normalizeMinutes(minutes)
+        return dataCollector.getLogLevelData(m)
     }
 
-
-    fun getPodThroughputRates(minutes: Int = 5): Map<String, Double> {
-        return dataCollector.getPodThroughputRates(minutes)
+    fun getPodThroughputRates(minutes: Int = selectedMinutes()): Map<String, Double> {
+        val m = normalizeMinutes(minutes)
+        return dataCollector.getPodThroughputRates(m)
     }
 
     fun getCurrentPodThroughput(): Map<String, Double> {
+        // Uses last ~60 seconds internally from 5-minute bucket in DataCollector
         return dataCollector.getCurrentPodThroughput()
     }
 
     fun getHighResThroughputData(seconds: Int = 60): List<DataCollector.ThroughputDataPoint> {
+        // High-res is always from the 5-minute bucket in DataCollector
         return dataCollector.getHighResThroughputData(seconds)
     }
 
-    fun getTimeBucketedThroughputData(minutes: Int, bucketSizeSeconds: Int = 10): List<DataCollector.ThroughputDataPoint> {
-        return dataCollector.getTimeBucketedThroughputData(minutes, bucketSizeSeconds)
+    fun getTimeBucketedThroughputData(
+        minutes: Int = selectedMinutes(),
+        bucketSizeSeconds: Int = 10
+    ): List<DataCollector.ThroughputDataPoint> {
+        val m = normalizeMinutes(minutes)
+        return dataCollector.getTimeBucketedThroughputData(m, bucketSizeSeconds)
     }
 
     fun getKafkaLagSummary(): Map<String, Long> {
@@ -126,5 +134,4 @@ class DashboardService private constructor() {
     fun shutdown() {
         dataCollector.shutdown()
     }
-
 }

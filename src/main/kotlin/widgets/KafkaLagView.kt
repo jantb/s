@@ -19,6 +19,7 @@ import java.awt.image.BufferedImage
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
+import javax.swing.Timer
 import kotlinx.coroutines.*
 import kotlin.math.max
 import kotlin.math.min
@@ -42,6 +43,11 @@ class KafkaLagView(
     private var chartHeight = 140
     private var hoveredBar: Pair<Int, String>? = null // Using topic name as key for hover
     private var tooltipInfo: TooltipInfo? = null
+
+    // Auto-refresh timer for updating lag info every 30 seconds
+    private val refreshTimer = Timer(30000) {
+        refreshLagInfo()
+    }
 
     // Enhanced UI properties
     private var lastMouseX = 0
@@ -77,6 +83,12 @@ class KafkaLagView(
         this.y = y
         this.height = height
         this.width = width
+
+        // Start the auto-refresh timer (updates every 30 seconds)
+        refreshTimer.start()
+
+        // Perform initial refresh when component is created
+        refreshLagInfo()
 
         // Old style: consuming lag info from kafkaCmdGuiChannel.
         // You can remove this listener if you prefer updates only via refresh.
