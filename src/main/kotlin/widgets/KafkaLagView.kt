@@ -44,10 +44,6 @@ class KafkaLagView(
     private var hoveredBar: Pair<Int, String>? = null // Using topic name as key for hover
     private var tooltipInfo: TooltipInfo? = null
 
-    // Auto-refresh timer for updating lag info every 30 seconds
-    private val refreshTimer = Timer(30000) {
-        refreshLagInfo()
-    }
 
     // Enhanced UI properties
     private var lastMouseX = 0
@@ -84,8 +80,6 @@ class KafkaLagView(
         this.height = height
         this.width = width
 
-        // Start the auto-refresh timer (updates every 30 seconds)
-        refreshTimer.start()
 
         // Perform initial refresh when component is created
         refreshLagInfo()
