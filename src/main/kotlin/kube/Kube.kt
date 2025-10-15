@@ -12,12 +12,10 @@ import kotlinx.serialization.json.Json
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
-import widgets.DashboardService
 
 class Kube {
     private val listenedPods: MutableMap<String, AtomicBoolean> = mutableMapOf()
     private val client = KubernetesClientBuilder().build()
-    private val dashboardService = DashboardService.getInstance()
 
     init {
         val thread = Thread {
@@ -26,18 +24,13 @@ class Kube {
                     is ListPods -> msg.result.complete(listPodsInAllNamespaces())
                     is ListenToPod -> {
                         listenedPods[msg.podName] = addLogsToIndex(msg.podName)
-                        dashboardService.registerActivePod(msg.podName)
                     }
 
                     is UnListenToPod -> {
                         listenedPods.remove(msg.podName)?.set(false)
-                        dashboardService.unregisterActivePod(msg.podName)
                     }
 
                     is UnListenToPods -> {
-                        listenedPods.forEach { (podName, _) ->
-                            dashboardService.unregisterActivePod(podName)
-                        }
                         listenedPods.forEach { it.value.set(false) }
                         listenedPods.clear()
                     }
@@ -53,7 +46,6 @@ class Kube {
                 val name = pod.metadata.name
                 if (action == Watcher.Action.ADDED && listenedPods.containsKey(name)) {
                     listenedPods[name] = addLogsToIndex(name)
-                    dashboardService.registerActivePod(name)
                 }
             }
 

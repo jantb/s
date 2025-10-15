@@ -54,7 +54,7 @@ class ScrollableList(
 
     private var selectedLineIndex = 0
 
-    private var rowHeight = 12
+    private val rowHeight = 12
     private var rowHeightCurrent = 12
     private lateinit var image: BufferedImage
     private lateinit var g2d: Graphics2D
@@ -296,22 +296,6 @@ class ScrollableList(
         // Check if mouse is over the chart
         if (e.y < chartHeight) {
             logLevelChart.mouseWheelMoved(e)
-            return
-        }
-
-        // Otherwise, handle as before
-        if ((e.isControlDown && !State.onMac) || (e.isMetaDown && State.onMac)) {
-            rowHeight -= e.wheelRotation
-            rowHeight = rowHeight.coerceIn(4..100)
-            selectedLineIndex = 0
-            mouseposXPressed = 0
-            mouseposYPressed = 0
-            mouseposXReleased = 0
-            mouseposYReleased = 0
-            highlightWordMouseOver = null
-            setFollow()
-            updateResults()
-            panel.repaint()
             return
         }
 

@@ -5,7 +5,6 @@ import kafka.Kafka
 import kotlinx.coroutines.channels.trySendBlocking
 import kube.Kube
 import util.UiColors.magenta
-import web.WebServer
 import widgets.*
 import java.awt.*
 import java.awt.event.*
@@ -21,10 +20,7 @@ import kotlin.time.Duration.Companion.nanoseconds
 
 
 fun main(args: Array<String>) {
-    val useWebUI = args.contains("--web")
-    State.useWebUI = useWebUI
-
-    if (State.onMac && !useWebUI) {
+    if (State.onMac) {
         System.setProperty("apple.awt.application.appearance", "dark")
     }
 
@@ -32,10 +28,6 @@ fun main(args: Array<String>) {
     Kube()
     Kafka()
 
-    if (useWebUI) {
-        println("Starting web UI on port 9999")
-        WebServer().start()
-    } else {
         SwingUtilities.invokeLater {
             val frame = JFrame("Search")
             frame.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
@@ -68,7 +60,6 @@ fun main(args: Array<String>) {
             frame.isVisible = true
         }
     }
-}
 
 
 class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, MouseMotionListener {
@@ -93,12 +84,11 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
             Mode.kafkaSelect -> select(g)
             Mode.kafkaLag -> select(g)
             Mode.logGroups -> select(g)
-            Mode.dashboard -> select(g)
         }
 
         // Draw info line with commands
         g.color = magenta
-        val infoString = "Commands: Cmd+P (Pod Select), Cmd+K (Kafka Select), Cmd+G (Kafka Lag), Cmd+I (Log Groups), Cmd+D (Dashboard), Cmd+Q (Quit)"
+        val infoString = "Commands: Cmd+P (Pod Select), Cmd+K (Kafka Select), Cmd+G (Kafka Lag), Cmd+I (Log Groups), Cmd+Q (Quit)"
         val infoBounds = g.fontMetrics.getStringBounds(infoString, g)
         g.drawString(infoString, width - infoBounds.width.toInt() - 10, height - 30)
     }
@@ -161,16 +151,14 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
                 // to ensure selected topics/pods start streaming before closing
                 if (State.mode == Mode.kafkaSelect || State.mode == Mode.podSelect) {
                     componentMap[State.mode]?.forEach { it.keyPressed(e) }
-                    // Don't handle mode switching here - let the modal handle it
                 } else {
-                    // Escape key returns to viewer mode from other modal views
                     when (State.mode) {
-                        Mode.kafkaLag, Mode.logGroups, Mode.dashboard -> {
+                        Mode.kafkaLag, Mode.logGroups -> {
                             State.mode = Mode.viewer
                             repaint()
                             return
                         }
-                        else -> {} // Do nothing for viewer mode
+                        else -> {}
                     }
                 }
             }
@@ -214,16 +202,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
                     repaint()
                 }
 
-                KeyEvent.VK_D -> {
-                    if (State.mode != Mode.dashboard) {
-                        State.mode = Mode.dashboard
-                        buildDashboardView(this)
-                    } else {
-                        componentMap[State.mode]?.forEach { it.keyPressed(e) }
-                        State.mode = Mode.viewer
-                    }
-                    repaint()
-                }
             }
         }
 
@@ -366,16 +344,6 @@ private fun buildLogGroupsView(panel: SlidePanel) {
     ) { }
 }
 
-private fun buildDashboardView(panel: SlidePanel) {
-    panel.componentMap.getOrPut(Mode.dashboard) { mutableListOf() } += DashboardView(
-        panel,
-        0,
-        0,
-        panel.width,
-        panel.height
-    )
-}
-
 object State {
     val onMac: Boolean
     val changedAt = AtomicLong(0)
@@ -391,7 +359,6 @@ object State {
         logLevels
     })
     var mode = Mode.viewer
-    var useWebUI = false
 
     init {
         val props = System.getProperties()
@@ -405,7 +372,6 @@ enum class Mode {
     kafkaSelect,
     kafkaLag,
     logGroups,
-    dashboard
 }
 
 enum class LogLevel {
