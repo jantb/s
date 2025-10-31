@@ -6,9 +6,6 @@ import app.*
 import kotlinx.coroutines.channels.trySendBlocking
 import java.awt.event.KeyEvent
 
-/**
- * Modern modal-based Kafka topic selector
- */
 class KafkaSelectModal(panel: SlidePanel, x: Int, y: Int, width: Int, height: Int) : 
     BaseSelector<KafkaSelectModal.TopicItem>(panel, x, y, width, height) {
     

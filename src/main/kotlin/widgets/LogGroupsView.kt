@@ -32,7 +32,6 @@ class LogGroupsView(private val panel: SlidePanel, x: Int, y: Int, width: Int, h
     private var indexOffset = 0
     private var visibleLines = 0
     private var hideLowSeverity = false
-    private var sortByCount = true  // Always sort by descending count
     private val hideButtonRect = Rectangle(0, 0, 200, 25)
     
     // Chart properties

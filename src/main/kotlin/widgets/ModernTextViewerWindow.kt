@@ -32,9 +32,7 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
             when (char) {
                 '{', '[', ',' -> {
                     // JSON structural characters that indicate we're expecting a key next
-                    if (char == '{' || char == '[' || char == ',') {
-                        expectKey = true
-                    }
+                    expectKey = true
                     result.add(ColoredText(char.toString(), UiColors.teal))
                     i++
                 }
