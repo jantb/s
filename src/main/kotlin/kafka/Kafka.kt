@@ -2,7 +2,6 @@ package kafka
 
 import LogLevel
 import State
-import State.offset
 import app.*
 import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.core.JsonParser
@@ -12,8 +11,6 @@ import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient
 import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig
 import io.confluent.kafka.serializers.KafkaAvroDeserializer
 import kotlinx.coroutines.*
-import kotlinx.datetime.Instant
-import kotlinx.serialization.json.Json
 import org.apache.kafka.clients.admin.AdminClient
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.consumer.ConsumerRecords
@@ -25,7 +22,6 @@ import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.kafka.common.serialization.StringSerializer
 import util.ConfigLoader
-import java.io.IOException
 import java.time.Duration
 import java.time.OffsetDateTime
 import java.util.concurrent.CountDownLatch
@@ -71,9 +67,6 @@ class Kafka {
                 mapOf()
             )
         } else {
-            configs[AbstractKafkaSchemaSerDeConfig.BASIC_AUTH_CREDENTIALS_SOURCE] = "USER_INFO"
-            configs[AbstractKafkaSchemaSerDeConfig.USER_INFO_CONFIG] = "$schemaRegistryId:$schemaRegistrySecret"
-
             CachedSchemaRegistryClient(
                 schemaRegistryRest, 1000,
                 mapOf(
@@ -198,7 +191,6 @@ class Kafka {
                         if (currentAssignment.isEmpty()) {
                             ConsumerRecords.empty()
                         } else {
-                            val assignmentStr = currentAssignment.joinToString(", ") { "${it.topic()}-${it.partition()}" }
                             kafkaConsumer.poll(Duration.ofMillis(500))
                         }
                     }

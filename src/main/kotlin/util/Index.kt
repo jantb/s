@@ -1,6 +1,5 @@
 package util
 
-import kotlinx.html.Entities
 import merge
 import sortedByDescending
 import util.Bf.Companion.estimate
@@ -18,6 +17,9 @@ class Index<T : Comparable<T>>(
     fun add(t: T, s: String) {
         require(!isHigherRank) {
             "Can not add values to a higher rank index"
+        }
+        if (s.contains("f14a5d77-8445-4e92-8a5d-7784457e9287")) {
+            println()
         }
         if (s.isBlank()) {
             return
@@ -352,59 +354,50 @@ object GramHasher {
 
     fun grams(input: String): List<Int> {
         builder.clear()
-        var validCount = 0
-        var shortHash = 0
-        var pos = 0
 
-        // First pass: build lowercase string and compute short-string hash
+        // Build normalized string with valid characters only
         for (c in input) {
             if (c.isLetterOrDigit()) {
-                // Fast lowercase for a-z, A-Z; pass-through for 0-9
                 val lc = when {
                     c in 'A'..'Z' -> (c.code or 0x20).toChar() // Bitwise lowercase
-                    c in 'a'..'z' || c in '0'..'9' -> c
-                    else -> continue
+                    else -> c
                 }
                 builder.append(lc)
-                validCount++
-
-                // Compute short-string hash (≤ 3 chars)
-                if (pos < 3) {
-                    val code = when {
-                        lc in 'a'..'z' -> lc - 'a' // 0-25
-                        lc in '0'..'9' -> lc - '0' + 26 // 26-35
-                        else -> continue
-                    }
-                    shortHash = (shortHash shl 6) or code
-                    pos++
-                }
             }
         }
+
+        val validCount = builder.length
 
         // Handle short strings (< 3 valid chars)
         if (validCount < 3) {
-            // Pad with zeros if fewer than 3 chars
-            while (pos < 3) {
-                shortHash = shortHash shl 6
-                pos++
+            if (validCount == 0) return emptyList()
+
+            // Hash the entire short string
+            var hash = 0x811c9dc5.toInt() // FNV-1a offset basis
+            for (i in 0 until validCount) {
+                hash = hash xor builder[i].code
+                hash *= 0x01000193 // FNV-1a prime
             }
-            singleHash[0] = shortHash
+            singleHash[0] = hash
             return singleHashList
         }
 
-        // For longer strings, compute trigrams
+        // For longer strings, compute trigrams using sliding window
         val trigramCount = validCount - 2
-        // Resize hashArray if necessary
         if (hashArray.size < trigramCount) {
-            hashArray = IntArray(trigramCount.coerceAtLeast(hashArray.size * 2)) // Grow conservatively
+            hashArray = IntArray(trigramCount.coerceAtLeast(hashArray.size * 2))
         }
-        // Compute trigram hashes
+
+        // Sliding window FNV-1a hash
         for (i in 0 until trigramCount) {
-            var hash = 0
-            for (j in 0 until 3) {
-                // Use faster hash: shift and XOR
-                hash = (hash shl 5) xor builder[i + j].code
-            }
+            var hash = 0x811c9dc5.toInt() // FNV-1a offset basis
+            hash = hash xor builder[i].code
+            hash *= 0x01000193
+            hash = hash xor builder[i + 1].code
+            hash *= 0x01000193
+            hash = hash xor builder[i + 2].code
+            hash *= 0x01000193
+
             hashArray[i] = hash
         }
         return hashArray.asList().subList(0, trigramCount)
