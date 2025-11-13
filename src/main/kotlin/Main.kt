@@ -19,7 +19,7 @@ import kotlin.system.exitProcess
 import kotlin.time.Duration.Companion.nanoseconds
 
 
-fun main(args: Array<String>) {
+fun main() {
     if (State.onMac) {
         System.setProperty("apple.awt.application.appearance", "dark")
     }
