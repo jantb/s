@@ -21,7 +21,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.14")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.apache.kafka:kafka-clients:4.1.1")
-    implementation("io.confluent:kafka-avro-serializer:8.0.0")
+    implementation("io.confluent:kafka-avro-serializer:8.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     runtimeOnly("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0")
     testImplementation(kotlin("test"))
