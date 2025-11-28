@@ -149,7 +149,7 @@ class Kafka {
 
     private fun listLag(): List<LagInfo> = lock.withLock {
         val lagInfoList = mutableListOf<LagInfo>()
-        val groups = adminClient.listConsumerGroups().all().get()
+        val groups = adminClient.listGroups().all().get()
 
         groups.forEach { group ->
             val groupId = group.groupId()
