@@ -38,6 +38,10 @@ class Kafka {
     private var latch = CountDownLatch(1)
     private val lock = ReentrantLock()
 
+    // Pool of deserializers for parallel processing
+    private val deserializerPool = mutableListOf<KafkaAvroDeserializer>()
+    private val deserializerLock = ReentrantLock()
+
     init {
         val config = ConfigLoader()
         val bootstrapServers = config.getValue("CONFLUENT_BOOTSTRAP_SERVERS")
@@ -57,6 +61,15 @@ class Kafka {
 
         configs[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG] = StringDeserializer::class.java.name
         configs[ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG] = ByteArrayDeserializer::class.java.name
+
+        // Optimize fetch settings for larger batches
+        configs[ConsumerConfig.MAX_POLL_RECORDS_CONFIG] = 1000
+        configs[ConsumerConfig.FETCH_MIN_BYTES_CONFIG] = 1024 * 1024 // 1MB
+        configs[ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG] = 500
+        configs[ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG] = 1 * 1024 * 1024 // 1MB
+
+        // Enable compression for network efficiency
+        configs["compression.type"] = "snappy" // Fast compression/decompression
 
         configs[AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG] = schemaRegistryRest
 
@@ -81,6 +94,11 @@ class Kafka {
         kafkaConsumer = KafkaConsumer(configs)
         adminClient = AdminClient.create(configs)
 
+        // Initialize deserializer pool
+        repeat(Runtime.getRuntime().availableProcessors()) {
+            deserializerPool.add(KafkaAvroDeserializer(schemaRegistryClient))
+        }
+
         Thread {
             while (true) {
                 when (val msg = Channels.kafkaChannel.take()) {
@@ -103,7 +121,7 @@ class Kafka {
                             latch.await()
                         }
                     }
-                    
+
                     is UnassignTopics -> {
                         lock.withLock {
                             val currentAssignment = kafkaConsumer.assignment()
@@ -158,11 +176,32 @@ class Kafka {
         lagInfoList
     }
 
+    private fun getDeserializer(): KafkaAvroDeserializer {
+        deserializerLock.withLock {
+            return if (deserializerPool.isNotEmpty()) {
+                deserializerPool.removeAt(0)
+            } else {
+                KafkaAvroDeserializer(schemaRegistryClient)
+            }
+        }
+    }
+
+    private fun returnDeserializer(deserializer: KafkaAvroDeserializer) {
+        deserializerLock.withLock {
+            if (deserializerPool.size < Runtime.getRuntime().availableProcessors() * 2) {
+                deserializerPool.add(deserializer)
+            }
+        }
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
     private fun startConsuming(topics: List<String>) {
         val dispatcher = newSingleThreadContext("KafkaConsumerThread")
-        val scope = CoroutineScope(dispatcher)
+        val scope = CoroutineScope(dispatcher + SupervisorJob())
         notStopping.set(true)
+
+        // Dispatcher for parallel processing
+        val processingDispatcher = Dispatchers.Default
 
         scope.launch {
             lock.withLock {
@@ -195,43 +234,65 @@ class Kafka {
                         }
                     }
 
-                    for (record in records) {
-                        try {
-                            val value = try {
-                                KafkaAvroDeserializer(schemaRegistryClient).deserialize(record.topic(), record.value())
-                                    .toString()
-                            } catch (e: Exception) {
-                                // Fallback to raw bytes if deserialization fails
-                                String(record.value() ?: ByteArray(0))
+                    if (records.isEmpty) {
+                        continue
+                    }
+
+                    // Group records by partition - each partition processed on one thread
+                    val recordsByPartition = records.groupBy {
+                        TopicPartition(it.topic(), it.partition())
+                    }
+
+                    // Process each partition in parallel (1 partition = 1 thread maintains order)
+                    val jobs = recordsByPartition.map { (_, partitionRecords) ->
+                        async(processingDispatcher) {
+                            for (record in partitionRecords) {
+                                try {
+                                    val deserializer = getDeserializer()
+                                    try {
+                                        val value = try {
+                                            deserializer.deserialize(record.topic(), record.value()).toString()
+                                        } catch (e: Exception) {
+                                            String(record.value() ?: ByteArray(0))
+                                        }
+
+                                        val headers = record.headers().toList()
+                                        val headersMap = headers.associate { it.key() to it.value() }
+
+                                        val kafkaLine = KafkaLineDomain(
+                                            seq = seq.getAndAdd(1),
+                                            level = LogLevel.KAFKA,
+                                            timestamp = record.timestamp(),
+                                            key = record.key(),
+                                            message = value,
+                                            indexIdentifier = "${record.topic()}#${record.partition()}",
+                                            offset = record.offset(),
+                                            partition = record.partition(),
+                                            topic = record.topic(),
+                                            headers = headers.joinToString(" | ") {
+                                                "${it.key()} : ${it.value()?.toString(Charsets.UTF_8)}"
+                                            },
+                                            correlationId = headersMap["X-Correlation-Id"]?.let { String(it) },
+                                            requestId = headersMap["X-Request-Id"]?.let { String(it) },
+                                            compositeEventId = "${record.topic()}#${record.partition()}#${record.offset()}"
+                                        )
+
+                                        Channels.popChannel.send(AddToIndexDomainLine(kafkaLine))
+                                    } finally {
+                                        returnDeserializer(deserializer)
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
                             }
-
-                            val headers = record.headers().toList()
-                            val kafkaLine = KafkaLineDomain(
-                                seq = seq.getAndAdd(1),
-                                level = LogLevel.KAFKA,
-                                timestamp = record.timestamp(),
-                                key = record.key(),
-                                message = value,
-                                indexIdentifier = "${record.topic()}#${record.partition()}",
-                                offset = record.offset(),
-                                partition = record.partition(),
-                                topic = record.topic(),
-                                headers = headers.joinToString(" | ") { "${it.key()} : ${it.value()?.toString(Charsets.UTF_8)}" },
-                                correlationId = headers.associate { it.key() to it.value() }["X-Correlation-Id"]?.let { String(it) },
-                                requestId = headers.associate { it.key() to it.value() }["X-Request-Id"]?.let { String(it) },
-                                compositeEventId = "${record.topic()}#${record.partition()}#${record.offset()}"
-                            )
-
-                            Channels.popChannel.send(AddToIndexDomainLine(kafkaLine))
-                        } catch (e: Exception) {
-                            e.printStackTrace()
                         }
                     }
-                } catch (e: Exception) {
-                    // Log the error but continue the consumer loop
-                    e.printStackTrace()
 
-                    // Brief pause before retrying to avoid tight error loops
+                    // Wait for all partitions to complete
+                    jobs.awaitAll()
+
+                } catch (e: Exception) {
+                    e.printStackTrace()
                     try {
                         Thread.sleep(1000)
                     } catch (interrupted: InterruptedException) {
@@ -247,49 +308,54 @@ class Kafka {
     }
 
     fun fetchMessage(topic: String, partition: Int, offset: Long): KafkaLineDomain? {
-        // Create a temporary consumer for fetching the specific message
         val tempConsumer = KafkaConsumer<String, ByteArray>(configs)
-        val tempSchemaRegistryClient = schemaRegistryClient
-        
+
         try {
             val topicPartition = TopicPartition(topic, partition)
             tempConsumer.assign(listOf(topicPartition))
             tempConsumer.seek(topicPartition, offset)
-            
+
             val records = tempConsumer.poll(Duration.ofMillis(1000))
             val record = records.records(topicPartition).firstOrNull()
-            
+
             if (record != null) {
-                val value = try {
-                    KafkaAvroDeserializer(tempSchemaRegistryClient).deserialize(record.topic(), record.value())
-                        .toString()
-                } catch (e: Exception) {
-                    String(record.value() ?: ByteArray(0))
+                val deserializer = getDeserializer()
+                try {
+                    val value = try {
+                        deserializer.deserialize(record.topic(), record.value()).toString()
+                    } catch (e: Exception) {
+                        String(record.value() ?: ByteArray(0))
+                    }
+
+                    val headers = record.headers().toList()
+                    val headersMap = headers.associate { it.key() to it.value() }
+
+                    return KafkaLineDomain(
+                        seq = seq.getAndAdd(1),
+                        level = LogLevel.KAFKA,
+                        timestamp = record.timestamp(),
+                        key = record.key(),
+                        message = value,
+                        indexIdentifier = "${record.topic()}#${record.partition()}",
+                        offset = record.offset(),
+                        partition = record.partition(),
+                        topic = record.topic(),
+                        headers = headers.joinToString(" | ") {
+                            "${it.key()} : ${it.value()?.toString(Charsets.UTF_8)}"
+                        },
+                        correlationId = headersMap["X-Correlation-Id"]?.let { String(it) },
+                        requestId = headersMap["X-Request-Id"]?.let { String(it) },
+                        compositeEventId = "${record.topic()}#${record.partition()}#${record.offset()}"
+                    )
+                } finally {
+                    returnDeserializer(deserializer)
                 }
-                
-                val headers = record.headers().toList()
-                return KafkaLineDomain(
-                    seq = seq.getAndAdd(1),
-                    level = LogLevel.KAFKA,
-                    timestamp = record.timestamp(),
-                    key = record.key(),
-                    message = value,
-                    indexIdentifier = "${record.topic()}#${record.partition()}",
-                    offset = record.offset(),
-                    partition = record.partition(),
-                    topic = record.topic(),
-                    headers = headers.joinToString(" | ") { "${it.key()} : ${it.value()?.toString(Charsets.UTF_8)}" },
-                    correlationId = headers.associate { it.key() to it.value() }["X-Correlation-Id"]?.let { String(it) },
-                    requestId = headers.associate { it.key() to it.value() }["X-Request-Id"]?.let { String(it) },
-                    compositeEventId = "${record.topic()}#${record.partition()}#${record.offset()}"
-                )
             }
             return null
         } catch (e: Exception) {
             e.printStackTrace()
             return null
         } finally {
-            // Close the temporary consumer
             tempConsumer.close()
         }
     }
