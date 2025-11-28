@@ -1,7 +1,10 @@
+@file:OptIn(ExperimentalTime::class)
+
 package app
 
 import LogLevel
 import kotlinx.serialization.Serializable
+import kotlin.time.ExperimentalTime
 
 @Serializable
 data class LogLineDomain(

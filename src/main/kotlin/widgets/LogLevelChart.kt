@@ -1,10 +1,11 @@
+@file:OptIn(ExperimentalTime::class)
+
 package widgets
 
 import ComponentOwn
 import LogLevel
 import State
 import app.DomainLine
-import kotlinx.datetime.*
 import util.UiColors
 import java.awt.*
 import java.awt.event.KeyEvent
@@ -17,9 +18,13 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.DurationUnit
+import kotlin.time.ExperimentalTime
+import kotlin.time.toJavaInstant
 
 /**
  * A component that displays a bar chart of log levels over time.
@@ -32,8 +37,8 @@ class LogLevelChart(
 ) : ComponentOwn() {
 
     // Data structure for log counts at a specific time
-    data class TimePoint(
-        val time: kotlinx.datetime.Instant,
+    data class TimePoint @OptIn(ExperimentalTime::class) constructor(
+        val time: kotlin.time.Instant,
         val counts: IntArray = IntArray(LogLevel.entries.size),
         val logEntries: MutableList<DomainLine> = mutableListOf() // Store actual log entries
     ) {
@@ -70,8 +75,8 @@ class LogLevelChart(
 
     // Chart state
     private val timePoints = mutableListOf<TimePoint>()
-    private var startTime: kotlinx.datetime.Instant = Clock.System.now()
-    private var endTime: kotlinx.datetime.Instant = Clock.System.now()
+    private var startTime: kotlin.time.Instant = kotlin.time.Clock.System.now()
+    private var endTime: kotlin.time.Instant = Clock.System.now()
     private var currentScaleMax = 100 // Stable scale for bar heights and gridlines
     private var scaleLastChangedTime = Instant.now()
     private var pendingScaleMax = 0 // For delayed scale increases
@@ -90,15 +95,15 @@ class LogLevelChart(
 
     // Dynamic margin calculation
     private var leftMargin = 30 // Default left margin, will be adjusted based on label width
-    
+
     // Enhanced UI properties
     private var hoveredBar: Pair<Int, LogLevel>? = null
     private var tooltipInfo: TooltipInfo? = null
-    
+
     // Mouse interaction properties
     private var lastMouseX = 0
     private var lastMouseY = 0
-    
+
     // Performance optimization caches
     private val gradientCache = mutableMapOf<LogLevel, GradientPaint>()
     private val colorCache = mutableMapOf<LogLevel, Color>()
@@ -108,7 +113,7 @@ class LogLevelChart(
     private var cachedTimeSlotWidth = 0f
     private var cachedChartWidth = 0f
     private var cachedMaxChartHeight = 0
-    
+
     // Pre-calculated fonts
     private val headerBoldFont = Font("JetBrains Mono", Font.BOLD, 11)
     private val headerPlainFont = Font("JetBrains Mono", Font.PLAIN, 11)
@@ -119,7 +124,7 @@ class LogLevelChart(
     private val emptyChartFont = Font("JetBrains Mono", Font.ITALIC, 14)
     private val timeFont = Font("Monospaced", Font.PLAIN, 12)
     private val dateBoldFont = Font("Monospaced", Font.BOLD, 12)
-    
+
     private data class TooltipInfo(
         val x: Int,
         val y: Int,
@@ -136,17 +141,18 @@ class LogLevelChart(
     }
 
     /** Updates the chart with new log data. */
+    @OptIn(ExperimentalTime::class)
     fun updateChart(logs: List<DomainLine>) {
         if (logs.isEmpty()) return
 
         lock.lock()
         try {
             // Set time range (assuming logs are ordered newest to oldest)
-            val newStartTime = logs.lastOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
-            val newEndTime = logs.firstOrNull()?.timestamp?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) } ?: Clock.System.now()
+            val newStartTime = logs.lastOrNull()?.timestamp?.let { kotlin.time.Instant.fromEpochMilliseconds(it) } ?: kotlin.time.Clock.System.now()
+            val newEndTime = logs.firstOrNull()?.timestamp?.let { kotlin.time.Instant.fromEpochMilliseconds(it) } ?: kotlin.time.Clock.System.now()
             val adjustedEndTime = if (newStartTime == newEndTime) newStartTime.plus(1.minutes) else newEndTime
 
-            val durationTotal = newStartTime.until(adjustedEndTime, DateTimeUnit.MILLISECOND)
+            val durationTotal = adjustedEndTime.minus(newStartTime).toLong(DurationUnit.MILLISECONDS)
             val interval = durationTotal / (width.toLong() / widthDivision)
             val targetSize = (width.toLong() / widthDivision).toInt()
 
@@ -157,12 +163,12 @@ class LogLevelChart(
                 // Full recreation needed
                 startTime = newStartTime
                 endTime = adjustedEndTime
-                
+
                 timePoints.clear()
                 (0 until targetSize).forEach { i ->
-                    timePoints.add(TimePoint(startTime.plus(interval * i, DateTimeUnit.MILLISECOND)))
+                    timePoints.add(TimePoint(startTime.plus((interval * i).milliseconds)))
                 }
-                
+
                 // Invalidate caches since time range changed
                 invalidateCache()
             } else {
@@ -176,7 +182,7 @@ class LogLevelChart(
             // Assign logs to time points efficiently
             logs.forEach { domain ->
                 val level = domain.level
-                val durationSinceStart = startTime.until(kotlinx.datetime.Instant.fromEpochMilliseconds(domain.timestamp), DateTimeUnit.MILLISECOND)
+                val durationSinceStart = kotlin.time.Instant.fromEpochMilliseconds(domain.timestamp).minus(startTime).inWholeMilliseconds
                 val index = if (interval > 0) {
                     (durationSinceStart / interval).toInt().coerceIn(0, timePoints.size - 1)
                 } else 0
@@ -263,7 +269,7 @@ class LogLevelChart(
         // labelWidth is the width of the text, so chart should start at 5 + labelWidth + 15 (more padding)
         return 5 + labelWidth + 15
     }
-    
+
     /** Gets cached gradient for a level, creating if necessary */
     private fun getCachedGradient(level: LogLevel, x: Int, y: Int, height: Int): GradientPaint {
         val cacheKey = level
@@ -279,7 +285,7 @@ class LogLevelChart(
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
         // Pre-calculate values outside the lock to reduce lock time
         updateRenderingCache(width, height)
-        
+
         lock.lock()
         try {
             // Reinitialize image if dimensions change or not yet initialized
@@ -312,6 +318,7 @@ class LogLevelChart(
         }
     }
 
+    @OptIn(ExperimentalTime::class)
     private fun Graphics2D.drawChart() {
         if (timePoints.isEmpty()) {
             drawEmptyChart()
@@ -322,7 +329,7 @@ class LogLevelChart(
 
         // Draw enhanced gridlines and axis (adjusted for header height)
         drawEnhancedGridlines(currentScaleMax)
-        
+
         // Draw main axis with better styling
         stroke = BasicStroke(2f)
         color = UiColors.defaultText.darker()
@@ -335,7 +342,7 @@ class LogLevelChart(
         // Iterate through all time points
         timePoints.forEachIndexed { index, timePoint ->
             val xPosBase = leftMargin + (index * cachedTimeSlotWidth).toInt()
-            
+
             val javaInstant = timePoint.time.toJavaInstant()
 
             // Get current date string
@@ -378,11 +385,11 @@ class LogLevelChart(
                         val barWidth = cachedTimeSlotWidth.toInt() - 2
                         val barX = xPosBase
                         val barY = height - 35 - currentHeight - barHeight
-                        
+
                         // Ensure bar doesn't extend above header
                         val adjustedBarY = barY.coerceAtLeast(55)
                         val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
-                        
+
                         // Draw bar with gradient and rounded corners (only if height > 0)
                         if (adjustedBarHeight > 0) {
                             drawEnhancedBar(barX, adjustedBarY, barWidth, adjustedBarHeight, level, count, timePoint)
@@ -394,29 +401,29 @@ class LogLevelChart(
         }
 
         val totalMessages = timePoints.sumOf { it.getTotal() }
-        val durationSecs = startTime.until(endTime, DateTimeUnit.SECOND).seconds.toInt(DurationUnit.SECONDS).coerceAtLeast(1)
+        val durationSecs =endTime.minus(  startTime).toInt(DurationUnit.SECONDS).coerceAtLeast(1)
         val avgMps = totalMessages.toFloat() / durationSecs
 
         // Enhanced header information
         drawEnhancedHeader(totalMessages, avgMps, durationSecs)
         drawLegend(levels)
     }
-    
+
 
     private fun Graphics2D.drawEmptyChart() {
         color = UiColors.background
         fillRect(0, 0, width, height)
-        
+
         // Draw enhanced empty chart
         drawEnhancedGridlines(100)
-        
+
         // Draw main axes with better styling
         stroke = BasicStroke(2f)
         color = UiColors.defaultText.darker()
         drawLine(leftMargin, height - 35, width - 30, height - 35) // X-axis
         drawLine(leftMargin, 55, leftMargin, height - 35) // Y-axis
         stroke = BasicStroke(1f)
-        
+
         // Add "No Data" message with cached font
         font = emptyChartFont
         color = UiColors.defaultText.darker()
@@ -424,10 +431,11 @@ class LogLevelChart(
         val metrics = fontMetrics
         val messageWidth = metrics.stringWidth(message)
         drawString(message, (width - messageWidth) / 2, height / 2)
-        
+
         drawLegend(allLogLevels.toList())
     }
-    
+
+    @OptIn(ExperimentalTime::class)
     private fun Graphics2D.drawEnhancedHeader(totalMessages: Int, avgMps: Float, durationSecs: Int) {
         // Create header background
         val headerHeight = 50  // Increased height to accommodate two lines
@@ -437,16 +445,16 @@ class LogLevelChart(
         )
         paint = gradient
         fillRect(0, 0, width, headerHeight)
-        
+
         // Header border
         color = UiColors.defaultText.darker()
         stroke = BasicStroke(1f)
         drawLine(0, headerHeight, width, headerHeight)
-        
+
         // Time range information
         val startDateStr = dateFormatter.format(startTime.toJavaInstant())
         val endDateStr = dateFormatter.format(endTime.toJavaInstant())
-        
+
         // First line - Time range
         font = headerBoldFont
         color = UiColors.defaultText.brighter()
@@ -456,14 +464,14 @@ class LogLevelChart(
             "$startDateStr ${timeFormatter.format(startTime.toJavaInstant())} - $endDateStr ${timeFormatter.format(endTime.toJavaInstant())}"
         }
         drawString(timeRangeText, 10, 18)
-        
+
         // Second line - Duration and Statistics
         font = headerPlainFont
         color = UiColors.defaultText
         val duration = endTime.minus(startTime)
         val durationText = "Duration: $duration"
         drawString(durationText, 10, 35)
-        
+
         // Right side - Statistics on second line
         font = headerBoldFont
         color = UiColors.teal
@@ -471,18 +479,18 @@ class LogLevelChart(
         val statsWidth = fontMetrics.stringWidth(statsText)
         drawString(statsText, width - statsWidth - 10, 35)
     }
-    
+
 
     private fun Graphics2D.drawEnhancedGridlines(maxCount: Int) {
         // Draw subtle grid lines
         stroke = BasicStroke(1f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 0f, floatArrayOf(2f, 4f), 0f)
         color = Color(UiColors.defaultText.red, UiColors.defaultText.green, UiColors.defaultText.blue, 30)
-        
+
         (1..5).forEach { i ->
             val y = height - 35 - ((i.toFloat() / 5) * (height - 105)).toInt()
             drawLine(leftMargin, y, width - 30, y)
         }
-        
+
         // Draw Y-axis labels with better styling
         stroke = BasicStroke(1f)
         color = Color.GRAY  // Grey color like date labels
@@ -494,16 +502,16 @@ class LogLevelChart(
             drawString(value, 5, y + 4)
         }
     }
-    
+
     private fun Graphics2D.drawEnhancedBar(x: Int, y: Int, width: Int, height: Int, level: LogLevel, count: Int, timePoint: TimePoint) {
         val baseColor = colorCache[level] ?: getLevelColor(level)
-        
+
         // Use cached gradient
         val gradient = getCachedGradient(level, x, y, height)
-        
+
         // Check if this bar is hovered
         val isHovered = hoveredBar?.first == timePoints.indexOf(timePoint) && hoveredBar?.second == level
-        
+
         if (isHovered) {
             // Draw glow effect for hovered bar
             val glowColor = Color(baseColor.red, baseColor.green, baseColor.blue, 100)
@@ -513,55 +521,55 @@ class LogLevelChart(
             )
             fill(RoundRectangle2D.Float((x - 2).toFloat(), (y - 2).toFloat(), (width + 4).toFloat(), (height + 4).toFloat(), 4f, 4f))
         }
-        
+
         // Draw main bar with rounded corners
         paint = gradient
         fill(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), width.toFloat(), height.toFloat(), 3f, 3f))
-        
+
         // Add subtle border
         color = baseColor.darker().darker()
         stroke = BasicStroke(0.5f)
         draw(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), width.toFloat(), height.toFloat(), 3f, 3f))
     }
-    
+
     private fun Graphics2D.drawTooltip() {
         tooltipInfo?.let { tooltip ->
             val tooltipWidth = 200
             val tooltipHeight = 95
             val padding = 8
-            
+
             // Position tooltip to avoid edges
             var tooltipX = tooltip.x + 10
             var tooltipY = tooltip.y - tooltipHeight - 10
-            
+
             if (tooltipX + tooltipWidth > width) tooltipX = tooltip.x - tooltipWidth - 10
             if (tooltipY < 0) tooltipY = tooltip.y + 20
-            
+
             // Draw tooltip background with shadow
             color = Color(0, 0, 0, 100)
             fillRoundRect(tooltipX + 2, tooltipY + 2, tooltipWidth, tooltipHeight, 8, 8)
-            
+
             color = Color(40, 42, 46)
             fillRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
-            
+
             color = UiColors.defaultText.darker()
             stroke = BasicStroke(1f)
             drawRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
-            
+
             // Draw tooltip content with cached fonts
             font = tooltipFont
             color = UiColors.defaultText
-            
+
             val timeStr = timeFormatter.format(tooltip.timePoint.time.toJavaInstant())
             drawString("Time: $timeStr", tooltipX + padding, tooltipY + padding + 15)
-            
+
             color = colorCache[tooltip.level] ?: getLevelColor(tooltip.level)
             drawString("${tooltip.level.name}: ${tooltip.count}", tooltipX + padding, tooltipY + padding + 35)
-            
+
             color = UiColors.defaultText.darker()
             font = tooltipPlainFont
             drawString("Total: ${tooltip.timePoint.getTotal()}", tooltipX + padding, tooltipY + padding + 55)
-            
+
             // Add percentage information
             val percentage = if (tooltip.timePoint.getTotal() > 0) {
                 (tooltip.count.toFloat() / tooltip.timePoint.getTotal() * 100)
@@ -586,7 +594,7 @@ class LogLevelChart(
                 val selectionColor = colorCache[level] ?: getLevelColor(level)
                 color = Color(selectionColor.red, selectionColor.green, selectionColor.blue, 60)
                 fillRoundRect(boxX - 4, boxY - 4, labelWidth - 2, 18, 6, 6)
-                
+
                 color = Color(selectionColor.red, selectionColor.green, selectionColor.blue, 120)
                 stroke = BasicStroke(1.5f)
                 drawRoundRect(boxX - 4, boxY - 4, labelWidth - 2, 18, 6, 6)
@@ -601,13 +609,13 @@ class LogLevelChart(
             )
             paint = gradient
             fillRoundRect(boxX, boxY, 12, 12, 3, 3)
-            
+
             // Add subtle border to color indicator
             color = levelColor.darker()
             stroke = BasicStroke(0.5f)
             drawRoundRect(boxX, boxY, 12, 12, 3, 3)
             stroke = BasicStroke(1f)
-            
+
             // Enhanced text rendering with cached fonts
             color = if (isSelected) UiColors.defaultText.brighter() else UiColors.defaultText.darker()
             font = if (isSelected) legendBoldFont else legendFont
@@ -632,7 +640,7 @@ class LogLevelChart(
 
     override fun repaint(componentOwn: ComponentOwn) {}
     override fun keyTyped(e: KeyEvent) {}
-    
+
     override fun keyPressed(e: KeyEvent) {
         when (e.keyCode) {
             KeyEvent.VK_R -> {
@@ -643,27 +651,27 @@ class LogLevelChart(
             }
         }
     }
-    
+
     override fun keyReleased(e: KeyEvent) {}
     override fun mousePressed(e: MouseEvent) {
         lastMouseX = e.x
         lastMouseY = e.y
     }
-    
+
     override fun mouseReleased(e: MouseEvent) {
         // Check if we clicked on a bar in the chart area
         if (e.y >= 55 && e.y <= height - 35 && e.x >= leftMargin && e.x <= width - 30) {
             handleBarClick(e.x, e.y)
         }
     }
-    
+
     private fun handleBarClick(mouseX: Int, mouseY: Int) {
         if (timePoints.isEmpty()) return
-        
+
         // Calculate which time point was clicked
         val chartX = mouseX - leftMargin
         val timeIndex = (chartX / cachedTimeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
-        
+
         // Pass the time index to the parent so it can calculate the correct offset
         // by counting events to the right of this bar and adding to current offset
         onBarClicked?.invoke(timeIndex)
@@ -679,7 +687,7 @@ class LogLevelChart(
     override fun mouseWheelMoved(e: MouseWheelEvent) {
 
     }
-    
+
     override fun mouseDragged(e: MouseEvent) {
         lastMouseX = e.x
         lastMouseY = e.y
@@ -688,34 +696,34 @@ class LogLevelChart(
         // Early exit if mouse is outside chart area
         val mouseX = e.x - leftMargin
         val mouseY = e.y
-        
+
         if (mouseX < 0 || mouseX >= width - 60 || mouseY < 55 || mouseY > height - 35) {
             hoveredBar = null
             tooltipInfo = null
             return
         }
-        
+
         // Calculate which time point is being hovered
         if (timePoints.isEmpty()) {
             hoveredBar = null
             tooltipInfo = null
             return
         }
-        
+
         val timeIndex = (mouseX / cachedTimeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
         val timePoint = timePoints.getOrNull(timeIndex)
-        
+
         if (timePoint == null) {
             hoveredBar = null
             tooltipInfo = null
             return
         }
-        
+
         // Find which level bar is being hovered - optimized loop
         var currentHeight = 0
         var hoveredLevel: LogLevel? = null
         val selectedLevels = State.levels.get() // Cache the set lookup
-        
+
         for (level in allLogLevels.reversed()) {
             if (level in selectedLevels) {
                 val count = timePoint.getCount(level)
@@ -724,10 +732,10 @@ class LogLevelChart(
                     val barY = height - 35 - currentHeight - barHeight
                     val adjustedBarY = barY.coerceAtLeast(55)
                     val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
-                    
+
                     val barTop = adjustedBarY
                     val barBottom = adjustedBarY + adjustedBarHeight
-                    
+
                     if (mouseY >= barTop && mouseY <= barBottom) {
                         hoveredLevel = level
                         tooltipInfo = TooltipInfo(e.x, e.y, timePoint, level, count)
@@ -737,11 +745,11 @@ class LogLevelChart(
                 }
             }
         }
-        
+
         hoveredBar = if (hoveredLevel != null) timeIndex to hoveredLevel else null
         if (hoveredLevel == null) tooltipInfo = null
     }
-    
+
     /** Provides access to time points for offset calculation */
     fun getTimePoints(): List<TimePoint> = timePoints.toList()
 }

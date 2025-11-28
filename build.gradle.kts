@@ -1,8 +1,8 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "2.2.0"
-    kotlin("plugin.serialization") version "2.2.0"
+    kotlin("jvm") version "2.2.21"
+    kotlin("plugin.serialization") version "2.2.21"
     application
 }
 
@@ -17,20 +17,13 @@ repositories {
 }
 
 dependencies {
-    implementation("io.fabric8:kubernetes-client:7.3.1")
+    implementation("io.fabric8:kubernetes-client:7.4.0")
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.14")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    implementation("org.apache.kafka:kafka-clients:3.9.1")
+    implementation("org.apache.kafka:kafka-clients:4.1.1")
     implementation("io.confluent:kafka-avro-serializer:8.0.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
-    implementation("io.ktor:ktor-server-core:3.2.2")
-    implementation("io.ktor:ktor-server-netty:3.2.2")
-    implementation("io.ktor:ktor-server-websockets:3.2.2")
-    implementation("io.ktor:ktor-server-content-negotiation:3.2.2")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.2.2")
-    implementation("io.ktor:ktor-server-html-builder:3.2.2")
-    runtimeOnly("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    runtimeOnly("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0")
     testImplementation(kotlin("test"))
 }
 

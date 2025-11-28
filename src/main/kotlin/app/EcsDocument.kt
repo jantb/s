@@ -1,13 +1,13 @@
 package app
 
 import LogLevel
-import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlin.time.ExperimentalTime
 
 @Serializable
-data class EcsDocument (
-    @SerialName("@timestamp") val timestamp: Instant,
+data class EcsDocument @OptIn(ExperimentalTime::class) constructor(
+    @SerialName("@timestamp") val timestamp: kotlin.time.Instant,
     @SerialName("log.level") val logLevel: LogLevel,
     @SerialName("process.thread.name") val threadName: String,
     @SerialName("service.name") val serviceName: String,

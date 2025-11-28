@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalTime::class)
+
 package widgets
 
 import app.DomainLine
@@ -12,6 +14,7 @@ import java.awt.event.*
 import javax.swing.*
 import javax.swing.border.EmptyBorder
 import javax.swing.text.*
+import kotlin.time.ExperimentalTime
 
 class ModernTextViewerWindow(title: String = "Log Details", private val domain: DomainLine) : JFrame() {
 
@@ -383,7 +386,7 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
                 addField(
                     fieldsPanel,
                     "Timestamp",
-                    kotlinx.datetime.Instant.fromEpochMilliseconds(domain.timestamp).toString()
+                    kotlin.time.Instant.fromEpochMilliseconds(domain.timestamp).toString()
                 )
                 domain.correlationId?.let { addField(fieldsPanel, "Correlation ID", it) }
                 domain.requestId?.let { addField(fieldsPanel, "Request ID", it) }
@@ -399,7 +402,7 @@ class ModernTextViewerWindow(title: String = "Log Details", private val domain: 
                 addField(
                     fieldsPanel,
                     "Timestamp",
-                    kotlinx.datetime.Instant.fromEpochMilliseconds(domain.timestamp).toString()
+                    kotlin.time.Instant.fromEpochMilliseconds(domain.timestamp).toString()
                 )
                 domain.correlationId?.let { addField(fieldsPanel, "Correlation ID", it) }
                 domain.requestId?.let { addField(fieldsPanel, "Request ID", it) }

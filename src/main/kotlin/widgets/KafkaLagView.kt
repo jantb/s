@@ -3,26 +3,24 @@ package widgets
 import ComponentOwn
 import SlidePanel
 import State
-import app.*
+import app.Channels
 import app.Channels.kafkaChannel
+import app.KafkaLagInfo
+import app.KafkaLineDomain
+import app.ListLag
 import kafka.Kafka
 import kafka.Kafka.LagInfo
-import util.UiColors
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import util.Styles
-import kotlinx.datetime.Instant
-import widgets.ModernTextViewerWindow
+import util.UiColors
 import java.awt.*
 import java.awt.event.*
 import java.awt.geom.Rectangle2D
-import java.awt.geom.RoundRectangle2D
 import java.awt.image.BufferedImage
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
-import javax.swing.Timer
-import kotlinx.coroutines.*
-import kotlin.math.max
-import kotlin.math.min
 
 class KafkaLagView(
     private val panel: SlidePanel,

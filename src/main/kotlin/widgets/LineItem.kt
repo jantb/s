@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalTime::class)
+
 package widgets
 
 import ColoredText
@@ -5,10 +7,7 @@ import ComponentOwn
 import State
 import app.*
 import kotlinx.coroutines.channels.trySendBlocking
-import kotlinx.datetime.Instant
-import util.Styles
 import util.UiColors
-import java.awt.Font
 import java.awt.Graphics2D
 import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
@@ -16,6 +15,7 @@ import java.awt.event.MouseWheelEvent
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
 import kotlin.math.absoluteValue
+import kotlin.time.ExperimentalTime
 
 class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: Int, y: Int, width: Int, height: Int) :
     ComponentOwn() {
@@ -52,7 +52,7 @@ class LineItem(val parent: ComponentOwn, val inputTextLine: InputTextLine, x: In
     fun setLogJson(domainLine: DomainLine) {
         this.domain = domainLine
         this.text.clear()
-        this.text.addText(Instant.fromEpochMilliseconds(domainLine.timestamp).toString(), color = UiColors.teal)
+        this.text.addText(kotlin.time.Instant.fromEpochMilliseconds(domainLine.timestamp).toString(), color = UiColors.teal)
 
         this.text.addText(" ", color = UiColors.defaultText)
 

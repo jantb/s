@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalTime::class)
+
 package kube
 
 import app.*
@@ -7,11 +9,11 @@ import io.fabric8.kubernetes.client.Watcher
 import io.fabric8.kubernetes.client.WatcherException
 import io.fabric8.kubernetes.client.dsl.LogWatch
 import kotlinx.coroutines.*
-import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.time.ExperimentalTime
 
 class Kube {
     private val listenedPods: MutableMap<String, AtomicBoolean> = mutableMapOf()
@@ -136,7 +138,7 @@ private fun getLogJson(v: String, seq: Long, indexIdentifier: String): DomainLin
             runCatching {
                 LogLineDomain(
                     seq,
-                    timestamp = Instant.parse(timestamp).toEpochMilliseconds(),
+                    timestamp = kotlin.time.Instant.parse(timestamp).toEpochMilliseconds(),
                     level = LogLevel.UNKNOWN,
                     threadName = "",
                     serviceName = "",

@@ -8,8 +8,6 @@ import app.DomainLine
 import app.QueryChanged
 import app.ResultChanged
 import kotlinx.coroutines.channels.trySendBlocking
-import kotlinx.datetime.DateTimeUnit
-import kotlinx.datetime.until
 import util.UiColors
 import java.awt.EventQueue
 import java.awt.Font
