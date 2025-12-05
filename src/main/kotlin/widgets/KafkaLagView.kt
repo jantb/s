@@ -30,7 +30,7 @@ class KafkaLagView(
     private val lagInfo = AtomicReference<List<LagInfo>>(emptyList())
     private var indexOffset = 0
     private var visibleLines = 0
-    private var hideTopicsWithoutLag = false
+    private var hideTopicsWithoutLag = true
     private val hideButtonRect = Rectangle(0, 0, 200, 25)
     private val refreshButtonRect = Rectangle(0, 0, 200, 25)
 
@@ -182,8 +182,11 @@ class KafkaLagView(
         if (hideTopicsWithoutLag) {
             currentLagInfo = currentLagInfo.filter { it.lag > 0 }
         }
-        // Always sort by lag in descending order
-        currentLagInfo = currentLagInfo.sortedByDescending { it.lag }
+        currentLagInfo = currentLagInfo.sortedWith(
+            compareBy<LagInfo> { it.groupId }
+                .thenBy { it.topic }
+                .thenBy { it.partition }
+        )
 
         // Clear previous lag entry positions
         lagEntryRects.clear()
