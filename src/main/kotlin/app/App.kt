@@ -30,6 +30,7 @@ class App : CoroutineScope {
         private var results = emptyList<DomainLine>()
         private var resultsOffsetStart = 0L
         private var complete = false
+
         fun setQuery(newQuery: String) {
             queryChanged = query != newQuery
             query = newQuery
@@ -52,12 +53,14 @@ class App : CoroutineScope {
         }
     }
 
-
     fun start() {
         launch(CoroutineName("indexUpdaterScheduler")) {
             val valueStores = mutableMapOf<String, ValueStore>()
             var offsetLock = 0L
+
+            var bufferVersion = 0L
             val buffer = CachedList()
+
             while (true) {
                 when (val msg = select {
                     searchChannel.onReceive { it }
@@ -79,7 +82,6 @@ class App : CoroutineScope {
                     }
 
                     is ClearTopicIndexes -> {
-                        // Clear all indexes that start with "topicName#" (all partitions for the topic)
                         val keysToRemove = valueStores.keys.filter { it.startsWith("${msg.topicName}#") }
                         var totalRemoved = 0
                         keysToRemove.forEach { key ->
@@ -99,11 +101,9 @@ class App : CoroutineScope {
                     }
 
                     is QueryChanged -> {
-
-
                         if (msg.offset > 0) {
                             if (offsetLock == Long.MAX_VALUE) {
-                                offsetLock = seq.get()
+                                offsetLock = changedAt.get()
                             }
                         } else {
                             offsetLock = Long.MAX_VALUE
@@ -111,9 +111,9 @@ class App : CoroutineScope {
 
                         val listResults = measureTimedValue {
                             val n = 10000
+                            buffer.setQuery(newQuery = msg.query)
+
                             if (msg.offset > 0) {
-                                // Use caching for backward scrolling
-                                buffer.setQuery(newQuery = msg.query)
                                 if (buffer.needRefresh(offset = msg.offset.toLong())) {
                                     val cacheStartOffset = kotlin.math.max(0, msg.offset - 5000)
                                     val results = valueStores.map {
@@ -122,22 +122,25 @@ class App : CoroutineScope {
                                             offsetLock = offsetLock
                                         )
                                     }.merge().drop(cacheStartOffset).take(n + 10000).toList()
+
                                     buffer.setResults(results, cacheStartOffset.toLong(), results.size != n + 10000)
                                 }
-
                                 buffer.get(msg.offset.toLong()).take(n)
                             } else {
-                                // For initial load/follow mode (offset == 0)
-                                buffer.setQuery(newQuery = msg.query)
-                                // Always refresh when at offset 0 to get latest streaming data
-                                val results = valueStores.map {
-                                    it.value.search(
-                                        query = msg.query,
-                                        offsetLock = offsetLock
-                                    )
-                                }.merge().take(n).toList()
-                                buffer.setResults(results, 0L, results.size != n)
-                                
+                                val currentVersion = changedAt.get()
+
+                                if (buffer.needRefresh(0L) || bufferVersion != currentVersion) {
+                                    val results = valueStores.map {
+                                        it.value.search(
+                                            query = msg.query,
+                                            offsetLock = offsetLock // Long.MAX_VALUE
+                                        )
+                                    }.merge().take(n).toList()
+
+                                    buffer.setResults(results, 0L, results.size != n)
+                                    bufferVersion = currentVersion
+                                }
+
                                 buffer.get(0L).take(n)
                             }
                         }
@@ -147,7 +150,7 @@ class App : CoroutineScope {
                         kafkaCmdGuiChannel.put(
                             ResultChanged(
                                 listResults.value.take(msg.length).reversed(),
-                                listResults.value // Pass the full dataset (up to 10,000 entries) for chart generation
+                                listResults.value
                             )
                         )
                     }
@@ -155,7 +158,6 @@ class App : CoroutineScope {
             }
         }
     }
-
 
     override val coroutineContext: CoroutineContext = Dispatchers.IO
 }

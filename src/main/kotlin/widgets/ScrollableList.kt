@@ -7,334 +7,315 @@ import app.Channels
 import app.DomainLine
 import app.QueryChanged
 import app.ResultChanged
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.trySendBlocking
 import util.UiColors
 import java.awt.EventQueue
 import java.awt.Font
 import java.awt.Graphics2D
 import java.awt.event.*
-import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.max
 
 class ScrollableList(
-    private val panel: SlidePanel, x: Int, y: Int, width: Int, height: Int, private val inputTextLine: InputTextLine
+    private val panel: SlidePanel,
+    x: Int,
+    y: Int,
+    width: Int,
+    height: Int,
+    private val inputTextLine: InputTextLine
 ) : ComponentOwn(), KeyListener, MouseListener, MouseWheelListener, MouseMotionListener {
+
     private var selectedTextRange: IntRange? = null
-    private var highlightWordMouseOver: IntRange? = null
     private var indexOffset = 0
-    private val scheduler = Executors.newScheduledThreadPool(1)
+
+    // Lifecycle management
+    private val scope = CoroutineScope(Dispatchers.Default + Job())
+    private var isRunning = AtomicBoolean(true)
     private var follow = true
     private var lastUpdate = 0L
 
-    // Chart for log levels
+    // Constants
+    private val HEADER_OFFSET = 7
+    private val BOTTOM_MARGIN = 15
+    private val MIN_CHART_HEIGHT = 80
+
+    // Chart
+    private var chartHeight = 100
     private val logLevelChart = LogLevelChart(
         x = x, y = 0, width = width, height = 100,
         onLevelsChanged = { updateResults() },
-        onBarClicked = { indexOffset -> handleBarClicked(indexOffset) }
+        onBarClicked = { offset -> handleBarClicked(offset) }
     )
-    private var chartHeight = 100
+
+    // Rendering
+    private var lineList = listOf<LineItem>()
+    private val rowHeight = 12
+    private var rowHeightCurrent = 12
+    private var image: BufferedImage? = null
+    private lateinit var g2d: Graphics2D
+
+    // Input state
+    private var mouseposX = 0
+    private var mouseposY = 0
+    private var mouseInsideComponent = false
+
+    // Font metrics - Default to rowHeight to prevent division by zero before init
+    private var charHeight = rowHeight
 
     init {
         this.x = x
         this.y = y
         this.height = height
         this.width = width
-        start()
-        scheduler.scheduleWithFixedDelay({
-            if (State.changedAt.get() > lastUpdate && follow) {
-                updateResults()
-                panel.repaint()
-            }
-        }, 0, 16, TimeUnit.MILLISECONDS)
+
+        startMessageConsumer()
+        startUiScheduler()
     }
 
-    private var selectedLineIndex = 0
-
-    private val rowHeight = 12
-    private var rowHeightCurrent = 12
-    private lateinit var image: BufferedImage
-    private lateinit var g2d: Graphics2D
-
-    private var mouseposX = 0
-    private var mouseposY = 0
-    private var mouseposXPressed = 0
-    private var mouseposYPressed = 0
-    private var mouseposXReleased = 0
-    private var mouseposYReleased = 0
-    private lateinit var maxCharBounds: Rectangle2D
-
-
-    private fun start() {
-        val thread = Thread {
-            while (true) {
-                when (val msg = Channels.kafkaCmdGuiChannel.take()) {
+    /**
+     * Replaces the raw Thread. Consumes Kafka messages.
+     */
+    private fun startMessageConsumer() {
+        scope.launch {
+            while (isActive && isRunning.get()) {
+                when (val msg = Channels.kafkaCmdGuiChannel.take()) { // Suspending receive
                     is ResultChanged -> {
-                        // Use the chart result for the chart if available, otherwise use the regular result
-                        // Update the chart with the chart data
-                        if (msg.chartResult.isNotEmpty()) (logLevelChart.updateChart(msg.chartResult))
-                        // Update the scrollable list with the regular result
+                        if (msg.chartResult.isNotEmpty()) {
+                            logLevelChart.updateChart(msg.chartResult)
+                        }
                         updateResults(msg.result)
                     }
-
-                    else -> {
-                    }
+                    else -> {}
                 }
             }
         }
-        thread.isDaemon = true
-        thread.start()
     }
 
-    private var lineList = listOf<LineItem>()
+    /**
+     * Replaces the ScheduledExecutor. Checks for state changes to trigger repaints.
+     */
+    private fun startUiScheduler() {
+        scope.launch {
+            while (isActive && isRunning.get()) {
+                if (State.changedAt.get() > lastUpdate && follow) {
+                    updateResults()
+                    panel.repaint()
+                }
+                delay(16)
+            }
+        }
+    }
+
+    // Call this when the component is destroyed to stop threads
+    fun dispose() {
+        isRunning.set(false)
+        scope.cancel()
+        if (::g2d.isInitialized) g2d.dispose()
+    }
+
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
-        if (this.width != width || this.height != height || rowHeight != rowHeightCurrent || this.x != x || this.y != y) {
-            if (::g2d.isInitialized) {
-                this.g2d.dispose()
-            }
-            if (height < 0) {
-                this.height = 1
-            } else {
-                this.height = height
-            }
-            this.image = BufferedImage(
-                width.coerceIn(1..Int.MAX_VALUE), this.height.coerceIn(1..Int.MAX_VALUE), BufferedImage.TYPE_INT_RGB
-            )
-            this.g2d = this.image.createGraphics()
-            this.image
+        // Detect resize or move
+        if (this.width != width || this.height != height || rowHeight != rowHeightCurrent || this.x != x || this.y != y || image == null) {
+
+            if (::g2d.isInitialized) g2d.dispose()
+
             this.width = width
+            this.height = height.coerceAtLeast(1)
             this.x = x
             this.y = y
-
-            // Make chart height proportional to window height (20% of total height, minimum 80 pixels)
-            chartHeight = (height * 0.2).toInt().coerceAtLeast(80)
             rowHeightCurrent = rowHeight
-            if (::maxCharBounds.isInitialized) {
-                val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
-                    0
-                } else {
-                    // Adjust for chart height
-                    ((height - chartHeight - maxCharBounds.height.toInt()) / maxCharBounds.height.toInt()) + 1
-                }
-                lineList = (0..length).map {
-                    LineItem(
-                        parent = this,
-                        inputTextLine = inputTextLine,
-                        x = x,
-                        // Adjust y position to start below the chart
-                        y = chartHeight + ((maxCharBounds.height.toInt()) * (it)),
-                        width = width,
-                        height = ((maxCharBounds.height.toInt()))
-                    )
-                }
-            }
+
+            // Recreate Image
+            this.image = BufferedImage(
+                this.width.coerceAtLeast(1),
+                this.height.coerceAtLeast(1),
+                BufferedImage.TYPE_INT_RGB
+            )
+            this.g2d = this.image!!.createGraphics()
+
+            // Font setup
             g2d.font = loadFontFromResources(rowHeight.toFloat())
+            val metrics = g2d.fontMetrics
+            val maxBounds = metrics.getMaxCharBounds(g2d)
+            charHeight = maxBounds.height.toInt().coerceAtLeast(1) // Safety
+
+            // Recalculate layout
+            chartHeight = (height * 0.2).toInt().coerceAtLeast(MIN_CHART_HEIGHT)
+            rebuildLineItems()
+
             indexOffset = 0
             updateResults()
         }
-        //Clear
-        g2d.color = UiColors.background
-        g2d.fillRect(0, 0, width, height)
-        maxCharBounds = g2d.fontMetrics.getMaxCharBounds(g2d)
 
-        // Draw the chart
-        g2d.drawImage(logLevelChart.display(width, chartHeight, x, y), x, y, width, chartHeight, null)
+        val g = g2d // Local access
 
-        g2d.color = UiColors.magenta
-        paintLineItem()
-        return image
+        // Clear background
+        g.color = UiColors.background
+        g.fillRect(0, 0, width, height)
+
+        // Draw Chart
+        g.drawImage(logLevelChart.display(width, chartHeight, x, y), x, y, width, chartHeight, null)
+
+        // Draw Lines
+        g.color = UiColors.magenta
+        paintLineItem(g)
+
+        return image!!
     }
 
-
     override fun repaint(componentOwn: ComponentOwn) {
+        // Safe unwrap or default
+        val img = componentOwn.display(componentOwn.width, componentOwn.height, componentOwn.x, componentOwn.y)
         g2d.drawImage(
-            componentOwn.display(componentOwn.width, componentOwn.height, componentOwn.x, componentOwn.y),
-            componentOwn.x,
-            componentOwn.y,
-            componentOwn.width,
-            componentOwn.height,
-            null
+            img, componentOwn.x, componentOwn.y, componentOwn.width, componentOwn.height, null
         )
         panel.repaint(componentOwn.x, componentOwn.y, componentOwn.width, componentOwn.height)
     }
 
-    private fun paintLineItem() {
+    private fun paintLineItem(g: Graphics2D) {
         lineList.forEach {
-            g2d.drawImage(it.display(it.width, it.height, it.x, it.y), it.x, it.y, it.width, it.height, null)
+            g.drawImage(it.display(it.width, it.height, it.x, it.y), it.x, it.y, it.width, it.height, null)
         }
     }
 
-
-    override fun keyTyped(e: KeyEvent) {
-
+    private fun calculateVisibleLines(): Int {
+        if (charHeight == 0) return 0
+        val availableHeight = height - chartHeight - BOTTOM_MARGIN
+        return max(0, availableHeight / charHeight)
     }
 
+    private fun rebuildLineItems() {
+        val visibleLines = calculateVisibleLines()
+        // Only rebuild if size changed significantly
+        if (lineList.size != visibleLines + 1) {
+            lineList = (0..visibleLines).map { index ->
+                LineItem(
+                    parent = this,
+                    inputTextLine = inputTextLine,
+                    x = x,
+                    y = chartHeight + (charHeight * index),
+                    width = width,
+                    height = charHeight
+                )
+            }
+        }
+    }
+
+    // --- Key Handling ---
+
     override fun keyPressed(e: KeyEvent) {
+        // Prevent division by zero if key pressed before first paint
+        val pageJump = if (charHeight > 0) height / charHeight else 10
+
         when (e.keyCode) {
             KeyEvent.VK_PAGE_UP -> {
-                indexOffset += (height) / maxCharBounds.height.toInt()
-                indexOffset = ensureIndexOffset(indexOffset)
-                updateResults()
-                setFollow()
+                indexOffset += pageJump
+                modifyOffsetAndSync(0) // 0 just triggers check
             }
-
             KeyEvent.VK_UP -> {
                 indexOffset += 1
-                indexOffset = ensureIndexOffset(indexOffset)
-                updateResults()
-                setFollow()
+                modifyOffsetAndSync(0)
             }
-
             KeyEvent.VK_PAGE_DOWN -> {
-                indexOffset -= (height) / maxCharBounds.height.toInt()
-                indexOffset = ensureIndexOffset(indexOffset)
-                updateResults()
-                setFollow()
+                indexOffset -= pageJump
+                modifyOffsetAndSync(0)
             }
-
             KeyEvent.VK_DOWN -> {
                 indexOffset -= 1
-                indexOffset = ensureIndexOffset(indexOffset)
-                updateResults()
-                setFollow()
+                modifyOffsetAndSync(0)
             }
-
             KeyEvent.VK_ENTER -> {
                 indexOffset = 0
                 State.lock.set(0)
-                setFollow()
-                updateResults()
-            }
-
-            KeyEvent.VK_C -> {
-
-            }
-
-            else -> {
-
+                modifyOffsetAndSync(0)
             }
         }
         panel.repaint()
     }
 
-    override fun keyReleased(e: KeyEvent) {
-
+    private fun modifyOffsetAndSync(delta: Int) {
+        indexOffset = ensureIndexOffset(indexOffset + delta)
+        updateResults()
+        setFollow()
     }
 
+    // --- Mouse Handling ---
+
     override fun mouseClicked(e: MouseEvent) {
-        // Check if mouse is over the chart
         if (e.y < chartHeight) {
             logLevelChart.mouseClicked(e)
-        }
-        // Otherwise, handle clicks on log lines
-        else if (e.clickCount == 1) {
+        } else {
             lineList.firstOrNull { mouseInside(e, it) }?.mouseClicked(e)
             updateResults()
         }
     }
 
     override fun mousePressed(e: MouseEvent) {
-        // Check if mouse is over the chart
         if (e.y < chartHeight) {
             logLevelChart.mousePressed(e)
-        }
-        // Otherwise, handle as before
-        else {
+        } else {
             mouseposX = e.x - x
-            mouseposY = e.y - y - 7
-            mouseposXPressed = mouseposX
-            mouseposYPressed = mouseposY
-            mouseposXReleased = mouseposX
-            mouseposYReleased = mouseposY
+            mouseposY = e.y - y - HEADER_OFFSET
             selectedTextRange = null
         }
-
         panel.repaint()
     }
 
     override fun mouseReleased(e: MouseEvent) {
-        // Check if mouse is over the chart
-        if (e.y < chartHeight) {
-            logLevelChart.mouseReleased(e)
-        }
-        // No other action needed
+        if (e.y < chartHeight) logLevelChart.mouseReleased(e)
     }
 
-
     override fun mouseEntered(e: MouseEvent) {
-        if (!mouseInside) {
-            mouseInside = true
-        }
-
-        // Check if mouse is over the chart
+        mouseInsideComponent = true
         if (e.y < chartHeight) {
             logLevelChart.mouseEntered(e)
-        }
-
-        // Otherwise, it's over the log lines
-        else {
+        } else {
             lineList.firstOrNull { mouseInside(e, it) }?.mouseEntered(e)
         }
     }
 
     override fun mouseExited(e: MouseEvent) {
-        if (mouseInside) {
-            mouseInside = false
-        }
-
-        // Check if mouse was over the chart
-        if (e.y < chartHeight) {
-            logLevelChart.mouseExited(e)
-        }
-
+        mouseInsideComponent = false
+        if (e.y < chartHeight) logLevelChart.mouseExited(e)
     }
 
     override fun mouseWheelMoved(e: MouseWheelEvent) {
-        // Check if mouse is over the chart
         if (e.y < chartHeight) {
             logLevelChart.mouseWheelMoved(e)
             return
         }
 
         if (e.isShiftDown) {
-            State.lock.getAndAdd(-((e.wheelRotation * e.scrollAmount) * 1024).toLong())
-            State.lock.set(State.lock.get().coerceIn(0..Long.MAX_VALUE))
-            indexOffset = ensureIndexOffset(indexOffset)
+            // Horizontal/Fast scroll logic
+            val delta = -((e.wheelRotation * e.scrollAmount) * 1024).toLong()
+            State.lock.getAndAdd(delta)
+            State.lock.set(State.lock.get().coerceAtLeast(0))
 
+            indexOffset = ensureIndexOffset(indexOffset)
             updateResults()
             setFollow()
             panel.repaint()
             return
         }
 
-        indexOffset -= e.wheelRotation * e.scrollAmount
+        val delta = -(e.wheelRotation * e.scrollAmount)
+        indexOffset += delta
         indexOffset = ensureIndexOffset(indexOffset)
-        highlightWordMouseOver = null
+
+        // highlightWordMouseOver = null // (Was unused in original snippet, assuming intended)
         updateResults()
         setFollow()
         panel.repaint()
     }
 
-    private fun setFollow() {
-        follow = indexOffset == 0
-    }
-
-    private fun ensureIndexOffset(i: Int): Int {
-        return i.coerceIn(
-            0..Int.MAX_VALUE
-        )
-    }
-
     override fun mouseDragged(e: MouseEvent) {
-        // Check if mouse is over the chart
         if (e.y < chartHeight) {
             logLevelChart.mouseDragged(e)
-        }
-        // Otherwise, handle as before
-        else {
+        } else {
             mouseposX = e.x - x
-            mouseposY = e.y - y - 7
+            mouseposY = e.y - y - HEADER_OFFSET
         }
     }
 
@@ -342,107 +323,90 @@ class ScrollableList(
         mouseposX = e.x - x
         mouseposY = e.y - y
 
-        // Check if mouse is over the chart
         if (e.y < chartHeight) {
             logLevelChart.mouseMoved(e)
-        }
+        } else {
+            // Optimized finding logic
+            val itemUnderMouse = lineList.firstOrNull { mouseInside(e, it) }
+            itemUnderMouse?.mouseMoved(e)
+            itemUnderMouse?.mouseEntered(e)
 
-        // Otherwise, it's over the log lines
-        else {
-            lineList.firstOrNull { mouseInside(e, it) }?.mouseMoved(e)
-            lineList.firstOrNull { e.x in it.x..it.width && e.y in it.y..it.height }?.mouseEntered(e)
-            lineList.filter { e.x !in it.x..it.width || e.y !in it.y..it.height }.forEach { it.mouseExited(e) }
+            lineList.forEach {
+                if (it !== itemUnderMouse) it.mouseExited(e)
+            }
         }
     }
 
+    // --- Logic Helpers ---
+
+    private fun setFollow() {
+        follow = (indexOffset == 0)
+    }
+
+    private fun ensureIndexOffset(i: Int): Int {
+        return i.coerceAtLeast(0) // Int.MAX_VALUE is implicit upper bound of Int
+    }
+
+    // Fixed coordinate calculation: check bounds of X relative to component X
+    private fun mouseInside(e: MouseEvent, it: ComponentOwn): Boolean {
+        // Assuming ComponentOwn.x is absolute or relative to parent.
+        // If 'it.x' is relative to ScrollableList:
+        return e.x >= it.x && e.x <= (it.x + it.width) &&
+                e.y >= it.y && e.y <= (it.y + it.height)
+    }
+
     private fun updateResults() {
-        val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
-            0
-        } else {
-            // Adjust for chart height and leave margin at bottom for status messages
-            ((height - chartHeight - maxCharBounds.height.toInt() - 15) / maxCharBounds.height.toInt()) + 1
-        }
+        val visibleLen = calculateVisibleLines()
         State.offset.set(indexOffset)
-        State.length.set(length)
+        State.length.set(visibleLen)
 
-
-        // Include selected levels in the search query
         Channels.searchChannel.trySendBlocking(
             QueryChanged(
                 query = inputTextLine.text,
-                length = length,
+                length = visibleLen,
                 offset = indexOffset,
             )
         )
     }
 
     private fun updateResults(result: List<DomainLine>) {
-        val length = if (!::maxCharBounds.isInitialized || maxCharBounds.height.toInt() == 0) {
-            0
-        } else {
-            // Adjust for chart height and leave margin at bottom for status messages
-            ((height - chartHeight - maxCharBounds.height.toInt() - 15) / maxCharBounds.height.toInt()) + 1
-        }
-        if (lineList.size - 1 != length && ::maxCharBounds.isInitialized) {
-            lineList = (0..length).map {
-                LineItem(
-                    parent = this,
-                    inputTextLine = inputTextLine,
-                    x = x,
-                    // Adjust y position to start below the chart
-                    y = chartHeight + ((maxCharBounds.height.toInt()) * (it)),
-                    width = width,
-                    height = ((maxCharBounds.height.toInt()))
-                )
-            }
-        }
+        // Ensure UI elements exist for the data
+        rebuildLineItems()
 
         EventQueue.invokeLater {
-            lineList.forEach { it.setText("") }
-            result.forEachIndexed { i, it ->
-                lineList[i.coerceIn(lineList.indices)].setLogJson(it)
+            lineList.forEach { it.setText("") } // Clear all first
+            result.forEachIndexed { i, item ->
+                if (i < lineList.size) {
+                    lineList[i].setLogJson(item)
+                }
             }
-
             lastUpdate = System.nanoTime()
         }
     }
 
-    private fun mouseInside(e: MouseEvent, it: ComponentOwn) = e.x in it.x..it.width && e.y in it.y..(it.y + it.height)
-    
     private fun handleBarClicked(clickedTimeIndex: Int) {
-        // When a bar is clicked, we receive the time index from the chart
-        // We need to calculate the absolute offset by counting events to the right
-        // of the clicked bar from the beginning of the chart data
-        
-        // Get the chart's time points to count events
         val chartTimePoints = logLevelChart.getTimePoints()
-        
-        if (chartTimePoints.isEmpty() || clickedTimeIndex >= chartTimePoints.size) {
-            return
-        }
-        
-        // Count total events from the clicked time point to the end (right side)
-        // This gives us the absolute offset from the beginning of the data
+        if (clickedTimeIndex >= chartTimePoints.size) return
+
         var eventsToRight = 0
         for (i in clickedTimeIndex until chartTimePoints.size) {
             eventsToRight += chartTimePoints[i].getTotal()
         }
-        
-        // Set the absolute offset (not adding to current offset)
+
         indexOffset = eventsToRight
-        
-        // Disable follow mode when user clicks on a bar
         follow = false
-        
-        // Update the results to reflect the new offset
         updateResults()
         panel.repaint()
     }
+
+    // Unused overrides
+    override fun keyTyped(e: KeyEvent) {}
+    override fun keyReleased(e: KeyEvent) {}
 }
 
 fun loadFontFromResources(size: Float = 14f): Font {
+    // Keep this function as is, or move to a separate utility file
     val stream = ClassLoader.getSystemResourceAsStream("JetBrainsMono-Regular.ttf")
         ?: error("Font not found at JetBrainsMono-Regular.ttf")
-    val baseFont = Font.createFont(Font.TRUETYPE_FONT, stream)
-    return baseFont.deriveFont(size)
+    return Font.createFont(Font.TRUETYPE_FONT, stream).deriveFont(size)
 }
