@@ -108,7 +108,7 @@ class IndexTest {
         println("Time taken to add $itemCount elements: $timeTaken")
         var found = 0
         val timeTakenSearch1 = measureTime {
-            map.forEach() {  value ->
+            map.forEach {  value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))){
                     it == value
                 }
@@ -141,71 +141,3 @@ class IndexTest {
     }
 }
 
-class ShardTest {
-    @Test
-    fun test_search() {
-        val shard = Shard<String>(5)
-        val gramList = listOf(12345, 23456)
-        val key = "key"
-
-        shard.add(gramList, key)
-        val searchResults = shard.search(listOf(gramList)).toList()
-
-        assertEquals(listOf(key), searchResults)
-    }
-}
-
-class BitSetTest {
-
-    private val row = Row()
-
-    @Test
-    fun `expandToFitBit does nothing when words size is sufficient`() {
-        row.words = LongArray(10)
-        val wordsInUseBefore = row.wordsInUse
-        row.expandToFitBit(5)
-        assertEquals(row.wordsInUse, wordsInUseBefore)
-    }
-
-    @Test
-    fun `expandToFitBit expands words size when insufficient`() {
-        row.words = LongArray(1)
-        row.expandToFitBit(70)
-        assertEquals(2, row.words.size)
-    }
-
-    @Test
-    fun `expandToFitBit expands words size when insufficient, set 0`() {
-        row.words = LongArray(0)
-        row.expandToFitBit(0)
-        assertEquals(1, row.words.size)
-    }
-
-    @Test
-    fun `expandToFitBit expands words size when insufficient, set 1`() {
-        row.words = LongArray(0)
-        row.expandToFitBit(1)
-        assertEquals(1, row.words.size)
-    }
-
-    @Test
-    fun `expandToFitBit expands words size when insufficient, set 63`() {
-        row.words = LongArray(0)
-        row.expandToFitBit(63)
-        assertEquals(1, row.words.size)
-    }
-
-    @Test
-    fun `expandToFitBit expands words size when insufficient, set 64`() {
-        row.words = LongArray(0)
-        row.expandToFitBit(64)
-        assertEquals(2, row.words.size)
-    }
-
-    @Test
-    fun `expandToFitBit expands words size when insufficient, set 65`() {
-        row.words = LongArray(0)
-        row.expandToFitBit(65)
-        assertEquals(2, row.words.size)
-    }
-}

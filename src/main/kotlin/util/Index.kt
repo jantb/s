@@ -27,7 +27,7 @@ class Index<T : Comparable<T>>(
 
         val grams = s.grams()
 
-        val shardSize = Integer.numberOfTrailingZeros(estimate(grams.size, probability))
+        val shardSize = Integer.numberOfTrailingZeros(estimate(grams.a.size, probability))
         shardArray[shardSize]?.add(grams, t) ?: run {
             shardArray[shardSize] =
                 Shard<T>(1 shl shardSize).apply {
@@ -38,10 +38,36 @@ class Index<T : Comparable<T>>(
     }
 
     fun searchMustInclude(valueListList: List<List<String>>, f: (T) -> Boolean): Sequence<T> {
-        // Must include all the strings in each of the lists
-        val gramsList = valueListList.map { stringList -> stringList.map { it.grams() }.flatten() }
+        // Build one primitive gram array per inner list
+        val gramsList: List<IntArray> = valueListList.map { stringList ->
+            var buf = IntArray(16)
+            var n = 0
+
+            fun ensure(extra: Int) {
+                val need = n + extra
+                if (need > buf.size) {
+                    var newSize = buf.size
+                    while (newSize < need) newSize = newSize shl 1
+                    buf = buf.copyOf(newSize)
+                }
+            }
+
+            for (str in stringList) {
+                if (str.isBlank()) continue
+                val g = str.grams()          // Grams(val a: IntArray, val n: Int)
+                if (g.n == 0) continue
+                ensure(g.n)
+                g.a.copyInto(buf, destinationOffset = n, startIndex = 0, endIndex = g.n)
+                n += g.n
+            }
+
+            buf.copyOf(n)
+        }
+
         val result =
-            shardArray.mapNotNull { it?.search(gramsList)?.filter { f(it) } }.merge()
+            shardArray
+                .mapNotNull { it?.search(gramsList)?.filter(f) }
+                .merge()
 
         return result.sortedDescending()
     }
@@ -62,11 +88,10 @@ class Shard<T>(
     private val valueList: MutableList<T> = mutableListOf()
     private val rows: Array<Row> = Array(m) { Row() }
     private var isHigherRank: Boolean = false
-    fun add(gramList: List<Int>, key: T) {
+    fun add(gramList: Grams, key: T) {
         bf.clear()
-        gramList.forEach { g ->
-            bf.addHash(g)
-        }
+        val a = gramList.a
+        for (i in 0 until gramList.n) bf.addHash(a[i])
         bf.getSetPositions().forEach {
             rows[it].setBit(valueList.size)
         }
@@ -91,12 +116,16 @@ class Shard<T>(
         }
     }
 
-    fun search(gramsList: List<List<Int>>): Sequence<T> {
-        if (gramsList.flatten().isEmpty()) {
+    fun search(gramsList: List<IntArray>): Sequence<T> {
+        if (gramsList.all { it.isEmpty() }) {
             return valueList.asReversed().asSequence()
         }
 
-        val rowList = gramsList.filter { it.isNotEmpty() }.map { getRows(it) }.flatten()
+        val rowList = buildList {
+            for (g in gramsList) {
+                if (g.isNotEmpty()) addAll(getRows(g))
+            }
+        }
 
         val bitPositions = if (isHigherRank) {
             rowList.sortedByDescending { it.rank }
@@ -108,7 +137,7 @@ class Shard<T>(
     }
 
     private fun getRows(
-        grams: List<Int>,
+        grams: IntArray,
     ): List<Row> {
         bf.clear()
         grams.forEach {
@@ -120,7 +149,7 @@ class Shard<T>(
     private fun getSetValues(bitPositions: List<Row>): Sequence<T> {
         return if (isHigherRank) {
             val row = andRowsOfNotEqualLength(bitPositions)
-            return row.getAllSetBitPositionsRanked().mapNotNull {
+            row.getAllSetBitPositionsRanked().mapNotNull {
                 if (it < valueList.size)
                     valueList[it]
                 else
@@ -152,20 +181,16 @@ class Shard<T>(
         return res
     }
 
-    private fun andRowsOfEqualLength(
-        rowsArray: List<Row>,
-    ): Row {
-        val res = Row(rowsArray[0].words.clone())
-        res.rank = rowsArray[0].rank
-        res.wordsInUse = rowsArray[0].wordsInUse
+    private fun andRowsOfEqualLength(rowsArray: List<Row>): Row {
+        val first = rowsArray[0]
+        val res = Row(first.words.copyOf(first.wordsInUse))  // copy only used words
+        res.rank = first.rank
+        res.wordsInUse = first.wordsInUse
 
         for (i in 1..<rowsArray.size) {
             res.and(rowsArray[i])
-            if (res.isEmpty()) {
-                return res
-            }
+            if (res.isEmpty()) return res
         }
-
         return res
     }
 }
@@ -259,9 +284,11 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
     fun setBit(bitToSet: Int) {
         expandToFitBit(bitToSet)
 
-        val originalIndex = bitToSet shr 6
-        words[originalIndex] = words[originalIndex] or (1L shl (bitToSet and (java.lang.Long.SIZE - 1)))
-        recalculateWordsInUseFrom(max(((bitToSet shr 6) + 1), wordsInUse))
+        val wordIndex = bitToSet ushr 6
+        words[wordIndex] = words[wordIndex] or (1L shl (bitToSet and 63))
+
+        val needed = wordIndex + 1
+        if (needed > wordsInUse) wordsInUse = needed
     }
 
     fun expandToFitBit(bitToSet: Int) {
@@ -290,12 +317,21 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
     }
 
     private fun recalculateWordsInUseFrom(index: Int) {
-        // Traverse the bitset until a used word is found
-        wordsInUse = index
-        while (wordsInUse > 0) {
-            if (words[wordsInUse - 1] != 0L) break
-            wordsInUse--
+        val w = words
+        var i = if (index > w.size) w.size else index
+        if (i <= 0) {
+            wordsInUse = 0
+            return
         }
+
+        // Fast path: last candidate is already non-zero
+        if (w[i - 1] != 0L) {
+            wordsInUse = i
+            return
+        }
+
+        while (i > 0 && w[i - 1] == 0L) i--
+        wordsInUse = i
     }
 
     fun and(row: Row) {
@@ -314,14 +350,29 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
         }
     }
 
-    fun getAllSetBitPositionsRanked(): Sequence<Int> {
-        val allSetBitPositions = getAllSetBitPositions()
+    fun getAllSetBitPositionsRanked(): Sequence<Int> = sequence {
+        val repeats = 1 shl rank
+        val block = words.size shl 6 // words.size * 64
 
-        return sequence {
-            for (i in 0 until (1 shl rank)) {
-                allSetBitPositions.forEach {
-                    yield(it + (words.size * 64 * i))
-                }
+        // Collect base set bit positions once (in increasing order)
+        var tmp = IntArray(32)
+        var cnt = 0
+
+        for (u in 0 until wordsInUse) {
+            var w = words[u]
+            while (w != 0L) {
+                val bit = java.lang.Long.numberOfTrailingZeros(w)
+                if (cnt == tmp.size) tmp = tmp.copyOf(tmp.size shl 1)
+                tmp[cnt++] = (u shl 6) + bit
+                w = w and (w - 1) // clear lowest set bit
+            }
+        }
+
+        // Emit in the same order as before: by rank-block, then by bit position
+        for (i in 0 until repeats) {
+            val offset = block * i
+            for (j in 0 until cnt) {
+                yield(tmp[j] + offset)
             }
         }
     }
@@ -341,65 +392,47 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
 fun LongArray.calculateDensity() = sumOf { java.lang.Long.bitCount(it) }.toDouble() / (size * java.lang.Long.SIZE)
 
 
-fun String.grams(): List<Int> {
-    return GramHasher.grams(this)
-}
+data class Grams(val a: IntArray, val n: Int)
 
+fun String.grams(): Grams = GramHasher.gramsArr(this)
 
 object GramHasher {
-    private val builder = StringBuilder(16) // Initial capacity for small strings
-    private var hashArray = IntArray(8) // Initial capacity for trigrams
-    private val singleHash = IntArray(1) // Reusable single-element array
-    private val singleHashList = singleHash.asList() // Cached List<Int> for short strings
+    private val builder = StringBuilder(16)
+    private var hashArray = IntArray(8)
+    private val singleHash = IntArray(1)
 
-    fun grams(input: String): List<Int> {
+    fun gramsArr(input: String): Grams {
         builder.clear()
-
-        // Build normalized string with valid characters only
         for (c in input) {
             if (c.isLetterOrDigit()) {
-                val lc = when {
-                    c in 'A'..'Z' -> (c.code or 0x20).toChar() // Bitwise lowercase
-                    else -> c
-                }
+                val lc = if (c in 'A'..'Z') (c.code or 0x20).toChar() else c
                 builder.append(lc)
             }
         }
 
         val validCount = builder.length
-
-        // Handle short strings (< 3 valid chars)
         if (validCount < 3) {
-            if (validCount == 0) return emptyList()
-
-            // Hash the entire short string
-            var hash = 0x811c9dc5.toInt() // FNV-1a offset basis
+            if (validCount == 0) return Grams(IntArray(0), 0)
+            var hash = 0x811c9dc5.toInt()
             for (i in 0 until validCount) {
-                hash = hash xor builder[i].code
-                hash *= 0x01000193 // FNV-1a prime
+                hash = (hash xor builder[i].code) * 0x01000193
             }
             singleHash[0] = hash
-            return singleHashList
+            return Grams(singleHash, 1)
         }
 
-        // For longer strings, compute trigrams using sliding window
         val trigramCount = validCount - 2
         if (hashArray.size < trigramCount) {
-            hashArray = IntArray(trigramCount.coerceAtLeast(hashArray.size * 2))
+            hashArray = IntArray(maxOf(trigramCount, hashArray.size * 2))
         }
 
-        // Sliding window FNV-1a hash
         for (i in 0 until trigramCount) {
-            var hash = 0x811c9dc5.toInt() // FNV-1a offset basis
-            hash = hash xor builder[i].code
-            hash *= 0x01000193
-            hash = hash xor builder[i + 1].code
-            hash *= 0x01000193
-            hash = hash xor builder[i + 2].code
-            hash *= 0x01000193
-
+            var hash = 0x811c9dc5.toInt()
+            hash = (hash xor builder[i].code) * 0x01000193
+            hash = (hash xor builder[i + 1].code) * 0x01000193
+            hash = (hash xor builder[i + 2].code) * 0x01000193
             hashArray[i] = hash
         }
-        return hashArray.asList().subList(0, trigramCount)
+        return Grams(hashArray, trigramCount)
     }
 }
