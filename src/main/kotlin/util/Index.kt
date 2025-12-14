@@ -27,7 +27,7 @@ class Index<T : Comparable<T>>(
 
         val grams = s.grams()
 
-        val shardSize = Integer.numberOfTrailingZeros(estimate(grams.a.size, probability))
+        val shardSize = Integer.numberOfTrailingZeros(estimate(grams.size, probability))
         shardArray[shardSize]?.add(grams, t) ?: run {
             shardArray[shardSize] =
                 Shard<T>(1 shl shardSize).apply {
@@ -38,36 +38,14 @@ class Index<T : Comparable<T>>(
     }
 
     fun searchMustInclude(valueListList: List<List<String>>, f: (T) -> Boolean): Sequence<T> {
-        // Build one primitive gram array per inner list
-        val gramsList: List<IntArray> = valueListList.map { stringList ->
-            var buf = IntArray(16)
-            var n = 0
-
-            fun ensure(extra: Int) {
-                val need = n + extra
-                if (need > buf.size) {
-                    var newSize = buf.size
-                    while (newSize < need) newSize = newSize shl 1
-                    buf = buf.copyOf(newSize)
-                }
+        // Must include all the strings in each of the lists
+        val gramsList = valueListList.map { stringList ->
+            buildList {
+                for (str in stringList) addAll(str.grams())
             }
-
-            for (str in stringList) {
-                if (str.isBlank()) continue
-                val g = str.grams()          // Grams(val a: IntArray, val n: Int)
-                if (g.n == 0) continue
-                ensure(g.n)
-                g.a.copyInto(buf, destinationOffset = n, startIndex = 0, endIndex = g.n)
-                n += g.n
-            }
-
-            buf.copyOf(n)
         }
-
         val result =
-            shardArray
-                .mapNotNull { it?.search(gramsList)?.filter(f) }
-                .merge()
+            shardArray.mapNotNull { it?.search(gramsList)?.filter { f(it) } }.merge()
 
         return result.sortedDescending()
     }
@@ -88,10 +66,11 @@ class Shard<T>(
     private val valueList: MutableList<T> = mutableListOf()
     private val rows: Array<Row> = Array(m) { Row() }
     private var isHigherRank: Boolean = false
-    fun add(gramList: Grams, key: T) {
+    fun add(gramList: List<Int>, key: T) {
         bf.clear()
-        val a = gramList.a
-        for (i in 0 until gramList.n) bf.addHash(a[i])
+        gramList.forEach { g ->
+            bf.addHash(g)
+        }
         bf.getSetPositions().forEach {
             rows[it].setBit(valueList.size)
         }
@@ -116,7 +95,7 @@ class Shard<T>(
         }
     }
 
-    fun search(gramsList: List<IntArray>): Sequence<T> {
+    fun search(gramsList: List<List<Int>>): Sequence<T> {
         if (gramsList.all { it.isEmpty() }) {
             return valueList.asReversed().asSequence()
         }
@@ -137,7 +116,7 @@ class Shard<T>(
     }
 
     private fun getRows(
-        grams: IntArray,
+        grams: List<Int>,
     ): List<Row> {
         bf.clear()
         grams.forEach {
@@ -392,47 +371,65 @@ class Row(var words: LongArray = LongArray(0)) : Serializable {
 fun LongArray.calculateDensity() = sumOf { java.lang.Long.bitCount(it) }.toDouble() / (size * java.lang.Long.SIZE)
 
 
-data class Grams(val a: IntArray, val n: Int)
+fun String.grams(): List<Int> {
+    return GramHasher.grams(this)
+}
 
-fun String.grams(): Grams = GramHasher.gramsArr(this)
 
 object GramHasher {
-    private val builder = StringBuilder(16)
-    private var hashArray = IntArray(8)
-    private val singleHash = IntArray(1)
+    private val builder = StringBuilder(16) // Initial capacity for small strings
+    private var hashArray = IntArray(8) // Initial capacity for trigrams
+    private val singleHash = IntArray(1) // Reusable single-element array
+    private val singleHashList = singleHash.asList() // Cached List<Int> for short strings
 
-    fun gramsArr(input: String): Grams {
+    fun grams(input: String): List<Int> {
         builder.clear()
+
+        // Build normalized string with valid characters only
         for (c in input) {
             if (c.isLetterOrDigit()) {
-                val lc = if (c in 'A'..'Z') (c.code or 0x20).toChar() else c
+                val lc = when {
+                    c in 'A'..'Z' -> (c.code or 0x20).toChar() // Bitwise lowercase
+                    else -> c
+                }
                 builder.append(lc)
             }
         }
 
         val validCount = builder.length
+
+        // Handle short strings (< 3 valid chars)
         if (validCount < 3) {
-            if (validCount == 0) return Grams(IntArray(0), 0)
-            var hash = 0x811c9dc5.toInt()
+            if (validCount == 0) return emptyList()
+
+            // Hash the entire short string
+            var hash = 0x811c9dc5.toInt() // FNV-1a offset basis
             for (i in 0 until validCount) {
-                hash = (hash xor builder[i].code) * 0x01000193
+                hash = hash xor builder[i].code
+                hash *= 0x01000193 // FNV-1a prime
             }
             singleHash[0] = hash
-            return Grams(singleHash, 1)
+            return singleHashList
         }
 
+        // For longer strings, compute trigrams using sliding window
         val trigramCount = validCount - 2
         if (hashArray.size < trigramCount) {
-            hashArray = IntArray(maxOf(trigramCount, hashArray.size * 2))
+            hashArray = IntArray(trigramCount.coerceAtLeast(hashArray.size * 2))
         }
 
+        // Sliding window FNV-1a hash
         for (i in 0 until trigramCount) {
-            var hash = 0x811c9dc5.toInt()
-            hash = (hash xor builder[i].code) * 0x01000193
-            hash = (hash xor builder[i + 1].code) * 0x01000193
-            hash = (hash xor builder[i + 2].code) * 0x01000193
+            var hash = 0x811c9dc5.toInt() // FNV-1a offset basis
+            hash = hash xor builder[i].code
+            hash *= 0x01000193
+            hash = hash xor builder[i + 1].code
+            hash *= 0x01000193
+            hash = hash xor builder[i + 2].code
+            hash *= 0x01000193
+
             hashArray[i] = hash
         }
-        return Grams(hashArray, trigramCount)
+        return hashArray.asList().subList(0, trigramCount)
     }
 }
