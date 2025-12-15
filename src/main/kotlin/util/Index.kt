@@ -78,19 +78,23 @@ class Shard<T>(
     }
 
     fun convertToHigherRankRows(goalCardinality: Double) {
-        require(!isHigherRank) {
-            "Can not convert an already converted higher rank"
-        }
+        require(!isHigherRank)
         isHigherRank = true
-        rows.forEach {
 
-            if (it.words.calculateDensity() > 0.8) {
-                while (it.words.size > 1) {
-                    it.increaseRank()
-                }
+        val neededWords = ((valueList.size + 63) ushr 6).coerceAtLeast(1).nextPowerOf2()
+
+        rows.forEach { row ->
+            if (row.words.size < neededWords) {
+                row.words = row.words.copyOf(neededWords)
             }
-            while (it.words.calculateDensity() < goalCardinality && it.words.size > 1) {
-                it.increaseRank()
+        }
+
+        rows.forEach { row ->
+            if (row.words.calculateDensity() > 0.8) {
+                while (row.words.size > 1) row.increaseRank()
+            }
+            while (row.words.calculateDensity() < goalCardinality && row.words.size > 1) {
+                row.increaseRank()
             }
         }
     }
