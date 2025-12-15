@@ -9,7 +9,7 @@ import util.Index
 import java.util.concurrent.atomic.AtomicLong
 
 
-const val cap = 512
+const val cap = 512*8
 val seq = AtomicLong(0)
 
 data class IndexBlock(

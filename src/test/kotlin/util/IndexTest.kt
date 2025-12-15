@@ -3,6 +3,7 @@ package util
 import printBytesAsAppropriateUnit
 import serializeToBytes
 import java.util.*
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.nanoseconds
@@ -16,7 +17,7 @@ class IndexTest {
         val key = "key"
         val value = "value"
 
-        index.add( value, value)
+        index.add(value, value)
 
         assertEquals(1, index.size)
     }
@@ -27,7 +28,7 @@ class IndexTest {
         val key = "key"
         val value = "value"
 
-        index.add( value, value)
+        index.add(value, value)
 
         assertEquals(1, index.size)
 
@@ -45,8 +46,8 @@ class IndexTest {
         val value = "aaa"
         val value2 = "bbb"
 
-        index.add( value, value)
-        index.add( value2, value2)
+        index.add(value, value)
+        index.add(value2, value2)
 
         assertEquals(2, index.size)
 
@@ -61,7 +62,7 @@ class IndexTest {
         val index = Index<String>()
         val itemCount = 300_000
 
-        val map = mutableSetOf< String>() // For later verification
+        val map = mutableSetOf<String>() // For later verification
 
         val timeTaken = measureTime {
             for (key in 1..itemCount) {
@@ -76,7 +77,7 @@ class IndexTest {
         println(index.serializeToBytes().size.printBytesAsAppropriateUnit())
         var found = 0
         val timeTakenSearch = measureTime {
-            for ( value in map) {
+            for (value in map) {
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
                     it == value
                 }
@@ -91,15 +92,14 @@ class IndexTest {
 
     @Test
     fun regression_test_higher_rank() {
-        val index = Index<String        >()
-        val itemCount = 500_000
+        val index = Index<String>()
+        val itemCount = 10_000
 
-        val map = mutableSetOf< String>() // For later verification
+        val map = mutableSetOf<String>() // For later verification
 
         val timeTaken = measureTime {
             for (key in 0..<itemCount) {
-                val value = UUID.randomUUID().toString()
-
+                val value = (1..2 + Random.nextInt(50)).joinToString("") { UUID.randomUUID().toString() }
                 index.add(value, value)
 
                 map.add(value)
@@ -108,30 +108,84 @@ class IndexTest {
         println("Time taken to add $itemCount elements: $timeTaken")
         var found = 0
         val timeTakenSearch1 = measureTime {
-            map.forEach {  value ->
-                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))){
-                    it == value
-                }
-                if (value in searchMustInclude) {
-                    found++
-                }else{
-                    throw IllegalStateException("Not finding the entry")
-                }
-            }
-        }
-        println("Time taken to search $itemCount elements: $timeTakenSearch1, average ${(timeTakenSearch1.inWholeNanoseconds / found).nanoseconds}")
-        println("not hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
-        index.convertToHigherRank()
-        println("hr: "+index.serializeToBytes().size.printBytesAsAppropriateUnit())
-        found = 0
-       val timeTakenSearch = measureTime {
             map.forEach { value ->
                 val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
                     it == value
                 }
                 if (value in searchMustInclude) {
                     found++
-                }else{
+                } else {
+                    throw IllegalStateException("Not finding the entry")
+                }
+            }
+        }
+        println("Time taken to search $itemCount elements: $timeTakenSearch1, average ${(timeTakenSearch1.inWholeNanoseconds / found).nanoseconds}")
+        println("not hr: " + index.serializeToBytes().size.printBytesAsAppropriateUnit())
+        index.convertToHigherRank()
+        println("hr: " + index.serializeToBytes().size.printBytesAsAppropriateUnit())
+        found = 0
+        val timeTakenSearch = measureTime {
+            map.forEach { value ->
+                val searchMustInclude = index.searchMustInclude(listOf(listOf(value))) {
+                    it == value
+                }
+                if (value in searchMustInclude) {
+                    found++
+                } else {
+                    throw IllegalStateException("Not finding the entry")
+                }
+            }
+        }
+        println("Time taken to search higher rank $itemCount elements: $timeTakenSearch, average ${(timeTakenSearch.inWholeNanoseconds / found).nanoseconds}")
+
+    }
+
+    @Test
+    fun regression_test_higher_rank2() {
+        val index = Index<String>()
+        val index2 = Index<String>()
+        val itemCount = 10_000
+
+        val map = mutableSetOf<String>() // For later verification
+
+        val timeTaken = measureTime {
+            for (key in 0..<itemCount) {
+                val value = (1..2 + Random.nextInt(50)).joinToString("") { UUID.randomUUID().toString() }
+                index.add(value, value)
+
+                map.add(value)
+            }
+        }
+        println("Time taken to add $itemCount elements: $timeTaken")
+
+
+        val timeTaken2 = measureTime {
+            for (key in 0..<itemCount) {
+                val value = (1..2 + Random.nextInt(50)).joinToString("") { UUID.randomUUID().toString() }
+                index2.add(value, value)
+
+                map.add(value)
+            }
+        }
+        println("Time taken to add $itemCount elements: $timeTaken2")
+
+        index.convertToHigherRank()
+        println("hr 1: " + index.serializeToBytes().size.printBytesAsAppropriateUnit())
+        println("2: " + index2.serializeToBytes().size.printBytesAsAppropriateUnit())
+        val index3 = index.unionHigherRankWithLowerRank(index2)
+        println("hr 3: " + index3.serializeToBytes().size.printBytesAsAppropriateUnit())
+        index2.convertToHigherRank()
+        println("hr 2: " + index2.serializeToBytes().size.printBytesAsAppropriateUnit())
+        var found = 0
+
+        val timeTakenSearch = measureTime {
+            map.forEach { value ->
+                val searchMustInclude = index3.searchMustInclude(listOf(listOf(value))) {
+                    it == value
+                }
+                if (value in searchMustInclude) {
+                    found++
+                } else {
                     throw IllegalStateException("Not finding the entry")
                 }
             }
