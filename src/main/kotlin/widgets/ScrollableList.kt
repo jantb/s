@@ -74,9 +74,6 @@ class ScrollableList(
         startUiScheduler()
     }
 
-    /**
-     * Replaces the raw Thread. Consumes Kafka messages.
-     */
     private fun startMessageConsumer() {
         scope.launch {
             while (isActive && isRunning.get()) {
@@ -93,9 +90,6 @@ class ScrollableList(
         }
     }
 
-    /**
-     * Replaces the ScheduledExecutor. Checks for state changes to trigger repaints.
-     */
     private fun startUiScheduler() {
         scope.launch {
             while (isActive && isRunning.get()) {
@@ -162,6 +156,13 @@ class ScrollableList(
         g.color = UiColors.magenta
         paintLineItem(g)
 
+        // Clear remainder (below last rendered line item)
+        val lastY = chartHeight + charHeight * lineList.size
+        if (lastY < height) {
+            g.color = UiColors.background
+            g.fillRect(0, lastY, width, height - lastY)
+        }
+
         return image!!
     }
 
@@ -188,9 +189,11 @@ class ScrollableList(
 
     private fun rebuildLineItems() {
         val visibleLines = calculateVisibleLines()
-        // Only rebuild if size changed significantly
-        if (lineList.size != visibleLines + 1) {
-            lineList = (0..visibleLines).map { index ->
+        val newCount = visibleLines + 1
+        val oldCount = lineList.size
+
+        if (oldCount != newCount) {
+            lineList = (0 until newCount).map { index ->
                 LineItem(
                     parent = this,
                     inputTextLine = inputTextLine,
@@ -199,6 +202,17 @@ class ScrollableList(
                     width = width,
                     height = charHeight
                 )
+            }
+
+            // If we shrank, clear the region where removed rows were drawn.
+            if (newCount < oldCount && ::g2d.isInitialized) {
+                val startY = chartHeight + charHeight * newCount
+                val h = (height - startY).coerceAtLeast(0)
+
+                g2d.color = UiColors.background
+                g2d.fillRect(0, startY, width, h)
+
+                panel.repaint(x, startY, width, h)
             }
         }
     }
@@ -374,7 +388,7 @@ class ScrollableList(
         rebuildLineItems()
 
         EventQueue.invokeLater {
-            lineList.forEach { it.setText("") } // Clear all first
+            lineList.forEach { it.clear() }
             result.forEachIndexed { i, item ->
                 if (i < lineList.size) {
                     lineList[i].setLogJson(item)
@@ -390,7 +404,7 @@ class ScrollableList(
 
         var eventsToRight = 0
         for (i in clickedTimeIndex until chartTimePoints.size) {
-            eventsToRight += chartTimePoints[i].getTotal()
+            eventsToRight += chartTimePoints[i].total
         }
 
         indexOffset = eventsToRight

@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalTime::class)
+@file:OptIn(kotlin.time.ExperimentalTime::class)
 
 package widgets
 
@@ -17,18 +17,17 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.max
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.DurationUnit
-import kotlin.time.ExperimentalTime
 import kotlin.time.toJavaInstant
 
 /**
- * A component that displays a bar chart of log levels over time.
- * Log entries are counted by level (INFO, WARN, DEBUG, ERROR) and shown as stacked bars.
+ * Thread-safe, snapshot-based chart renderer.
+ * updateChart() may be called from a background thread.
+ * display()/mouse events are expected on the EDT.
  */
 class LogLevelChart(
     x: Int, y: Int, width: Int, height: Int,
@@ -36,85 +35,108 @@ class LogLevelChart(
     private val onBarClicked: ((indexOffset: Int) -> Unit)? = null
 ) : ComponentOwn() {
 
-    // Data structure for log counts at a specific time
-    data class TimePoint @OptIn(ExperimentalTime::class) constructor(
+    // ---------- Immutable snapshot model ----------
+
+    data class TimePoint(
         val time: kotlin.time.Instant,
-        val counts: IntArray = IntArray(LogLevel.entries.size),
-        val logEntries: MutableList<DomainLine> = mutableListOf() // Store actual log entries
+        val counts: IntArray, // immutable after publish
+        val total: Int
     ) {
-        // Get total count for all levels
-        fun getTotal(): Int = counts.sum()
-
-        // Get count for a specific level
         fun getCount(level: LogLevel): Int = counts[level.ordinal]
+    }
 
-        // Increment count for a specific level and store the log entry
-        fun incrementCount(level: LogLevel, logEntry: DomainLine) {
-            counts[level.ordinal]++
-            logEntries.add(logEntry)
-        }
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (javaClass != other?.javaClass) return false
-
-            other as TimePoint
-
-            if (time != other.time) return false
-            if (!counts.contentEquals(other.counts)) return false
-
-            return true
-        }
-
-        override fun hashCode(): Int {
-            var result = time.hashCode()
-            result = 31 * result + counts.contentHashCode()
-            return result
+    private data class ChartState(
+        val startTime: kotlin.time.Instant,
+        val endTime: kotlin.time.Instant,
+        val intervalMs: Long,
+        val points: List<TimePoint>,
+        val scaleMax: Int
+    ) {
+        companion object {
+            val EMPTY = ChartState(
+                startTime = Clock.System.now(),
+                endTime = Clock.System.now(),
+                intervalMs = 1L,
+                points = emptyList(),
+                scaleMax = 100
+            )
         }
     }
 
-    // Chart state
-    private val timePoints = mutableListOf<TimePoint>()
-    private var startTime: kotlin.time.Instant = kotlin.time.Clock.System.now()
-    private var endTime: kotlin.time.Instant = Clock.System.now()
-    private var currentScaleMax = 100 // Stable scale for bar heights and gridlines
+    // Layout used by mouse handlers (computed in display)
+    private data class Layout(
+        val width: Int,
+        val height: Int,
+        val leftMargin: Int,
+        val rightMargin: Int,
+        val headerBottom: Int,
+        val xAxisBottomPad: Int,
+        val chartTop: Int,
+        val chartBottom: Int,
+        val chartHeight: Int,
+        val timeSlotWidth: Float
+    ) {
+        companion object {
+            val EMPTY = Layout(
+                width = 1,
+                height = 1,
+                leftMargin = 30,
+                rightMargin = 30,
+                headerBottom = 55,
+                xAxisBottomPad = 35,
+                chartTop = 55,
+                chartBottom = 1 - 35,
+                chartHeight = 1,
+                timeSlotWidth = 1f
+            )
+        }
+    }
+
+    // ---------- State (thread-safe publication) ----------
+
+    private val stateRef = AtomicReference(ChartState.EMPTY)
+    private val layoutRef = AtomicReference(Layout.EMPTY)
+
+    // updateChart synchronization + scale hysteresis state
+    private val updateLock = Any()
+    private var currentScaleMax = 100
     private var scaleLastChangedTime = Instant.now()
-    private var pendingScaleMax = 0 // For delayed scale increases
+    private var pendingScaleMax = 0
 
-    // Log levels
-    private val allLogLevels = LogLevel.entries.toTypedArray().toList()
-    private val levelRectangles = mutableMapOf<LogLevel, Rectangle>()
+    // Keep last logs so we can re-bin on resize (optional but helpful)
+    @Volatile
+    private var lastLogs: List<DomainLine> = emptyList()
+    @Volatile
+    private var lastBinnedWidth: Int = 0
 
-    // UI properties
+    // ---------- UI / caches (EDT-only) ----------
+
     private var image: BufferedImage? = null
     private var g2d: Graphics2D? = null
-    private val lock = ReentrantLock()
-    private val widthDivision = 6
-    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.of("UTC"))
-    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.of("UTC"))
 
-    // Dynamic margin calculation
-    private var leftMargin = 30 // Default left margin, will be adjusted based on label width
+    private val allLogLevels = LogLevel.entries.toTypedArray().toList()
+    private val colorCache: Map<LogLevel, Color> = allLogLevels.associateWith { getLevelColor(it) }
 
-    // Enhanced UI properties
-    private var hoveredBar: Pair<Int, LogLevel>? = null
+    // Legend hit boxes (EDT-only mutation, but published immutably for safety)
+    @Volatile
+    private var levelHitBoxes: Map<LogLevel, Rectangle> = emptyMap()
+
+    // Hover/tooltip are updated by mouseMoved (EDT), read by display (EDT). Volatile for safety.
+    private data class Hover(val index: Int, val level: LogLevel)
+    private data class TooltipInfo(
+        val x: Int,
+        val y: Int,
+        val timePoint: TimePoint,
+        val level: LogLevel,
+        val count: Int
+    )
+
+    @Volatile
+    private var hoveredBar: Hover? = null
+    @Volatile
     private var tooltipInfo: TooltipInfo? = null
 
-    // Mouse interaction properties
-    private var lastMouseX = 0
-    private var lastMouseY = 0
-
-    // Performance optimization caches
-    private val gradientCache = mutableMapOf<LogLevel, GradientPaint>()
-    private val colorCache = mutableMapOf<LogLevel, Color>()
-    private var cachedVisibleRange: Pair<Int, Int>? = null
-    private var lastRenderWidth = 0
-    private var lastRenderHeight = 0
-    private var cachedTimeSlotWidth = 0f
-    private var cachedChartWidth = 0f
-    private var cachedMaxChartHeight = 0
-
-    // Pre-calculated fonts
+    // Fonts
     private val headerBoldFont = Font("JetBrains Mono", Font.BOLD, 11)
     private val headerPlainFont = Font("JetBrains Mono", Font.PLAIN, 11)
     private val legendFont = Font("JetBrains Mono", Font.PLAIN, 11)
@@ -125,13 +147,14 @@ class LogLevelChart(
     private val timeFont = Font("Monospaced", Font.PLAIN, 12)
     private val dateBoldFont = Font("Monospaced", Font.BOLD, 12)
 
-    private data class TooltipInfo(
-        val x: Int,
-        val y: Int,
-        val timePoint: TimePoint,
-        val level: LogLevel,
-        val count: Int
-    )
+    private val widthDivision = 6
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.of("UTC"))
+    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.of("UTC"))
+
+    // Geometry constants (match your existing drawing)
+    private val HEADER_BOTTOM = 55
+    private val X_AXIS_BOTTOM_PAD = 35
+    private val RIGHT_MARGIN = 30
 
     init {
         this.x = x
@@ -140,64 +163,172 @@ class LogLevelChart(
         this.height = height
     }
 
-    /** Updates the chart with new log data. */
-    @OptIn(ExperimentalTime::class)
+    // ---------- Public API ----------
+
     fun updateChart(logs: List<DomainLine>) {
-        if (logs.isEmpty()) return
+        if (logs.isEmpty()) {
+            lastLogs = emptyList()
+            stateRef.set(ChartState.EMPTY)
+            return
+        }
 
-        lock.lock()
-        try {
-            // Set time range (assuming logs are ordered newest to oldest)
-            val newStartTime = logs.lastOrNull()?.timestamp?.let { kotlin.time.Instant.fromEpochMilliseconds(it) } ?: kotlin.time.Clock.System.now()
-            val newEndTime = logs.firstOrNull()?.timestamp?.let { kotlin.time.Instant.fromEpochMilliseconds(it) } ?: kotlin.time.Clock.System.now()
-            val adjustedEndTime = if (newStartTime == newEndTime) newStartTime.plus(1.minutes) else newEndTime
+        // Cache logs reference so we can re-bin on resize
+        lastLogs = logs
 
-            val durationTotal = adjustedEndTime.minus(newStartTime).toLong(DurationUnit.MILLISECONDS)
-            val interval = durationTotal / (width.toLong() / widthDivision)
-            val targetSize = (width.toLong() / widthDivision).toInt()
+        val w = max(1, this.width) // may be 0 before first display
 
-            // Check if we can do incremental update or need full recreation
-            val needsFullRecreation = startTime != newStartTime || endTime != adjustedEndTime || timePoints.size != targetSize
-
-            if (needsFullRecreation) {
-                // Full recreation needed
-                startTime = newStartTime
-                endTime = adjustedEndTime
-
-                timePoints.clear()
-                (0 until targetSize).forEach { i ->
-                    timePoints.add(TimePoint(startTime.plus((interval * i).milliseconds)))
-                }
-
-                // Invalidate caches since time range changed
-                invalidateCache()
-            } else {
-                // Incremental update - just reset counts and clear log entries
-                timePoints.forEach { timePoint ->
-                    timePoint.counts.fill(0)
-                    timePoint.logEntries.clear()
-                }
-            }
-
-            // Assign logs to time points efficiently
-            logs.forEach { domain ->
-                val level = domain.level
-                val durationSinceStart = kotlin.time.Instant.fromEpochMilliseconds(domain.timestamp).minus(startTime).inWholeMilliseconds
-                val index = if (interval > 0) {
-                    (durationSinceStart / interval).toInt().coerceIn(0, timePoints.size - 1)
-                } else 0
-                timePoints[index].incrementCount(level, domain)
-            }
-
-            // Update scale
-            val newMaxTotal = timePoints.maxOfOrNull { it.getTotal() } ?: 0
-            updateScale(newMaxTotal)
-        } finally {
-            lock.unlock()
+        synchronized(updateLock) {
+            val newState = buildState(logs, w)
+            stateRef.set(newState)
+            lastBinnedWidth = w
         }
     }
 
-    /** Updates the chart scale with hysteresis. */
+    fun getTimePoints(): List<TimePoint> = stateRef.get().points
+
+    // ---------- Rendering ----------
+
+    override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
+        // Update component geometry (EDT)
+        val dimChanged = (image == null || this.width != width || this.height != height)
+        if (dimChanged) {
+            g2d?.dispose()
+            image = BufferedImage(max(1, width), max(1, height), BufferedImage.TYPE_INT_RGB)
+            g2d = image!!.createGraphics().apply {
+                setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+                setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+            }
+        }
+
+        this.width = max(1, width)
+        this.height = max(1, height)
+        this.x = x
+        this.y = y
+
+        // If width changed, re-bin using lastLogs (prevents mismatch after resize)
+        val logsSnapshot = lastLogs
+        if (logsSnapshot.isNotEmpty() && width != lastBinnedWidth) {
+            synchronized(updateLock) {
+                val newState = buildState(logsSnapshot, max(1, width))
+                stateRef.set(newState)
+                lastBinnedWidth = max(1, width)
+            }
+        }
+
+        val g = g2d!!
+        val state = stateRef.get()
+
+        // Clear background
+        g.color = UiColors.background
+        g.fillRect(0, 0, this.width, this.height)
+
+        // Compute layout based on current Graphics2D metrics
+        val layout = computeLayout(g, state, this.width, this.height)
+        layoutRef.set(layout)
+
+        // Draw chart
+        g.drawChart(state, layout)
+        g.drawTooltip(layout)
+
+        return image!!
+    }
+
+    override fun repaint(componentOwn: ComponentOwn) {
+        // no-op here (your parent calls display and paints the returned image)
+    }
+
+    // ---------- Layout helpers ----------
+
+    private fun computeLayout(g: Graphics2D, state: ChartState, width: Int, height: Int): Layout {
+        val leftMargin = calculateLeftMargin(g, state.scaleMax)
+        val chartTop = HEADER_BOTTOM
+        val chartBottom = height - X_AXIS_BOTTOM_PAD
+        val chartHeight = max(1, chartBottom - chartTop)
+        val pointsCount = max(1, state.points.size)
+        val chartWidth = max(1, width - leftMargin - RIGHT_MARGIN)
+        val timeSlotWidth = chartWidth.toFloat() / pointsCount
+
+        return Layout(
+            width = width,
+            height = height,
+            leftMargin = leftMargin,
+            rightMargin = RIGHT_MARGIN,
+            headerBottom = HEADER_BOTTOM,
+            xAxisBottomPad = X_AXIS_BOTTOM_PAD,
+            chartTop = chartTop,
+            chartBottom = chartBottom,
+            chartHeight = chartHeight,
+            timeSlotWidth = timeSlotWidth
+        )
+    }
+
+    private fun calculateLeftMargin(g: Graphics2D, scaleMax: Int): Int {
+        val font = Font("JetBrains Mono", Font.PLAIN, 11)
+        g.font = font
+        val label = scaleMax.toString()
+        val labelWidth = g.fontMetrics.stringWidth(label)
+        // labels are drawn at x=5; chart starts after label + padding
+        return 5 + labelWidth + 15
+    }
+
+    // ---------- Build snapshot ----------
+
+    private fun buildState(logs: List<DomainLine>, width: Int): ChartState {
+        // Time range (logs assumed newest -> oldest, as in your code)
+        val newStartTime = logs.lastOrNull()?.timestamp?.let { kotlin.time.Instant.fromEpochMilliseconds(it) }
+            ?: Clock.System.now()
+        val newEndTime = logs.firstOrNull()?.timestamp?.let { kotlin.time.Instant.fromEpochMilliseconds(it) }
+            ?: Clock.System.now()
+        val adjustedEndTime = if (newStartTime == newEndTime) newStartTime else newEndTime
+
+        val binCount = max(1, width / widthDivision)
+
+        val durationMs = max(
+            1L,
+            adjustedEndTime.minus(newStartTime).toLong(DurationUnit.MILLISECONDS)
+        )
+        val intervalMs = max(1L, durationMs / binCount.toLong())
+
+        // Init bins
+        val points = Array(binCount) { i ->
+            val t = newStartTime.plus((intervalMs * i).milliseconds)
+            TimePoint(
+                time = t,
+                counts = IntArray(LogLevel.entries.size),
+                total = 0
+            )
+        }
+
+        // Fill counts (mutate local arrays only)
+        for (domain in logs) {
+            val level = domain.level
+            val ts = kotlin.time.Instant.fromEpochMilliseconds(domain.timestamp)
+            val sinceStart = ts.minus(newStartTime).toLong(DurationUnit.MILLISECONDS)
+            val idx = (sinceStart / intervalMs).toInt().coerceIn(0, binCount - 1)
+            points[idx].counts[level.ordinal]++
+        }
+
+        // Compute totals + max total
+        var maxTotal = 0
+        val finalized = ArrayList<TimePoint>(binCount)
+        for (p in points) {
+            val total = p.counts.sum()
+            if (total > maxTotal) maxTotal = total
+            finalized.add(TimePoint(time = p.time, counts = p.counts, total = total))
+        }
+
+        // Update scale with hysteresis (protected by updateLock)
+        updateScale(maxTotal)
+        return ChartState(
+            startTime = newStartTime,
+            endTime = adjustedEndTime,
+            intervalMs = intervalMs,
+            points = finalized,
+            scaleMax = currentScaleMax
+        )
+    }
+
     private fun updateScale(newMaxTotal: Int) {
         val now = Instant.now()
         val timeSinceLastChange = Duration.between(scaleLastChangedTime, now).seconds
@@ -206,273 +337,170 @@ class LogLevelChart(
             newMaxTotal > currentScaleMax * 1.5 -> {
                 pendingScaleMax = newMaxTotal
                 if (timeSinceLastChange > 2 || newMaxTotal > currentScaleMax * 4) {
-                    currentScaleMax = (newMaxTotal * 1.2).toInt()
+                    currentScaleMax = (newMaxTotal * 1.2).toInt().coerceAtLeast(5)
                     scaleLastChangedTime = now
                     pendingScaleMax = 0
                 }
             }
 
             newMaxTotal < currentScaleMax / 3 && timeSinceLastChange > 1 -> {
-                currentScaleMax = maxOf(newMaxTotal * 2, 5)
+                currentScaleMax = max(newMaxTotal * 2, 5)
                 scaleLastChangedTime = now
             }
         }
     }
 
-    /** Invalidates caches when dimensions change */
-    private fun invalidateCache() {
-        cachedVisibleRange = null
-    }
+    // ---------- Drawing ----------
 
-    /** Pre-calculates values that are used frequently in rendering */
-    private fun updateRenderingCache(width: Int, height: Int) {
-        val needsUpdate = lastRenderWidth != width || lastRenderHeight != height || cachedVisibleRange == null
-
-        if (needsUpdate) {
-            lastRenderWidth = width
-            lastRenderHeight = height
-
-            // Calculate dynamic left margin based on label width
-            leftMargin = calculateLeftMargin()
-            cachedChartWidth = (width - leftMargin - 30).toFloat() // 30px right margin
-            cachedMaxChartHeight = height - 55 - 35
-            cachedTimeSlotWidth = cachedChartWidth / timePoints.size.coerceAtLeast(1)
-
-            cachedVisibleRange = 0 to (timePoints.size - 1)
-        }
-
-        // Initialize color cache if needed
-        if (colorCache.isEmpty()) {
-            allLogLevels.forEach { level ->
-                colorCache[level] = getLevelColor(level)
-            }
-        }
-    }
-
-    /** Calculates the left margin needed to accommodate Y-axis labels */
-    private fun calculateLeftMargin(): Int {
-        if (timePoints.isEmpty()) return 30
-
-        val font = Font("JetBrains Mono", Font.PLAIN, 11)
-        val maxCount = timePoints.maxOfOrNull { it.getTotal() } ?: 0
-        val maxLabel = (maxCount * 5 / 5).toString() // Get the maximum label value
-
-        // Create a temporary graphics context to measure text width
-        val tempImage = BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB)
-        val tempG2d = tempImage.createGraphics()
-        tempG2d.font = font
-        val metrics = tempG2d.fontMetrics
-        val labelWidth = metrics.stringWidth(maxLabel)
-        tempG2d.dispose()
-
-        // Labels are drawn at x=5, so chart area should start after label + padding
-        // labelWidth is the width of the text, so chart should start at 5 + labelWidth + 15 (more padding)
-        return 5 + labelWidth + 15
-    }
-
-    /** Gets cached gradient for a level, creating if necessary */
-    private fun getCachedGradient(level: LogLevel, x: Int, y: Int, height: Int): GradientPaint {
-        val cacheKey = level
-        return gradientCache.getOrPut(cacheKey) {
-            val baseColor = colorCache[level] ?: getLevelColor(level)
-            GradientPaint(
-                x.toFloat(), y.toFloat(), baseColor.brighter(),
-                x.toFloat(), (y + height).toFloat(), baseColor.darker()
-            )
-        }
-    }
-
-    override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
-        // Pre-calculate values outside the lock to reduce lock time
-        updateRenderingCache(width, height)
-
-        lock.lock()
-        try {
-            // Reinitialize image if dimensions change or not yet initialized
-            if (image == null || this.width != width || this.height != height) {
-                g2d?.dispose()
-                image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-                g2d = image!!.createGraphics().apply {
-                    // Set rendering hints once during initialization
-                    setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                    setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                    setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
-                }
-                this.width = width
-                this.height = height
-                this.x = x
-                this.y = y
-            }
-
-            // Clear and draw
-            g2d!!.apply {
-                color = UiColors.background
-                fillRect(0, 0, width, height)
-                drawChart()
-                drawTooltip()
-            }
-
-            return image!!
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    @OptIn(ExperimentalTime::class)
-    private fun Graphics2D.drawChart() {
-        if (timePoints.isEmpty()) {
-            drawEmptyChart()
+    private fun Graphics2D.drawChart(state: ChartState, layout: Layout) {
+        if (state.points.isEmpty()) {
+            drawEmptyChart(layout)
             return
         }
 
-        val levels = allLogLevels.toList()
+        drawEnhancedGridlines(layout, state.scaleMax)
 
-        // Draw enhanced gridlines and axis (adjusted for header height)
-        drawEnhancedGridlines(currentScaleMax)
-
-        // Draw main axis with better styling
+        // X-axis
         stroke = BasicStroke(2f)
         color = UiColors.defaultText.darker()
-        drawLine(leftMargin, height - 35, width - 30, height - 35)
+        drawLine(layout.leftMargin, layout.chartBottom, layout.width - layout.rightMargin, layout.chartBottom)
         stroke = BasicStroke(1f)
 
-        // Track the last date to detect date changes
+        // Bars + labels
         var lastDate: String? = null
+        val selectedLevels = State.levels.get()
+        val points = state.points
 
-        // Iterate through all time points
-        timePoints.forEachIndexed { index, timePoint ->
-            val xPosBase = leftMargin + (index * cachedTimeSlotWidth).toInt()
+        for (index in points.indices) {
+            val tp = points[index]
+            val xPosBase = layout.leftMargin + (index * layout.timeSlotWidth).toInt()
 
-            val javaInstant = timePoint.time.toJavaInstant()
-
-            // Get current date string
+            val javaInstant = tp.time.toJavaInstant()
             val currentDate = dateFormatter.format(javaInstant)
 
-            // Check if date changed
             if (lastDate != currentDate) {
-                // Draw date change indicator - a prominent vertical line
-                val dateChangeStroke = BasicStroke(2f)
+                // date change line
                 val originalStroke = stroke
-                stroke = dateChangeStroke
+                stroke = BasicStroke(2f)
                 color = UiColors.teal
-                drawLine(xPosBase, 55, xPosBase, height - 35)
+                drawLine(xPosBase, layout.chartTop, xPosBase, layout.chartBottom)
                 stroke = originalStroke
 
-                // Add date label using cached font
                 font = dateBoldFont
-                drawString(currentDate, xPosBase + 5, 70)
-
-                // Reset to regular color for other elements
                 color = Color.GRAY
+                drawString(currentDate, xPosBase + 5, layout.chartTop + 15)
             }
 
-            // Draw regular time labels at intervals
-            if (index % 25 == 0 || index == timePoints.size - 1) {
+            // time labels
+            if (index % 25 == 0 || index == points.lastIndex) {
                 font = timeFont
                 color = Color.GRAY
-                drawString(timeFormatter.format(javaInstant), xPosBase, height - 15)
+                drawString(timeFormatter.format(javaInstant), xPosBase, layout.height - 15)
             }
 
-            // Update last date
             lastDate = currentDate
 
+            // stacked bars
             var currentHeight = 0
-            levels.forEach { level ->
-                if (level in State.levels.get()) {
-                    val count = timePoint.getCount(level)
-                    if (count > 0) {
-                        val barHeight = ((count.toFloat() / currentScaleMax) * cachedMaxChartHeight).toInt().coerceAtLeast(1)
-                        val barWidth = cachedTimeSlotWidth.toInt() - 2
-                        val barX = xPosBase
-                        val barY = height - 35 - currentHeight - barHeight
+            for (level in allLogLevels) {
+                if (level !in selectedLevels) continue
+                val count = tp.getCount(level)
+                if (count <= 0) continue
 
-                        // Ensure bar doesn't extend above header
-                        val adjustedBarY = barY.coerceAtLeast(55)
-                        val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
+                val barHeight = ((count.toFloat() / state.scaleMax) * layout.chartHeight)
+                    .toInt()
+                    .coerceAtLeast(1)
 
-                        // Draw bar with gradient and rounded corners (only if height > 0)
-                        if (adjustedBarHeight > 0) {
-                            drawEnhancedBar(barX, adjustedBarY, barWidth, adjustedBarHeight, level, count, timePoint)
-                        }
-                        currentHeight += barHeight
-                    }
+                val barWidth = (layout.timeSlotWidth.toInt() - 2).coerceAtLeast(1)
+                val barX = xPosBase
+                val barY = layout.chartBottom - currentHeight - barHeight
+
+                val adjustedBarY = barY.coerceAtLeast(layout.chartTop)
+                val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
+
+                if (adjustedBarHeight > 0) {
+                    drawEnhancedBar(
+                        barX, adjustedBarY, barWidth, adjustedBarHeight,
+                        level = level,
+                        index = index
+                    )
                 }
+
+                currentHeight += barHeight
             }
         }
 
-        val totalMessages = timePoints.sumOf { it.getTotal() }
-        val durationSecs =endTime.minus(  startTime).toInt(DurationUnit.SECONDS).coerceAtLeast(1)
+        // Header stats
+        val totalMessages = points.sumOf { it.total }
+        val durationSecs = state.endTime.minus(state.startTime).toInt(DurationUnit.SECONDS).coerceAtLeast(1)
         val avgMps = totalMessages.toFloat() / durationSecs
+        drawEnhancedHeader(state, totalMessages, avgMps)
 
-        // Enhanced header information
-        drawEnhancedHeader(totalMessages, avgMps, durationSecs)
-        drawLegend(levels)
+        // Legend
+        drawLegend()
     }
 
-
-    private fun Graphics2D.drawEmptyChart() {
+    private fun Graphics2D.drawEmptyChart(layout: Layout) {
         color = UiColors.background
-        fillRect(0, 0, width, height)
+        fillRect(0, 0, layout.width, layout.height)
 
-        // Draw enhanced empty chart
-        drawEnhancedGridlines(100)
+        drawEnhancedGridlines(layout, 100)
 
-        // Draw main axes with better styling
         stroke = BasicStroke(2f)
         color = UiColors.defaultText.darker()
-        drawLine(leftMargin, height - 35, width - 30, height - 35) // X-axis
-        drawLine(leftMargin, 55, leftMargin, height - 35) // Y-axis
+        drawLine(layout.leftMargin, layout.chartBottom, layout.width - layout.rightMargin, layout.chartBottom)
+        drawLine(layout.leftMargin, layout.chartTop, layout.leftMargin, layout.chartBottom)
         stroke = BasicStroke(1f)
 
-        // Add "No Data" message with cached font
         font = emptyChartFont
         color = UiColors.defaultText.darker()
         val message = "No log data available"
-        val metrics = fontMetrics
-        val messageWidth = metrics.stringWidth(message)
-        drawString(message, (width - messageWidth) / 2, height / 2)
+        val messageWidth = fontMetrics.stringWidth(message)
+        drawString(message, (layout.width - messageWidth) / 2, layout.height / 2)
 
-        drawLegend(allLogLevels.toList())
+        drawLegend()
     }
 
-    @OptIn(ExperimentalTime::class)
-    private fun Graphics2D.drawEnhancedHeader(totalMessages: Int, avgMps: Float, durationSecs: Int) {
-        // Create header background
-        val headerHeight = 50  // Increased height to accommodate two lines
+    private fun Graphics2D.drawEnhancedHeader(state: ChartState, totalMessages: Int, avgMps: Float) {
+        val headerHeight = 50
         val gradient = GradientPaint(
-            0f, 0f, Color(UiColors.background.red, UiColors.background.green, UiColors.background.blue, 200),
-            0f, headerHeight.toFloat(), Color(UiColors.background.red, UiColors.background.green, UiColors.background.blue, 100)
+            0f,
+            0f,
+            Color(UiColors.background.red, UiColors.background.green, UiColors.background.blue, 200),
+            0f,
+            headerHeight.toFloat(),
+            Color(UiColors.background.red, UiColors.background.green, UiColors.background.blue, 100)
         )
         paint = gradient
         fillRect(0, 0, width, headerHeight)
 
-        // Header border
         color = UiColors.defaultText.darker()
         stroke = BasicStroke(1f)
         drawLine(0, headerHeight, width, headerHeight)
 
-        // Time range information
-        val startDateStr = dateFormatter.format(startTime.toJavaInstant())
-        val endDateStr = dateFormatter.format(endTime.toJavaInstant())
+        val startDateStr = dateFormatter.format(state.startTime.toJavaInstant())
+        val endDateStr = dateFormatter.format(state.endTime.toJavaInstant())
 
-        // First line - Time range
         font = headerBoldFont
         color = UiColors.defaultText.brighter()
-        val timeRangeText = if (startDateStr == endDateStr) {
-            "$startDateStr ${timeFormatter.format(startTime.toJavaInstant())} - ${timeFormatter.format(endTime.toJavaInstant())}"
-        } else {
-            "$startDateStr ${timeFormatter.format(startTime.toJavaInstant())} - $endDateStr ${timeFormatter.format(endTime.toJavaInstant())}"
-        }
+
+        val timeRangeText =
+            if (startDateStr == endDateStr) {
+                "$startDateStr ${timeFormatter.format(state.startTime.toJavaInstant())} - ${timeFormatter.format(state.endTime.toJavaInstant())}"
+            } else {
+                "$startDateStr ${timeFormatter.format(state.startTime.toJavaInstant())} - $endDateStr ${
+                    timeFormatter.format(
+                        state.endTime.toJavaInstant()
+                    )
+                }"
+            }
         drawString(timeRangeText, 10, 18)
 
-        // Second line - Duration and Statistics
         font = headerPlainFont
         color = UiColors.defaultText
-        val duration = endTime.minus(startTime)
-        val durationText = "Duration: $duration"
-        drawString(durationText, 10, 35)
+        val duration = state.endTime.minus(state.startTime)
+        drawString("Duration: $duration", 10, 35)
 
-        // Right side - Statistics on second line
         font = headerBoldFont
         color = UiColors.teal
         val statsText = "Total: $totalMessages | Avg: %.1f/s".format(avgMps)
@@ -480,116 +508,123 @@ class LogLevelChart(
         drawString(statsText, width - statsWidth - 10, 35)
     }
 
-
-    private fun Graphics2D.drawEnhancedGridlines(maxCount: Int) {
-        // Draw subtle grid lines
+    private fun Graphics2D.drawEnhancedGridlines(layout: Layout, maxCount: Int) {
+        // subtle grid
         stroke = BasicStroke(1f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 0f, floatArrayOf(2f, 4f), 0f)
         color = Color(UiColors.defaultText.red, UiColors.defaultText.green, UiColors.defaultText.blue, 30)
 
-        (1..5).forEach { i ->
-            val y = height - 35 - ((i.toFloat() / 5) * (height - 105)).toInt()
-            drawLine(leftMargin, y, width - 30, y)
+        for (i in 1..5) {
+            val y = layout.chartBottom - ((i.toFloat() / 5f) * layout.chartHeight).toInt()
+            drawLine(layout.leftMargin, y, layout.width - layout.rightMargin, y)
         }
 
-        // Draw Y-axis labels with better styling
+        // y labels
         stroke = BasicStroke(1f)
-        color = Color.GRAY  // Grey color like date labels
+        color = Color.GRAY
         font = Font("JetBrains Mono", Font.PLAIN, 11)
 
-        (1..5).forEach { i ->
-            val y = height - 35 - ((i.toFloat() / 5) * (height - 105)).toInt()
+        for (i in 1..5) {
+            val y = layout.chartBottom - ((i.toFloat() / 5f) * layout.chartHeight).toInt()
             val value = (maxCount * i / 5).toString()
             drawString(value, 5, y + 4)
         }
     }
 
-    private fun Graphics2D.drawEnhancedBar(x: Int, y: Int, width: Int, height: Int, level: LogLevel, count: Int, timePoint: TimePoint) {
+    private fun Graphics2D.drawEnhancedBar(
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        level: LogLevel,
+        index: Int
+    ) {
         val baseColor = colorCache[level] ?: getLevelColor(level)
-
-        // Use cached gradient
-        val gradient = getCachedGradient(level, x, y, height)
-
-        // Check if this bar is hovered
-        val isHovered = hoveredBar?.first == timePoints.indexOf(timePoint) && hoveredBar?.second == level
+        val isHovered = hoveredBar?.let { it.index == index && it.level == level } == true
 
         if (isHovered) {
-            // Draw glow effect for hovered bar
             val glowColor = Color(baseColor.red, baseColor.green, baseColor.blue, 100)
             paint = GradientPaint(
                 (x - 2).toFloat(), (y - 2).toFloat(), glowColor,
                 (x - 2).toFloat(), (y + height + 4).toFloat(), Color(0, 0, 0, 0)
             )
-            fill(RoundRectangle2D.Float((x - 2).toFloat(), (y - 2).toFloat(), (width + 4).toFloat(), (height + 4).toFloat(), 4f, 4f))
+            fill(
+                RoundRectangle2D.Float(
+                    (x - 2).toFloat(),
+                    (y - 2).toFloat(),
+                    (width + 4).toFloat(),
+                    (height + 4).toFloat(),
+                    4f,
+                    4f
+                )
+            )
         }
 
-        // Draw main bar with rounded corners
-        paint = gradient
+        // Gradient per bar (correct + still fast enough)
+        paint = GradientPaint(
+            x.toFloat(), y.toFloat(), baseColor.brighter(),
+            x.toFloat(), (y + height).toFloat(), baseColor.darker()
+        )
         fill(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), width.toFloat(), height.toFloat(), 3f, 3f))
 
-        // Add subtle border
         color = baseColor.darker().darker()
         stroke = BasicStroke(0.5f)
         draw(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), width.toFloat(), height.toFloat(), 3f, 3f))
+        stroke = BasicStroke(1f)
     }
 
-    private fun Graphics2D.drawTooltip() {
-        tooltipInfo?.let { tooltip ->
-            val tooltipWidth = 200
-            val tooltipHeight = 95
-            val padding = 8
+    private fun Graphics2D.drawTooltip(layout: Layout) {
+        val tooltip = tooltipInfo ?: return
 
-            // Position tooltip to avoid edges
-            var tooltipX = tooltip.x + 10
-            var tooltipY = tooltip.y - tooltipHeight - 10
+        val tooltipWidth = 200
+        val tooltipHeight = 95
+        val padding = 8
 
-            if (tooltipX + tooltipWidth > width) tooltipX = tooltip.x - tooltipWidth - 10
-            if (tooltipY < 0) tooltipY = tooltip.y + 20
+        var tooltipX = tooltip.x + 10
+        var tooltipY = tooltip.y - tooltipHeight - 10
 
-            // Draw tooltip background with shadow
-            color = Color(0, 0, 0, 100)
-            fillRoundRect(tooltipX + 2, tooltipY + 2, tooltipWidth, tooltipHeight, 8, 8)
+        if (tooltipX + tooltipWidth > layout.width) tooltipX = tooltip.x - tooltipWidth - 10
+        if (tooltipY < 0) tooltipY = tooltip.y + 20
 
-            color = Color(40, 42, 46)
-            fillRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
+        color = Color(0, 0, 0, 100)
+        fillRoundRect(tooltipX + 2, tooltipY + 2, tooltipWidth, tooltipHeight, 8, 8)
 
-            color = UiColors.defaultText.darker()
-            stroke = BasicStroke(1f)
-            drawRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
+        color = Color(40, 42, 46)
+        fillRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
 
-            // Draw tooltip content with cached fonts
-            font = tooltipFont
-            color = UiColors.defaultText
+        color = UiColors.defaultText.darker()
+        stroke = BasicStroke(1f)
+        drawRoundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 8, 8)
 
-            val timeStr = timeFormatter.format(tooltip.timePoint.time.toJavaInstant())
-            drawString("Time: $timeStr", tooltipX + padding, tooltipY + padding + 15)
+        font = tooltipFont
+        color = UiColors.defaultText
+        val timeStr = timeFormatter.format(tooltip.timePoint.time.toJavaInstant())
+        drawString("Time: $timeStr", tooltipX + padding, tooltipY + padding + 15)
 
-            color = colorCache[tooltip.level] ?: getLevelColor(tooltip.level)
-            drawString("${tooltip.level.name}: ${tooltip.count}", tooltipX + padding, tooltipY + padding + 35)
+        color = colorCache[tooltip.level] ?: getLevelColor(tooltip.level)
+        drawString("${tooltip.level.name}: ${tooltip.count}", tooltipX + padding, tooltipY + padding + 35)
 
-            color = UiColors.defaultText.darker()
-            font = tooltipPlainFont
-            drawString("Total: ${tooltip.timePoint.getTotal()}", tooltipX + padding, tooltipY + padding + 55)
+        color = UiColors.defaultText.darker()
+        font = tooltipPlainFont
+        drawString("Total: ${tooltip.timePoint.total}", tooltipX + padding, tooltipY + padding + 55)
 
-            // Add percentage information
-            val percentage = if (tooltip.timePoint.getTotal() > 0) {
-                (tooltip.count.toFloat() / tooltip.timePoint.getTotal() * 100)
-            } else 0f
-            drawString("Percentage: %.1f%%".format(percentage), tooltipX + padding, tooltipY + padding + 70)
-        }
+        val percentage =
+            if (tooltip.timePoint.total > 0) (tooltip.count.toFloat() / tooltip.timePoint.total * 100f) else 0f
+        drawString("Percentage: %.1f%%".format(percentage), tooltipX + padding, tooltipY + padding + 70)
     }
 
-    private fun Graphics2D.drawLegend(levels: List<LogLevel>) {
-        levelRectangles.clear()
+    private fun Graphics2D.drawLegend() {
+        val levels = allLogLevels
         val labelWidth = 90
         val totalWidth = labelWidth * levels.size
         val startX = (width - totalWidth) / 2
 
-        levels.forEachIndexed { index, level ->
+        val boxes = HashMap<LogLevel, Rectangle>(levels.size)
+
+        for ((index, level) in levels.withIndex()) {
             val boxX = startX + (index * labelWidth)
             val boxY = 15
             val isSelected = level in State.levels.get()
 
-            // Enhanced selection background
             if (isSelected) {
                 val selectionColor = colorCache[level] ?: getLevelColor(level)
                 color = Color(selectionColor.red, selectionColor.green, selectionColor.blue, 60)
@@ -601,50 +636,122 @@ class LogLevelChart(
                 stroke = BasicStroke(1f)
             }
 
-            // Enhanced color indicator with gradient
             val levelColor = colorCache[level] ?: getLevelColor(level)
-            val gradient = GradientPaint(
+            paint = GradientPaint(
                 boxX.toFloat(), boxY.toFloat(), levelColor.brighter(),
                 boxX.toFloat(), (boxY + 12).toFloat(), levelColor.darker()
             )
-            paint = gradient
             fillRoundRect(boxX, boxY, 12, 12, 3, 3)
 
-            // Add subtle border to color indicator
             color = levelColor.darker()
             stroke = BasicStroke(0.5f)
             drawRoundRect(boxX, boxY, 12, 12, 3, 3)
             stroke = BasicStroke(1f)
 
-            // Enhanced text rendering with cached fonts
             color = if (isSelected) UiColors.defaultText.brighter() else UiColors.defaultText.darker()
             font = if (isSelected) legendBoldFont else legendFont
             drawString(level.name, boxX + 18, boxY + 10)
 
-            levelRectangles[level] = Rectangle(boxX - 4, boxY - 4, labelWidth - 2, 18)
+            boxes[level] = Rectangle(boxX - 4, boxY - 4, labelWidth - 2, 18)
         }
+
+        levelHitBoxes = boxes.toMap()
     }
 
+    // ---------- Input handling ----------
+
     override fun mouseClicked(e: MouseEvent) {
-        levelRectangles.entries.find { it.value.contains(e.point) }?.key?.let { level ->
+        levelHitBoxes.entries.find { it.value.contains(e.point) }?.key?.let { level ->
             if (level in State.levels.get() && State.levels.get().size > 1) {
                 val logLevels = State.levels.get()
                 logLevels.remove(level)
-                State.levels.set(
-                    logLevels
-                )
-            } else State.levels.get().add(level)
+                State.levels.set(logLevels)
+            } else {
+                State.levels.get().add(level)
+            }
             onLevelsChanged?.invoke()
         }
     }
 
-    override fun repaint(componentOwn: ComponentOwn) {}
-    override fun keyTyped(e: KeyEvent) {}
+    override fun mousePressed(e: MouseEvent) {}
+
+    override fun mouseReleased(e: MouseEvent) {
+        val layout = layoutRef.get()
+        if (e.y < layout.chartTop || e.y > layout.chartBottom) return
+        if (e.x < layout.leftMargin || e.x > layout.width - layout.rightMargin) return
+        handleBarClick(e.x, layout)
+    }
+
+    private fun handleBarClick(mouseX: Int, layout: Layout) {
+        val state = stateRef.get()
+        if (state.points.isEmpty()) return
+
+        val chartX = mouseX - layout.leftMargin
+        val timeIndex = (chartX / layout.timeSlotWidth).toInt().coerceIn(0, state.points.size - 1)
+        onBarClicked?.invoke(timeIndex)
+    }
+
+    override fun mouseMoved(e: MouseEvent) {
+        val layout = layoutRef.get()
+        val state = stateRef.get()
+        if (state.points.isEmpty()) {
+            hoveredBar = null
+            tooltipInfo = null
+            return
+        }
+
+        // outside plot area?
+        if (e.x < layout.leftMargin || e.x >= layout.width - layout.rightMargin || e.y < layout.chartTop || e.y > layout.chartBottom) {
+            hoveredBar = null
+            tooltipInfo = null
+            return
+        }
+
+        val chartX = e.x - layout.leftMargin
+        val timeIndex = (chartX / layout.timeSlotWidth).toInt().coerceIn(0, state.points.size - 1)
+        val timePoint = state.points[timeIndex]
+
+        // Determine hovered stack segment
+        var currentHeight = 0
+        var hoveredLevel: LogLevel? = null
+        val selectedLevels = State.levels.get()
+
+        // Use reversed order to match your original hover logic
+        for (level in allLogLevels.asReversed()) {
+            if (level !in selectedLevels) continue
+
+            val count = timePoint.getCount(level)
+            if (count <= 0) continue
+
+            val barHeight = ((count.toFloat() / state.scaleMax) * layout.chartHeight).toInt().coerceAtLeast(1)
+            val barY = layout.chartBottom - currentHeight - barHeight
+            val adjustedBarY = barY.coerceAtLeast(layout.chartTop)
+            val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
+
+            val barTop = adjustedBarY
+            val barBottom = adjustedBarY + adjustedBarHeight
+
+            if (e.y in barTop..barBottom) {
+                hoveredLevel = level
+                tooltipInfo = TooltipInfo(e.x, e.y, timePoint, level, count)
+                break
+            }
+
+            currentHeight += barHeight
+        }
+
+        hoveredBar = if (hoveredLevel != null) Hover(timeIndex, hoveredLevel) else null
+        if (hoveredLevel == null) tooltipInfo = null
+    }
+
+    override fun mouseDragged(e: MouseEvent) {}
+    override fun mouseWheelMoved(e: MouseWheelEvent) {}
+    override fun mouseEntered(e: MouseEvent) {}
+    override fun mouseExited(e: MouseEvent) {}
 
     override fun keyPressed(e: KeyEvent) {
         when (e.keyCode) {
             KeyEvent.VK_R -> {
-                // Reset all filters
                 State.levels.get().clear()
                 State.levels.get().addAll(allLogLevels)
                 onLevelsChanged?.invoke()
@@ -652,122 +759,25 @@ class LogLevelChart(
         }
     }
 
+    override fun keyTyped(e: KeyEvent) {}
     override fun keyReleased(e: KeyEvent) {}
-    override fun mousePressed(e: MouseEvent) {
-        lastMouseX = e.x
-        lastMouseY = e.y
-    }
-
-    override fun mouseReleased(e: MouseEvent) {
-        // Check if we clicked on a bar in the chart area
-        if (e.y >= 55 && e.y <= height - 35 && e.x >= leftMargin && e.x <= width - 30) {
-            handleBarClick(e.x, e.y)
-        }
-    }
-
-    private fun handleBarClick(mouseX: Int, mouseY: Int) {
-        if (timePoints.isEmpty()) return
-
-        // Calculate which time point was clicked
-        val chartX = mouseX - leftMargin
-        val timeIndex = (chartX / cachedTimeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
-
-        // Pass the time index to the parent so it can calculate the correct offset
-        // by counting events to the right of this bar and adding to current offset
-        onBarClicked?.invoke(timeIndex)
-    }
-    override fun mouseEntered(e: MouseEvent) {
-        mouseInside = true
-    }
-
-    override fun mouseExited(e: MouseEvent) {
-        mouseInside = false
-    }
-
-    override fun mouseWheelMoved(e: MouseWheelEvent) {
-
-    }
-
-    override fun mouseDragged(e: MouseEvent) {
-        lastMouseX = e.x
-        lastMouseY = e.y
-    }
-    override fun mouseMoved(e: MouseEvent) {
-        // Early exit if mouse is outside chart area
-        val mouseX = e.x - leftMargin
-        val mouseY = e.y
-
-        if (mouseX < 0 || mouseX >= width - 60 || mouseY < 55 || mouseY > height - 35) {
-            hoveredBar = null
-            tooltipInfo = null
-            return
-        }
-
-        // Calculate which time point is being hovered
-        if (timePoints.isEmpty()) {
-            hoveredBar = null
-            tooltipInfo = null
-            return
-        }
-
-        val timeIndex = (mouseX / cachedTimeSlotWidth).toInt().coerceIn(0, timePoints.size - 1)
-        val timePoint = timePoints.getOrNull(timeIndex)
-
-        if (timePoint == null) {
-            hoveredBar = null
-            tooltipInfo = null
-            return
-        }
-
-        // Find which level bar is being hovered - optimized loop
-        var currentHeight = 0
-        var hoveredLevel: LogLevel? = null
-        val selectedLevels = State.levels.get() // Cache the set lookup
-
-        for (level in allLogLevels.reversed()) {
-            if (level in selectedLevels) {
-                val count = timePoint.getCount(level)
-                if (count > 0) {
-                    val barHeight = ((count.toFloat() / currentScaleMax) * cachedMaxChartHeight).toInt().coerceAtLeast(1)
-                    val barY = height - 35 - currentHeight - barHeight
-                    val adjustedBarY = barY.coerceAtLeast(55)
-                    val adjustedBarHeight = if (adjustedBarY > barY) barHeight - (adjustedBarY - barY) else barHeight
-
-                    val barTop = adjustedBarY
-                    val barBottom = adjustedBarY + adjustedBarHeight
-
-                    if (mouseY >= barTop && mouseY <= barBottom) {
-                        hoveredLevel = level
-                        tooltipInfo = TooltipInfo(e.x, e.y, timePoint, level, count)
-                        break
-                    }
-                    currentHeight += barHeight
-                }
-            }
-        }
-
-        hoveredBar = if (hoveredLevel != null) timeIndex to hoveredLevel else null
-        if (hoveredLevel == null) tooltipInfo = null
-    }
-
-    /** Provides access to time points for offset calculation */
-    fun getTimePoints(): List<TimePoint> = timePoints.toList()
 }
 
+// Keep your existing colors
 fun getLevelColor(level: LogLevel): Color = when (level) {
-    LogLevel.INFO -> Color(76, 175, 80)      // Material Green
-    LogLevel.WARN -> Color(255, 152, 0)      // Material Orange
-    LogLevel.DEBUG -> Color(96, 125, 139)    // Material Blue Grey
-    LogLevel.ERROR -> Color(244, 67, 54)     // Material Red
-    LogLevel.UNKNOWN -> Color(158, 158, 158) // Material Grey
-    LogLevel.KAFKA -> Color(0, 188, 212)     // Material Cyan
+    LogLevel.INFO -> Color(76, 175, 80)
+    LogLevel.WARN -> Color(255, 152, 0)
+    LogLevel.DEBUG -> Color(96, 125, 139)
+    LogLevel.ERROR -> Color(244, 67, 54)
+    LogLevel.UNKNOWN -> Color(158, 158, 158)
+    LogLevel.KAFKA -> Color(0, 188, 212)
 }
 
 fun getLevelColorLight(level: LogLevel): Color = when (level) {
-    LogLevel.INFO -> Color(129, 199, 132)    // Light Material Green
-    LogLevel.WARN -> Color(255, 183, 77)     // Light Material Orange
-    LogLevel.DEBUG -> Color(144, 164, 174)   // Light Material Blue Grey
-    LogLevel.ERROR -> Color(239, 154, 154)   // Light Material Red
-    LogLevel.UNKNOWN -> Color(189, 189, 189) // Light Material Grey
-    LogLevel.KAFKA -> Color(77, 208, 225)    // Light Material Cyan
+    LogLevel.INFO -> Color(129, 199, 132)
+    LogLevel.WARN -> Color(255, 183, 77)
+    LogLevel.DEBUG -> Color(144, 164, 174)
+    LogLevel.ERROR -> Color(239, 154, 154)
+    LogLevel.UNKNOWN -> Color(189, 189, 189)
+    LogLevel.KAFKA -> Color(77, 208, 225)
 }

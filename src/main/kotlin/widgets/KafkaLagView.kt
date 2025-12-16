@@ -82,8 +82,6 @@ class KafkaLagView(
         // Perform initial refresh when component is created
         refreshLagInfo()
 
-        // Old style: consuming lag info from kafkaCmdGuiChannel.
-        // You can remove this listener if you prefer updates only via refresh.
         Thread {
             while (true) {
                 try {
@@ -629,12 +627,6 @@ class KafkaLagView(
     }
 
     override fun mouseWheelMoved(e: MouseWheelEvent) {
-        if ((e.isControlDown && !State.onMac) || (e.isMetaDown && State.onMac)) {
-            rowHeight += e.wheelRotation
-            rowHeight = rowHeight.coerceIn(1, 100)
-            panel.repaint()
-            return
-        }
         indexOffset += e.wheelRotation * e.scrollAmount
         indexOffset = indexOffset.coerceIn(0, maxOf(0, lagInfo.get().size - visibleLines))
         panel.repaint()

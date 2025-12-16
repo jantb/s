@@ -26,7 +26,7 @@ class LineItem(
     width: Int,
     height: Int
 ) : ComponentOwn() {
-
+    private var bg = UiColors.background
     private val text: ColoredText = ColoredText()
     private var image: BufferedImage
     private var g2d: Graphics2D
@@ -63,8 +63,14 @@ class LineItem(
             font = loadFontFromResources((h / 1.2).toInt().coerceIn(1..100).toFloat())
         }
     }
-
+    fun clear() {
+        domain = null
+        text.highlightRange = null
+        text.clear()
+        bg = UiColors.background
+    }
     fun setText(text: String) {
+        domain = null
         g2d.color = UiColors.background
         g2d.fillRect(0, 0, width, height)
 
@@ -145,29 +151,29 @@ class LineItem(
     }
 
     override fun display(width: Int, height: Int, x: Int, y: Int): BufferedImage {
-        // Only recreate buffer if dimensions or position changed materially
         if (this.width != width || this.height != height || this.x != x || this.y != y) {
-            this.g2d.dispose() // Clean up old graphics
-
+            this.g2d.dispose()
             this.width = width
-            this.height = height.coerceIn(1..Int.MAX_VALUE)
+            this.height = height.coerceAtLeast(1)
             this.x = x
             this.y = y
 
-            this.image = createBuffer(width.coerceAtLeast(1), this.height)
-            this.g2d = createGraphics(this.image, height)
+            this.image = createBuffer(this.width, this.height)
+            this.g2d = createGraphics(this.image, this.height)
             this.maxCharBounds = g2d.fontMetrics.getMaxCharBounds(g2d)
         }
 
-        g2d.color = when {
-            domain is KafkaLineDomain -> UiColors.backgroundTeal
+        // IMPORTANT: hover/selection must win
+        val background = when {
             mouseInside -> UiColors.selectionLine
+            domain is KafkaLineDomain -> UiColors.backgroundTeal
             else -> UiColors.background
         }
+
+        g2d.color = background
         g2d.fillRect(0, 0, width, height)
 
         paintText()
-
         return image
     }
 
@@ -275,12 +281,15 @@ class LineItem(
         } else if (isModifierDown) {
             val highlighted = text.getHighlightedText()
             if (highlighted.isNotEmpty()) {
-                inputTextLine.text = highlighted
-                inputTextLine.cursorIndex = inputTextLine.text.length
+                inputTextLine.setTextProgrammatically(
+                    newText = highlighted,
+                    cursorToEnd = true,
+                    notify = true
+                )
 
                 Channels.searchChannel.trySendBlocking(
                     QueryChanged(
-                        highlighted,
+                        query = highlighted,
                         length = State.length.get(),
                         offset = State.offset.get()
                     )

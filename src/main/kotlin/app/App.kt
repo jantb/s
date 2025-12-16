@@ -40,6 +40,7 @@ class App : CoroutineScope {
             this.results = results
             this.resultsOffsetStart = offset - kotlin.math.min(offset, 5000)
             this.complete = complete
+            this.queryChanged = false
         }
 
         fun needRefresh(offset: Long): Boolean {
@@ -102,12 +103,12 @@ class App : CoroutineScope {
 
                     is QueryChanged -> {
                         if (msg.offset > 0) {
-                            if (offsetLock == Long.MAX_VALUE) {
-                                offsetLock = changedAt.get()
-                            }
+                            if (offsetLock == Long.MAX_VALUE) offsetLock = changedAt.get()
                         } else {
                             offsetLock = Long.MAX_VALUE
                         }
+
+                        var cacheRefreshed = false
 
                         val listResults = measureTimedValue {
                             val n = 10000
@@ -115,29 +116,36 @@ class App : CoroutineScope {
 
                             if (msg.offset > 0) {
                                 if (buffer.needRefresh(offset = msg.offset.toLong())) {
+                                    cacheRefreshed = true
+
                                     val cacheStartOffset = kotlin.math.max(0, msg.offset - 5000)
                                     val results = valueStores.map {
-                                        it.value.search(
-                                            query = msg.query,
-                                            offsetLock = offsetLock
-                                        )
-                                    }.merge().drop(cacheStartOffset).take(n + 10000).toList()
+                                        it.value.search(query = msg.query, offsetLock = offsetLock)
+                                    }.merge()
+                                        .drop(cacheStartOffset)
+                                        .take(n + 10000)
+                                        .toList()
 
-                                    buffer.setResults(results, cacheStartOffset.toLong(), results.size != n + 10000)
+                                    buffer.setResults(
+                                        results = results,
+                                        offset = cacheStartOffset.toLong(),
+                                        complete = results.size != n + 10000
+                                    )
                                 }
                                 buffer.get(msg.offset.toLong()).take(n)
                             } else {
                                 val currentVersion = changedAt.get()
 
                                 if (buffer.needRefresh(0L) || bufferVersion != currentVersion) {
-                                    val results = valueStores.map {
-                                        it.value.search(
-                                            query = msg.query,
-                                            offsetLock = offsetLock // Long.MAX_VALUE
-                                        )
-                                    }.merge().take(n).toList()
+                                    cacheRefreshed = true
 
-                                    buffer.setResults(results, 0L, results.size != n)
+                                    val results = valueStores.map {
+                                        it.value.search(query = msg.query, offsetLock = offsetLock)
+                                    }.merge()
+                                        .take(n)
+                                        .toList()
+
+                                    buffer.setResults(results = results, offset = 0L, complete = results.size != n)
                                     bufferVersion = currentVersion
                                 }
 
@@ -145,7 +153,9 @@ class App : CoroutineScope {
                             }
                         }
 
-                        searchTime.set(listResults.duration.inWholeNanoseconds)
+                        if (cacheRefreshed) {
+                            searchTime.set(listResults.duration.inWholeNanoseconds)
+                        }
 
                         kafkaCmdGuiChannel.put(
                             ResultChanged(
