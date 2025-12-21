@@ -260,7 +260,7 @@ class Kafka {
                                         val headersMap = headers.associate { it.key() to it.value() }
 
                                         val kafkaLine = KafkaLineDomain(
-                                            seq = seq.getAndAdd(1),
+                                            seq = globalSeq.getAndAdd(1),
                                             level = LogLevel.KAFKA,
                                             timestamp = record.timestamp(),
                                             key = record.key(),
@@ -331,7 +331,7 @@ class Kafka {
                     val headersMap = headers.associate { it.key() to it.value() }
 
                     return KafkaLineDomain(
-                        seq = seq.getAndAdd(1),
+                        seq = globalSeq.getAndAdd(1),
                         level = LogLevel.KAFKA,
                         timestamp = record.timestamp(),
                         key = record.key(),

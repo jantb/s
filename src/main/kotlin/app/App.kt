@@ -1,11 +1,9 @@
 package app
 
-import LogCluster
 import State.changedAt
 import State.indexedLines
 import State.searchTime
 import app.Channels.kafkaCmdGuiChannel
-import app.Channels.logClusterCmdGuiChannel
 import app.Channels.popChannel
 import app.Channels.refreshChannel
 import app.Channels.searchChannel
@@ -19,6 +17,7 @@ import kube.PodUnit
 import merge
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.measureTimedValue
 
@@ -96,11 +95,6 @@ class App : CoroutineScope {
                         }
                     }
 
-                    is RefreshLogGroups -> {
-                        logClusterCmdGuiChannel.put(LogClusterList(valueStores.values.map { it.getLogClusters() }
-                            .flatten()))
-                    }
-
                     is QueryChanged -> {
                         if (msg.offset > 0) {
                             if (offsetLock == Long.MAX_VALUE) offsetLock = changedAt.get()
@@ -174,10 +168,8 @@ class App : CoroutineScope {
 
 object Channels {
     val kafkaCmdGuiChannel = LinkedBlockingDeque<CmdGuiMessage>(1)
-    val logClusterCmdGuiChannel = LinkedBlockingDeque<CmdGuiMessage>(1)
     val podsChannel = LinkedBlockingDeque<PodsMessage>(1)
     val kafkaChannel = LinkedBlockingDeque<KafkaMessage>(1)
-    val kafkaSelectChannel = LinkedBlockingDeque<KafkaSelectMessage>(1)
     val popChannel = Channel<CmdMessage>(capacity = BUFFERED)
     val searchChannel = Channel<QueryChanged>(capacity = CONFLATED)
     val refreshChannel = Channel<CmdMessage>(CONFLATED)
@@ -185,7 +177,6 @@ object Channels {
 
 sealed class PodsMessage
 sealed class KafkaMessage
-sealed class KafkaSelectMessage
 class ListPods(val result: CompletableFuture<List<PodUnit>> = CompletableFuture()) : PodsMessage()
 class ListTopics(val result: CompletableFuture<List<String>> = CompletableFuture()) : KafkaMessage()
 data class ListLag(val result: CompletableDeferred<List<Kafka.LagInfo>> = CompletableDeferred()) : KafkaMessage()
@@ -195,7 +186,6 @@ class ListenToTopic(val name: List<String>) : KafkaMessage()
 class UnassignTopics(val topics: List<String>) : KafkaMessage()
 class UnListenToPod(val podName: String) : PodsMessage()
 object UnListenToPods : PodsMessage()
-class KafkaSelectChangedText(val text: String) : KafkaSelectMessage()
 object UnListenToTopics : KafkaMessage()
 sealed class CmdMessage
 class QueryChanged(val query: String, val length: Int, val offset: Int) : CmdMessage()
@@ -204,10 +194,8 @@ class ClearNamedIndex(val name: String) : CmdMessage()
 class ClearTopicIndexes(val topicName: String) : CmdMessage()
 
 class AddToIndexDomainLine(val domainLine: DomainLine) : CmdMessage()
-data object RefreshLogGroups : CmdMessage()
 
 sealed class CmdGuiMessage
 class ResultChanged(val result: List<DomainLine>, val chartResult: List<DomainLine> = emptyList()) : CmdGuiMessage()
 class KafkaLagInfo(val lagInfo: List<kafka.Kafka.LagInfo>) : CmdGuiMessage()
-class LogClusterList(val clusters: List<LogCluster>) : CmdGuiMessage()
 

@@ -96,7 +96,7 @@ class Kube {
                 .firstOrNull { it.metadata.name == pod }?.metadata?.namespace ?: return@launch
 
             getLogSequencePrev(pod, podNamespace).forEach {
-                getLogJson(it, seq = seq.getAndAdd(1), indexIdentifier = pod)?.let {
+                getLogJson(it, seq = globalSeq.getAndAdd(1), indexIdentifier = pod)?.let {
                     Channels.popChannel.send(AddToIndexDomainLine(it))
                 }
             }
@@ -107,7 +107,7 @@ class Kube {
                     BufferedReader(InputStreamReader(logSequence.output)).use { reader ->
                         while (notStopping.get()) {
                             val line = reader.readLine() ?: break
-                            getLogJson(line, seq = seq.getAndAdd(1), indexIdentifier = pod)?.let {
+                            getLogJson(line, seq = globalSeq.getAndAdd(1), indexIdentifier = pod)?.let {
                                 Channels.popChannel.send(AddToIndexDomainLine(it))
                             }
                         }

@@ -44,7 +44,6 @@ fun main() {
             buildPodSelect(panel)
             buildKafkaSelect(panel)
             buildKafkaLagView(panel)
-            buildLogGroupsView(panel)
             frame.defaultCloseOperation = JFrame.EXIT_ON_CLOSE
             frame.contentPane.add(panel)
             frame.pack()
@@ -83,12 +82,11 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
             Mode.podSelect -> select(g)
             Mode.kafkaSelect -> select(g)
             Mode.kafkaLag -> select(g)
-            Mode.logGroups -> select(g)
         }
 
         // Draw info line with commands
         g.color = magenta
-        val infoString = "Commands: Cmd+P (Pod Select), Cmd+K (Kafka Select), Cmd+G (Kafka Lag), Cmd+I (Log Groups), Cmd+Q (Quit)"
+        val infoString = "Commands: Cmd+P (Pod Select), Cmd+K (Kafka Select), Cmd+G (Kafka Lag), Cmd+Q (Quit)"
         val infoBounds = g.fontMetrics.getStringBounds(infoString, g)
         g.drawString(infoString, width - infoBounds.width.toInt() - 10, height - 30)
     }
@@ -153,7 +151,7 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
                     componentMap[State.mode]?.forEach { it.keyPressed(e) }
                 } else {
                     when (State.mode) {
-                        Mode.kafkaLag, Mode.logGroups -> {
+                        Mode.kafkaLag -> {
                             State.mode = Mode.viewer
                             repaint()
                             return
@@ -185,16 +183,6 @@ class SlidePanel : JPanel(), KeyListener, MouseListener, MouseWheelListener, Mou
                 KeyEvent.VK_G -> {
                     if (State.mode != Mode.kafkaLag) {
                         State.mode = Mode.kafkaLag
-                    } else {
-                        componentMap[State.mode]?.forEach { it.keyPressed(e) }
-                        State.mode = Mode.viewer
-                    }
-                    repaint()
-                }
-
-                KeyEvent.VK_I -> {
-                    if (State.mode != Mode.logGroups) {
-                        State.mode = Mode.logGroups
                     } else {
                         componentMap[State.mode]?.forEach { it.keyPressed(e) }
                         State.mode = Mode.viewer
@@ -327,23 +315,6 @@ private fun buildKafkaLagView(panel: SlidePanel) {
     ) { }
 }
 
-private fun buildLogGroupsView(panel: SlidePanel) {
-    panel.componentMap.getOrPut(Mode.logGroups) { mutableListOf() } += LogGroupsView(
-        panel,
-        0,
-        0,
-        panel.width,
-        panel.height - 30
-    )
-    panel.componentMap.getOrPut(Mode.logGroups) { mutableListOf() } += InputTextLine(
-        panel,
-        0,
-        30,
-        panel.width,
-        30
-    ) { }
-}
-
 object State {
     val onMac: Boolean
     val changedAt = AtomicLong(0)
@@ -371,7 +342,6 @@ enum class Mode {
     podSelect,
     kafkaSelect,
     kafkaLag,
-    logGroups,
 }
 
 enum class LogLevel {

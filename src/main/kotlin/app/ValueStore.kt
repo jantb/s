@@ -1,124 +1,141 @@
 package app
 
-import DrainTree
-import LogCluster
 import LogLevel
 import State
 import merge
 import util.Index
 import java.util.concurrent.atomic.AtomicLong
 
-
-const val cap = 512*8
-val seq = AtomicLong(0)
+private const val INDEX_BLOCK_CAPACITY = 512 * 8
+ val globalSeq = AtomicLong(0)
 
 data class IndexBlock(
     val index: Index<DomainLine>,
-    val drainTree: DrainTree,
     var minSeq: Long = 0,
     var maxSeq: Long = Long.MAX_VALUE,
-    var maxTimestamp: Long = 0
+    var maxTimestamp: Long = 0,
 )
 
-
 class ValueStore {
-    private val levelIndexes = mutableMapOf<LogLevel, MutableList<IndexBlock>>()
-    var size = 0
+    private val levelIndexes: MutableMap<LogLevel, MutableList<IndexBlock>> = mutableMapOf()
 
-    fun getLogClusters(): List<LogCluster> = State.levels.get().flatMap { level ->
-        levelIndexes[level]?.flatMap { (_, drainTree) ->
-            drainTree.logClusters().map { cluster ->
-                cluster.copy(indexIdentifier = drainTree.indexIdentifier)
-            }
-        } ?: emptyList()
-    }.groupBy { it.level to it.block }
-        .map { (key, group) ->
-            val (level, block) = key
-            val totalCount = group.sumOf { it.count }
-            LogCluster(totalCount, level, block, group.first().indexIdentifier)
-        }
+    var size: Int = 0
+        private set
 
     fun put(domainLine: DomainLine) {
-        val level = domainLine.level
-        val levelIndexList =
-            levelIndexes.getOrPut(level) { mutableListOf(IndexBlock(Index(), DrainTree(domainLine.indexIdentifier))) }
-        run {
-            val indexBlock = levelIndexList.last()
-            if (indexBlock.index.size >= cap) {
-                indexBlock.index.convertToHigherRank()
-                indexBlock.drainTree.final()
-                levelIndexList.add(IndexBlock(Index(), DrainTree(domainLine.indexIdentifier)))
-            }
+        val blocksForLevel = levelIndexes.getOrPut(domainLine.level) {
+            mutableListOf(IndexBlock(Index()))
         }
-        val indexBlock = levelIndexList.last()
-        if (domainLine.timestamp < indexBlock.maxTimestamp) {
-            return
+
+        val currentBlock = blocksForLevel.last()
+        if (currentBlock.index.size >= INDEX_BLOCK_CAPACITY) {
+            currentBlock.index.convertToHigherRank()
+            blocksForLevel += IndexBlock(Index())
         }
-        if (domainLine is LogLineDomain) {
-            indexBlock.drainTree.add(domainLine)
+
+        val block = blocksForLevel.last()
+
+        // Assumes non-decreasing timestamps per block.
+        if (domainLine.timestamp < block.maxTimestamp) return
+
+        if (block.index.size == 0) {
+            block.minSeq = domainLine.seq
         }
-        if (indexBlock.index.size == 0) {
-            indexBlock.minSeq = domainLine.seq
-        }
-        indexBlock.index.add(domainLine, domainLine.toString())
-        indexBlock.maxSeq = seq.get()
-        indexBlock.maxTimestamp = domainLine.timestamp
+
+        block.index.add(domainLine, domainLine.toString())
+        block.maxSeq = globalSeq.get()
+        block.maxTimestamp = domainLine.timestamp
+
         size++
         State.indexedLines.addAndGet(1)
     }
 
     fun search(query: String, offsetLock: Long): Sequence<DomainLine> {
-        val q = getQuery(query)
-        val l = offsetLock - State.lock.get()
-        // Search each specified level
-        return State.levels.get().mapNotNull { level ->
-            levelIndexes[level]?.reversed()?.asSequence()
-                ?.filter { it.minSeq < l }
-                ?.filter { it.minSeq < offsetLock }
-                ?.map { (index, _, min, max) ->
-                    index.searchMustInclude(q.filteredQueryList) {
-                        (it.seq <= l && it.seq <= offsetLock && it.contains(q.queryList, q.queryListNot))
+        val parsed = Query.parse(query)
+
+        val lockedOffset = offsetLock - State.lock.get()
+
+        return State.levels.get()
+            .asSequence()
+            .mapNotNull { level ->
+                val blocks = levelIndexes[level] ?: return@mapNotNull null
+
+                blocks.asReversed()
+                    .asSequence()
+                    .filter { it.minSeq < lockedOffset && it.minSeq < offsetLock }
+                    .map { block ->
+                        block.index.searchMustInclude(parsed.mustIncludeGroups) { line ->
+                            line.seq <= lockedOffset &&
+                                    line.seq <= offsetLock &&
+                                    line.contains(parsed.mustInclude, parsed.mustNotInclude)
+                        }
                     }
-                }?.reduceOrNull { acc, seq -> acc + seq }
-        }.merge()
+                    .reduceOrNull { acc, seq -> acc + seq }
+            }.merge()
     }
 
-    data class Query(
-        val queryListNot: List<String>,
-        var queryList: List<String>,
-        var filteredQueryList: List<List<String>>
-    )
+    private data class Query(
+        val mustNotInclude: List<String>,
+        val mustInclude: List<String>,
+        val mustIncludeGroups: List<List<String>>,
+    ) {
+        companion object {
+            fun parse(raw: String): Query {
+                val mustNot = mutableListOf<String>()
+                val must = mutableListOf<String>()
 
-    private fun getQuery(
-        query: String,
-    ): Query {
-        val queryListNot = mutableListOf<String>()
-        val queryList = mutableListOf<String>()
+                var inQuotes = false
+                val phrase = StringBuilder()
 
-        var isInPhrase = false
-        var phrase = ""
-        query.split(" ").forEach { word ->
-            if (word.startsWith("!") && !isInPhrase) {
-                queryListNot.add(word.substring(1))
-            } else if (word.startsWith("\"") && !isInPhrase) {
-                isInPhrase = true
-                phrase = word.substring(1)
-            } else if (word.endsWith("\"") && isInPhrase) {
-                phrase += " $word"
-                phrase = phrase.substring(0, phrase.length - 1)
-                queryList.add(phrase)
-                isInPhrase = false
-            } else if (isInPhrase) {
-                phrase += " $word"
-            } else {
-                queryList.add(word)
+                raw.split(' ')
+                    .asSequence()
+                    .map(String::trim)
+                    .filter(String::isNotEmpty)
+                    .forEach { token ->
+                        when {
+                            !inQuotes && token.startsWith("!") && token.length > 1 -> {
+                                mustNot += token.drop(1)
+                            }
+
+                            !inQuotes && token.startsWith("\"") -> {
+                                inQuotes = true
+                                phrase.clear()
+                                phrase.append(token.drop(1))
+
+                                if (token.endsWith("\"") && token.length > 1) {
+                                    val completed = phrase.dropLastIfEndsWithQuote()
+                                    if (completed.isNotBlank()) must += completed
+                                    inQuotes = false
+                                }
+                            }
+
+                            inQuotes && token.endsWith("\"") -> {
+                                phrase.append(' ').append(token)
+                                val completed = phrase.dropLastIfEndsWithQuote()
+                                if (completed.isNotBlank()) must += completed
+                                inQuotes = false
+                            }
+
+                            inQuotes -> {
+                                phrase.append(' ').append(token)
+                            }
+
+                            else -> must += token
+                        }
+                    }
+
+                val filteredMust = must.filter(String::isNotBlank)
+                return Query(
+                    mustNotInclude = mustNot.filter(String::isNotBlank),
+                    mustInclude = filteredMust,
+                    mustIncludeGroups = listOf(filteredMust),
+                )
+            }
+
+            private fun StringBuilder.dropLastIfEndsWithQuote(): String {
+                val s = toString()
+                return if (s.endsWith("\"")) s.dropLast(1) else s
             }
         }
-        return Query(
-            queryListNot = queryListNot.filter { it.isNotBlank() },
-            queryList = queryList.filter { it.isNotBlank() },
-            filteredQueryList = listOf(queryList.filter { it.isNotBlank() })
-        )
     }
 }
-
