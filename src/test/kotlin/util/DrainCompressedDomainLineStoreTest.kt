@@ -5,9 +5,13 @@ import app.KafkaLineDomain
 import app.LogLineDomain
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import kotlin.random.Random
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 
 class DrainCompressedDomainLineStoreCompressionTest {
@@ -110,7 +114,7 @@ class DrainCompressedDomainLineStoreCompressionTest {
         return sum
     }
 
-    private suspend fun storeAllAndMeasureBytes(
+    private fun storeAllAndMeasureBytes(
         store: DrainCompressedDomainLineStore,
         ids: LongArray,
     ): Long {
@@ -188,7 +192,7 @@ class DrainCompressedDomainLineStoreCompressionTest {
     }
     @Test
     fun `compresses when message has repeated pattern with small variables (LogLine)`(): Unit = runBlocking {
-        val n = 50_000
+        val n = 500_000
         val scope = CoroutineScope(Dispatchers.Default)
         val store = DrainCompressedDomainLineStore(scope = scope)
 
@@ -217,21 +221,66 @@ class DrainCompressedDomainLineStoreCompressionTest {
 
         val ids = LongArray(n)
         for (i in 0 until n) ids[i] = store.put(lines[i])
+        println("Before: ${store.estimateMemoryUsage()}")
+        store.seal().await()
+        println("After: ${store.estimateMemoryUsage()}")
 
         val storedBytes = storeAllAndMeasureBytes(store, ids)
         val baselineBytes = baselineApproxBytesForLogLines(lines)
 
         report("LogLine: single stable template + numeric vars", n, baselineBytes, storedBytes)
 
-        // sanity check decode works (spot check)
+    }
+    @Test
+    fun `seal triggers packed compaction and preserves reads`() = runBlocking {
+        val n = 20_000
+        val scope = CoroutineScope(Dispatchers.Default)
+        val store = DrainCompressedDomainLineStore(scope = scope)
+
+        val baseTs = 1_700_000_000_000L
+        val ids = LongArray(n)
+
+        for (i in 0 until n) {
+            val msg = "GET /api/orders id=${100_000 + i} status=200 timeMs=${(i % 50) + 1}"
+            val line = LogLineDomain(
+                seq = i.toLong(),
+                level = LogLevel.INFO,
+                timestamp = baseTs + i,
+                message = msg,
+                indexIdentifier = "pod-A",
+                threadName = "http-nio-8080-exec-1",
+                serviceName = "orders",
+                serviceVersion = "1.2.3",
+                logger = "com.example.OrderController",
+                correlationId = null,
+                requestId = null,
+                errorMessage = null,
+                stacktrace = null,
+            )
+            ids[i] = store.put(line)
+        }
+
+        val beforeKind = store.storageKind()
+        store.seal()
+        assertTrue(store.isSealed())
+
+        repeat(200) {
+            if (store.storageKind() == DrainCompressedDomainLineStore.StorageKind.PACKED) return@repeat
+            delay(10)
+        }
+
+        assertEquals(DrainCompressedDomainLineStore.StorageKind.PACKED, store.storageKind())
+        assertTrue(store.packedByteSizeOrZero() > 0)
+
         val decoded0 = store.getLineBlocking(ids[0])
         val decodedLast = store.getLineBlocking(ids[n - 1])
         assertNotNull(decoded0)
         assertNotNull(decodedLast)
-//        assertEquals(lines[0].message, decoded0.message)
-    //    assertEquals(lines[n - 1].message, decodedLast.message)
-    }
+        assertEquals(ids[0], decoded0.seq)
+        assertEquals(ids[n - 1], decodedLast.seq)
 
+        assertTrue(beforeKind == DrainCompressedDomainLineStore.StorageKind.MAP)
+    }
     @Test
     fun `does NOT compress well when every message is unique text (LogLine)`(): Unit = runBlocking {
         val n = 30_000
@@ -405,5 +454,91 @@ class DrainCompressedDomainLineStoreCompressionTest {
         val uniqueStored = storeAllAndMeasureBytes(store, uniqueIds)
         val uniqueBaseline = baselineApproxBytesForKafkaLines(unique)
         report("KafkaLine: mostly unique strings (expected weaker dictionary gains)", n, uniqueBaseline, uniqueStored)
+    }
+
+    @Test
+    fun `seal blocks puts but allows reads`() = runBlocking {
+        val store = DrainCompressedDomainLineStore(scope = CoroutineScope(Dispatchers.Default))
+
+        val baseTs = 1_700_000_000_000L
+        val line0 = LogLineDomain(
+            seq = 1L,
+            level = LogLevel.INFO,
+            timestamp = baseTs,
+            message = "GET /v1/hello/user id=123 status=200",
+            indexIdentifier = "pod-A",
+            threadName = "t",
+            serviceName = "svc",
+            serviceVersion = "1.0.0",
+            logger = "l",
+            correlationId = null,
+            requestId = null,
+            errorMessage = null,
+            stacktrace = null,
+        )
+        val id0 = store.put(line0)
+
+        store.seal()
+
+        assertFailsWith<IllegalStateException> {
+            store.put(
+                line0.copy(
+                    seq = 2L,
+                    timestamp = baseTs + 1,
+                    message = "GET /v1/hello/user id=124 status=200"
+                )
+            )
+        }
+
+        val bytes = store.getBytesBlocking(id0)
+        assertNotNull(bytes)
+
+        val decoded = store.getLineBlocking(id0)
+        assertNotNull(decoded)
+        assertEquals(line0.seq, decoded.seq)
+        assertEquals(line0.indexIdentifier, decoded.indexIdentifier)
+        assertEquals(line0.level, decoded.level)
+        assertEquals(line0.timestamp, decoded.timestamp)
+        assertTrue(decoded.message.isNotBlank())
+    }
+
+    @Test
+    fun `seal is idempotent`(): Unit = runBlocking {
+        val store = DrainCompressedDomainLineStore(scope = CoroutineScope(Dispatchers.Default))
+
+        val baseTs = 1_700_000_000_000L
+        val line0 = LogLineDomain(
+            seq = 10L,
+            level = LogLevel.INFO,
+            timestamp = baseTs,
+            message = "hello world",
+            indexIdentifier = "pod-A",
+            threadName = "t",
+            serviceName = "svc",
+            serviceVersion = "1.0.0",
+            logger = "l",
+            correlationId = null,
+            requestId = null,
+            errorMessage = null,
+            stacktrace = null,
+        )
+        val id0 = store.put(line0)
+
+        store.seal()
+        store.seal()
+        store.seal()
+
+        val decoded = store.getLineBlocking(id0)
+        assertNotNull(decoded)
+        assertEquals(line0.seq, decoded.seq)
+
+        assertFailsWith<IllegalStateException> {
+            store.put(
+                line0.copy(
+                    seq = 11L,
+                    timestamp = baseTs + 1
+                )
+            )
+        }
     }
 }

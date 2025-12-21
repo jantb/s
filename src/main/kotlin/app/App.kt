@@ -58,10 +58,6 @@ class App : CoroutineScope {
         launch(CoroutineName("indexUpdaterScheduler")) {
             val valueStores = mutableMapOf<String, ValueStore>()
 
-            val drainStore = DrainCompressedDomainLineStore(
-                scope = this,
-            )
-
             var offsetLock = 0L
 
             var bufferVersion = 0L
@@ -75,7 +71,7 @@ class App : CoroutineScope {
                 }) {
 
                     is AddToIndexDomainLine -> {
-                        valueStores.computeIfAbsent(msg.domainLine.indexIdentifier) { ValueStore(drainStore) }
+                        valueStores.computeIfAbsent(msg.domainLine.indexIdentifier) { ValueStore() }
                             .put(msg.domainLine)
 
                         changedAt.set(System.nanoTime())

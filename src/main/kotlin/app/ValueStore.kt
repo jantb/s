@@ -6,46 +6,55 @@ import merge
 import util.DrainCompressedDomainLineStore
 import util.Index
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
-private const val INDEX_BLOCK_CAPACITY = 512 * 8
+private const val INDEX_BLOCK_CAPACITY = 512 * 32
 val globalSeq = AtomicLong(0)
 
 data class IndexBlock(
     val index: Index<Long>,
+    val drainStore: DrainCompressedDomainLineStore,
     var minSeq: Long = 0,
     var maxSeq: Long = Long.MAX_VALUE,
     var maxTimestamp: Long = 0,
 )
 
 class ValueStore(
-    private val drainStore: DrainCompressedDomainLineStore,
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) {
     private val levelIndexes: MutableMap<LogLevel, MutableList<IndexBlock>> = mutableMapOf()
 
     var size: Int = 0
         private set
 
+    private fun newBlock(): IndexBlock {
+        val store = DrainCompressedDomainLineStore(scope = scope)
+        return IndexBlock(index = Index(), drainStore = store)
+    }
+
     suspend fun put(domainLine: DomainLine) {
         val blocksForLevel = levelIndexes.getOrPut(domainLine.level) {
-            mutableListOf(IndexBlock(Index()))
+            mutableListOf(newBlock())
         }
 
         val currentBlock = blocksForLevel.last()
         if (currentBlock.index.size >= INDEX_BLOCK_CAPACITY) {
             currentBlock.index.convertToHigherRank()
-            blocksForLevel += IndexBlock(Index())
+            currentBlock.drainStore.seal()
+            blocksForLevel += newBlock()
         }
 
         val block = blocksForLevel.last()
 
-        // Assumes non-decreasing timestamps per block.
         if (domainLine.timestamp < block.maxTimestamp) return
 
         if (block.index.size == 0) {
             block.minSeq = domainLine.seq
         }
 
-        val id = drainStore.put(domainLine)
+        val id = block.drainStore.put(domainLine)
 
         block.index.add(id, domainLine.toString())
         block.maxSeq = globalSeq.get()
@@ -72,7 +81,7 @@ class ValueStore(
                             block.index.searchMustInclude(parsed.mustIncludeGroups) { true }
 
                         ids.mapNotNull { id ->
-                            val line = drainStore.getLineBlocking(id) ?: return@mapNotNull null
+                            val line = block.drainStore.getLineBlocking(id) ?: return@mapNotNull null
                             if (line.seq <= lockedOffset &&
                                 line.seq <= offsetLock &&
                                 line.contains(parsed.mustInclude, parsed.mustNotInclude)

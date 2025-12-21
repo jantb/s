@@ -4,14 +4,13 @@ import LogLevel
 import app.DomainLine
 import app.KafkaLineDomain
 import app.LogLineDomain
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.min
 
 class DrainCompressedDomainLineStore(
@@ -20,8 +19,188 @@ class DrainCompressedDomainLineStore(
     private val maxClustersPerLeaf: Int = 64,
     private val maxChildrenPerNode: Int = 128,
 ) {
-    private val idGen = AtomicLong(0)
-    private val bytesById = ConcurrentHashMap<Long, ByteArray>(1 shl 16)
+    private interface Storage {
+        fun getBytes(id: Long): ByteArray?
+        fun putBytes(id: Long, bytes: ByteArray)
+        fun snapshotEntries(): Array<Pair<Long, ByteArray>>
+        fun size(): Int
+        fun sampleEntries(max: Int): Array<Pair<Long, ByteArray>>
+    }
+
+    private class MapStorage(
+        private val map: ConcurrentHashMap<Long, ByteArray>,
+    ) : Storage {
+        override fun getBytes(id: Long): ByteArray? = map[id]
+        override fun putBytes(id: Long, bytes: ByteArray) {
+            map[id] = bytes
+        }
+
+        override fun snapshotEntries(): Array<Pair<Long, ByteArray>> {
+            val out = ArrayList<Pair<Long, ByteArray>>(map.size)
+            for (e in map.entries) out.add(e.key to e.value)
+            return out.toTypedArray()
+        }
+
+        override fun size(): Int = map.size
+        override fun sampleEntries(max: Int): Array<Pair<Long, ByteArray>> {
+            val out = ArrayList<Pair<Long, ByteArray>>(minOf(max, map.size))
+            val it = map.entries.iterator()
+            while (it.hasNext() && out.size < max) {
+                val e = it.next()
+                out.add(e.key to e.value)
+            }
+            return out.toTypedArray()
+        }
+    }
+
+    private class PackedStorage(
+        private val baseId: Long,
+        private val checkpointStride: Int,
+        private val checkpointIds: LongArray,
+        private val checkpointDeltaOffsets: IntArray,
+        private val deltaBytes: ByteArray,
+        private val offsets: IntArray,
+        private val blob: ByteArray,
+    ) : Storage {
+
+        data class ByteSlice(val buf: ByteArray, val start: Int, val end: Int)
+
+        fun packedByteSize(): Int = blob.size
+
+        private data class VarIntRead(val value: Long, val nextPos: Int)
+
+        private fun readUVarLong(buf: ByteArray, start: Int): VarIntRead {
+            var x = 0L
+            var s = 0
+            var p = start
+            while (true) {
+                val b = buf[p++].toInt() and 0xff
+                x = x or (((b and 0x7f).toLong()) shl s)
+                if ((b and 0x80) == 0) return VarIntRead(x, p)
+                s += 7
+            }
+        }
+
+        private fun findIndex(id: Long): Int {
+            if (checkpointIds.isEmpty()) return -1
+
+            var lo = 0
+            var hi = checkpointIds.size - 1
+            while (lo <= hi) {
+                val mid = (lo + hi) ushr 1
+                val v = checkpointIds[mid]
+                if (v < id) lo = mid + 1 else if (v > id) hi = mid - 1 else return mid * checkpointStride
+            }
+
+            val cp = hi
+            if (cp < 0) return -1
+
+            var curId = checkpointIds[cp]
+            var idx = cp * checkpointStride
+            var p = checkpointDeltaOffsets[cp]
+
+            if (curId == id) return idx
+
+            val maxIdx = offsets.size - 2
+            val endIdx = min(maxIdx, (cp + 1) * checkpointStride + checkpointStride)
+
+            while (idx < endIdx && idx < maxIdx) {
+                val d = readUVarLong(deltaBytes, p)
+                p = d.nextPos
+                curId += d.value
+                idx++
+                if (curId == id) return idx
+                if (curId > id) return -1
+            }
+            return -1
+        }
+
+        fun getByteSlice(id: Long): ByteSlice? {
+            val idx = findIndex(id)
+            if (idx < 0) return null
+            val start = offsets[idx]
+            val end = offsets[idx + 1]
+            return ByteSlice(blob, start, end)
+        }
+
+        override fun getBytes(id: Long): ByteArray? {
+            val s = getByteSlice(id) ?: return null
+            val len = s.end - s.start
+            val out = ByteArray(len)
+            s.buf.copyInto(out, 0, s.start, s.end)
+            return out
+        }
+
+        override fun putBytes(id: Long, bytes: ByteArray) {
+            throw IllegalStateException("sealed")
+        }
+
+        override fun snapshotEntries(): Array<Pair<Long, ByteArray>> {
+            val n = offsets.size - 1
+            if (n <= 0) return emptyArray()
+            val out = ArrayList<Pair<Long, ByteArray>>(n)
+
+            var id = baseId
+            out.add(id to blob.copyOfRange(offsets[0], offsets[1]))
+
+            var idx = 0
+            var p = 0
+            while (idx < n - 1) {
+                val d = readUVarLong(deltaBytes, p)
+                p = d.nextPos
+                id += d.value
+                idx++
+                out.add(id to blob.copyOfRange(offsets[idx], offsets[idx + 1]))
+            }
+            return out.toTypedArray()
+        }
+
+        override fun size(): Int = offsets.size - 1
+
+        override fun sampleEntries(max: Int): Array<Pair<Long, ByteArray>> {
+            val n = minOf(max, offsets.size - 1)
+            if (n <= 0) return emptyArray()
+            val out = ArrayList<Pair<Long, ByteArray>>(n)
+
+            var id = baseId
+            out.add(id to blob.copyOfRange(offsets[0], offsets[1]))
+
+            var idx = 0
+            var p = 0
+            while (idx < n - 1) {
+                val d = readUVarLong(deltaBytes, p)
+                p = d.nextPos
+                id += d.value
+                idx++
+                out.add(id to blob.copyOfRange(offsets[idx], offsets[idx + 1]))
+            }
+            return out.toTypedArray()
+        }
+    }
+    private class VarIntByteWriter(initialCapacity: Int) {
+        private var buf = ByteArray(maxOf(16, initialCapacity))
+        private var pos = 0
+        fun size(): Int = pos
+        fun writeUVarLong(value: Long) {
+            var v = value
+            while ((v and 0x7fL.inv()) != 0L) {
+                writeByte(((v and 0x7fL) or 0x80L).toInt())
+                v = v ushr 7
+            }
+            writeByte(v.toInt())
+        }
+        private fun writeByte(b: Int) {
+            if (pos == buf.size) buf = buf.copyOf(buf.size * 2)
+            buf[pos++] = b.toByte()
+        }
+        fun toByteArray(): ByteArray = buf.copyOf(pos)
+    }
+    private val storageRef = AtomicReference<Storage>(
+        MapStorage(ConcurrentHashMap<Long, ByteArray>(1 shl 16))
+    )
+
+    private val sealed = AtomicBoolean(false)
+    private val compactionStarted = AtomicBoolean(false)
 
     private val baseTimestamp = AtomicLong(0L)
 
@@ -37,78 +216,165 @@ class DrainCompressedDomainLineStore(
     init {
         scope.launch(Dispatchers.Default + CoroutineName("DrainCompressedDomainLineStore-writer")) {
             for (req in writeCh) {
+                if (sealed.get()) {
+                    req.result.completeExceptionally(IllegalStateException("sealed"))
+                    continue
+                }
                 val id = req.line.seq
-                val last = idGen.get()
-                if (id > last) idGen.set(id)
-
                 val bts = baseTimestamp.get()
                 if (bts == 0L) baseTimestamp.compareAndSet(0L, req.line.timestamp)
-
-                bytesById[id] = encodeToBytes(line = req.line)
+                val bytes = encodeToBytes(line = req.line)
+                storageRef.get().putBytes(id, bytes)
                 req.result.complete(id)
             }
         }
     }
 
+
+    fun seal(): CountDownLatch {
+        val cdl = CountDownLatch(1)
+        if (!sealed.compareAndSet(false, true)) {
+            cdl.countDown()
+            return cdl
+        }
+        if (!compactionStarted.compareAndSet(false, true)) {
+            cdl.countDown()
+            return cdl
+        }
+
+        Thread({
+            val before = storageRef.get()
+            val entries = before.snapshotEntries()
+            entries.sortBy { it.first }
+            val n = entries.size
+
+            if (n == 0) {
+                storageRef.compareAndSet(
+                    before,
+                    PackedStorage(
+                        baseId = 0L,
+                        checkpointStride = 128,
+                        checkpointIds = LongArray(0),
+                        checkpointDeltaOffsets = IntArray(0),
+                        deltaBytes = ByteArray(0),
+                        offsets = IntArray(1),
+                        blob = ByteArray(0),
+                    )
+                )
+                cdl.countDown()
+                return@Thread
+            }
+
+            val checkpointStride = 128
+            val checkpointCount = (n + checkpointStride - 1) / checkpointStride
+            val checkpointIds = LongArray(checkpointCount)
+            val checkpointDeltaOffsets = IntArray(checkpointCount)
+
+            val baseId = entries[0].first
+
+            val offsets = IntArray(n + 1)
+            var total = 0
+            for (i in 0 until n) {
+                offsets[i] = total
+                total += entries[i].second.size
+            }
+            offsets[n] = total
+
+            val blob = ByteArray(total)
+            var pos = 0
+            for (i in 0 until n) {
+                val b = entries[i].second
+                b.copyInto(blob, destinationOffset = pos)
+                pos += b.size
+            }
+
+            val deltaWriter = VarIntByteWriter(initialCapacity = n * 2)
+            for (i in 0 until n) {
+                if (i % checkpointStride == 0) {
+                    val cp = i / checkpointStride
+                    checkpointIds[cp] = entries[i].first
+                    checkpointDeltaOffsets[cp] = deltaWriter.size()
+                }
+                if (i == 0) continue
+                val d = entries[i].first - entries[i - 1].first
+                deltaWriter.writeUVarLong(if (d <= 0L) 1L else d)
+            }
+            val deltaBytes = deltaWriter.toByteArray()
+
+            storageRef.compareAndSet(
+                before,
+                PackedStorage(
+                    baseId = baseId,
+                    checkpointStride = checkpointStride,
+                    checkpointIds = checkpointIds,
+                    checkpointDeltaOffsets = checkpointDeltaOffsets,
+                    deltaBytes = deltaBytes,
+                    offsets = offsets,
+                    blob = blob,
+                )
+            )
+            cdl.countDown()
+        }, "DrainCompressedDomainLineStore-compactor").apply {
+            isDaemon = true
+            start()
+        }
+
+        return cdl
+    }
+
     suspend fun put(line: DomainLine): Long {
+        if (sealed.get()) throw IllegalStateException("sealed")
         val d = CompletableDeferred<Long>()
         writeCh.send(PutReq(line, d))
         return d.await()
     }
 
-    fun getBytesBlocking(id: Long): ByteArray? = bytesById[id]
+    fun getBytesBlocking(id: Long): ByteArray? = storageRef.get().getBytes(id)
 
     fun getLineBlocking(id: Long): DomainLine? {
-        val bytes = bytesById[id] ?: return null
-        val line = decodeFull(bytes, id = id) ?: return null
+        val s = storageRef.get()
+        if (s is PackedStorage) {
+            val slice = s.getByteSlice(id) ?: return null
+            val line = decodeFull(slice.buf, slice.start, slice.end, id) ?: return null
+            return line
+        }
+        val bytes = s.getBytes(id) ?: return null
+        val line = decodeFull(bytes, 0, bytes.size, id) ?: return null
         return line
     }
-
     private fun encodeToBytes(line: DomainLine): ByteArray {
         val domainType = DomainType.of(line)
-
         val msgTokens = MessageTokenizer.tokenize(line.message, MessageTokenizer.Mode.LogLike)
         val cluster = miner.learn(msgTokens)
         val templateId = cluster.id
-
         templatesById[templateId] = cluster.templateTokens
-
         val tmpl = cluster.templateTokens
         val tokenCount = msgTokens.size
-
         val varPositions = IntArray(tokenCount)
         val vars = ArrayList<String>(8)
         var varCount = 0
-
         for (i in 0 until tokenCount) {
             if (tmpl[i] === DrainMiner.VAR) {
                 varPositions[varCount++] = i
                 vars.add(msgTokens[i])
             }
         }
-
         val indexIdentifierId = stringDict.idOf(line.indexIdentifier)
-
         val out = FastByteWriter(initialCapacity = 72 + (line.message.length ushr 2))
         out.writeUVarInt(domainType.id)
-
         val bts = baseTimestamp.get()
         val relTs = if (bts == 0L) line.timestamp else (line.timestamp - bts)
         out.writeUVarLong(relTs)
-
         out.writeUVarInt(templateId)
         out.writeUVarInt(varCount)
-
         var prev = 0
         for (k in 0 until varCount) {
             val p = varPositions[k]
             out.writeUVarInt(p - prev)
             prev = p
         }
-
         out.writeUVarInt(line.level.ordinal)
         out.writeUVarInt(indexIdentifierId)
-
         when (line) {
             is LogLineDomain -> {
                 out.writeUVarInt(1)
@@ -136,16 +402,13 @@ class DrainCompressedDomainLineStore(
                 out.writeUVarInt(stringDict.idOf(line.compositeEventId))
             }
         }
-
         for (v in vars) encodeVariable(out, v)
         return out.toByteArray()
     }
 
-    private fun decodeFull(bytes: ByteArray, id: Long): DomainLine? {
-        val inp = FastByteReader(bytes)
-
+    private fun decodeFull(bytes: ByteArray, start: Int, end: Int, id: Long): DomainLine? {
+        val inp = FastByteReader(bytes, start, end)
         val domainType = DomainType.fromId(inp.readUVarInt())
-
         val relTs = inp.readUVarLong()
         val bts = baseTimestamp.get()
         val timestamp = if (bts == 0L) relTs else bts + relTs
@@ -185,6 +448,7 @@ class DrainCompressedDomainLineStore(
             extra = extra
         )
     }
+    private fun decodeFull(bytes: ByteArray, id: Long): DomainLine? = decodeFull(bytes, 0, bytes.size, id)
 
     private fun decodeExtra(inp: FastByteReader): Any? {
         if (inp.readUVarInt() != 1) return null
@@ -298,7 +562,8 @@ class DrainCompressedDomainLineStore(
         ): DomainLine {
             return when (this) {
                 LOG -> {
-                    val e = extra as? DomainExtra.LogExtra ?: DomainExtra.LogExtra("", "", "", "", null, null, null, null)
+                    val e =
+                        extra as? DomainExtra.LogExtra ?: DomainExtra.LogExtra("", "", "", "", null, null, null, null)
                     LogLineDomain(
                         seq = seq,
                         level = level,
@@ -317,7 +582,8 @@ class DrainCompressedDomainLineStore(
                 }
 
                 KAFKA -> {
-                    val e = extra as? DomainExtra.KafkaExtra ?: DomainExtra.KafkaExtra("", null, 0L, 0, "", null, null, "")
+                    val e =
+                        extra as? DomainExtra.KafkaExtra ?: DomainExtra.KafkaExtra("", null, 0L, 0, "", null, null, "")
                     KafkaLineDomain(
                         seq = seq,
                         level = level,
@@ -362,19 +628,6 @@ class DrainCompressedDomainLineStore(
         ) : DomainExtra
     }
 
-    private class LruCache<K, V>(private val maxEntries: Int) {
-        private val map = object : LinkedHashMap<K, V>(maxEntries, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean = size > maxEntries
-        }
-
-        fun get(key: K): V? = map[key]
-        fun put(key: K, value: V) {
-            map[key] = value
-        }
-
-        fun clear() = map.clear()
-    }
-
     private class StringDictionary(initialCapacity: Int = 16) {
         private val lock = Any()
         private val toId = ConcurrentHashMap<String, Int>(initialCapacity)
@@ -415,7 +668,6 @@ class DrainCompressedDomainLineStore(
         return dict.get(idPlus - 1)
     }
 
-
     private class DrainMiner(
         private val maxDepth: Int,
         private val maxClustersPerLeaf: Int,
@@ -424,14 +676,11 @@ class DrainCompressedDomainLineStore(
         private val root = Node(depth = 0)
         private val idGen = AtomicLong(0)
         private val clustersById = HashMap<Int, Cluster>(4096)
-
         fun learn(tokens: Array<String>): Cluster {
             val tokenCount = tokens.size
             val first = root.childrenByKey.getOrPut(tokenCount.toString()) { Node(1) }
-
             var node = first
             val depthLimit = min(maxDepth, tokenCount)
-
             for (d in 1 until depthLimit) {
                 val key = routingKey(tokens[d])
                 val next = node.childrenByKey[key]
@@ -442,11 +691,9 @@ class DrainCompressedDomainLineStore(
                     }
                 node = next
             }
-
             val clusters = node.clusters
             var best: Cluster? = null
             var bestScore = -1
-
             for (c in clusters) {
                 val score = c.matchScore(tokens)
                 if (score > bestScore) {
@@ -454,17 +701,14 @@ class DrainCompressedDomainLineStore(
                     best = c
                 }
             }
-
             if (best != null && bestScore >= best.similarityThreshold) {
                 best.update(tokens)
                 return best
             }
-
             val id = idGen.incrementAndGet().toInt()
             val newCluster = Cluster(id, tokens.copyOf())
             clusters.add(newCluster)
             clustersById[id] = newCluster
-
             if (clusters.size > maxClustersPerLeaf) {
                 var minIdx = 0
                 var minSeen = Int.MAX_VALUE
@@ -478,12 +722,10 @@ class DrainCompressedDomainLineStore(
                 val removed = clusters.removeAt(minIdx)
                 clustersById.remove(removed.id)
             }
-
             return newCluster
         }
 
         private fun routingKey(token: String): String = if (looksVariable(token)) VAR else token
-
         private fun looksVariable(token: String): Boolean {
             if (token.isEmpty()) return false
             var digits = 0
@@ -500,7 +742,6 @@ class DrainCompressedDomainLineStore(
         class Cluster(val id: Int, val templateTokens: Array<String>) {
             var seen: Int = 1
             val similarityThreshold: Int = (templateTokens.size * 0.6).toInt()
-
             fun matchScore(tokens: Array<String>): Int {
                 var score = 0
                 for (i in tokens.indices) {
@@ -524,13 +765,7 @@ class DrainCompressedDomainLineStore(
         }
     }
 
-    /**
-     * Tokenizer used by DrainCompressedDomainLineStore to improve template reuse.
-     *
-     * We keep delimiters as tokens so join() can reconstruct the original string exactly.
-     */
     object MessageTokenizer {
-
         enum class Mode { Whitespace, LogLike }
 
         fun tokenize(message: String, mode: Mode): Array<String> {
@@ -557,50 +792,34 @@ class DrainCompressedDomainLineStore(
                 val start = i
                 while (i < n && !message[i].isWhitespace()) i++
                 out.add(message.substring(start, i))
-                if (i < n) out.add(" ") // preserve spaces between words
+                if (i < n) out.add(" ")
             }
-            // If message started/ended with spaces, we drop them (same behavior as previous Tokenizer)
             if (out.isNotEmpty() && out.last() == " ") out.removeLast()
             return out.toTypedArray()
         }
 
-        /**
-         * Splits on:
-         * - whitespace
-         * - '/', '?', '&', '=', ':'
-         *
-         * Keeps delimiters as tokens, including single spaces, so join() is exact.
-         */
         private fun tokenizeLogLike(message: String): Array<String> {
             val out = ArrayList<String>(message.length / 4)
             val n = message.length
             var i = 0
-
             fun isDelimiter(c: Char): Boolean =
                 c.isWhitespace() || c == '/' || c == '?' || c == '&' || c == '=' || c == ':'
-
             while (i < n) {
                 val c = message[i]
-
                 if (isDelimiter(c)) {
-                    // normalize any whitespace run to a single space token (keeps join deterministic)
                     if (c.isWhitespace()) {
                         while (i < n && message[i].isWhitespace()) i++
                         if (out.isNotEmpty()) out.add(" ")
                         continue
                     }
-
                     out.add(c.toString())
                     i++
                     continue
                 }
-
                 val start = i
                 while (i < n && !isDelimiter(message[i])) i++
                 out.add(message.substring(start, i))
             }
-
-            // remove trailing space token if any
             if (out.isNotEmpty() && out.last() == " ") out.removeLast()
             return out.toTypedArray()
         }
@@ -609,7 +828,6 @@ class DrainCompressedDomainLineStore(
     private class FastByteWriter(initialCapacity: Int) {
         private var buf = ByteArray(maxOf(16, initialCapacity))
         private var pos = 0
-
         fun writeByte(b: Int) {
             val p = pos
             if (p == buf.size) buf = buf.copyOf(buf.size * 2)
@@ -653,7 +871,6 @@ class DrainCompressedDomainLineStore(
         }
 
         fun toByteArray(): ByteArray = buf.copyOf(pos)
-
         private fun ensure(extra: Int) {
             val need = pos + extra
             if (need <= buf.size) return
@@ -663,10 +880,14 @@ class DrainCompressedDomainLineStore(
         }
     }
 
-    private class FastByteReader(private val buf: ByteArray) {
-        private var pos = 0
+    private class FastByteReader(private val buf: ByteArray, start: Int, end: Int) {
+        private var pos = start
+        private val limit = end
 
-        fun readByte(): Int = buf[pos++].toInt() and 0xff
+        fun readByte(): Int {
+            if (pos >= limit) throw IndexOutOfBoundsException("read past end")
+            return buf[pos++].toInt() and 0xff
+        }
 
         fun readUVarInt(): Int {
             var x = 0
@@ -698,32 +919,13 @@ class DrainCompressedDomainLineStore(
         fun readUtf8(): String {
             val len = readUVarInt()
             if (len == 0) return ""
-            val start = pos
-            val end = start + len
-            if (end > buf.size) throw IndexOutOfBoundsException("readUtf8 len=$len pos=$pos size=${buf.size}")
-
-            var i = start
-            while (i < end) {
-                if (buf[i].toInt() and 0x80 != 0) {
-                    val s = String(buf, start, len, Charsets.UTF_8)
-                    pos = end
-                    return s
-                }
-                i++
-            }
-
-            val chars = CharArray(len)
-            i = 0
-            var p = start
-            while (i < len) {
-                chars[i] = (buf[p++].toInt() and 0xff).toChar()
-                i++
-            }
-            pos = end
-            return String(chars)
+            val s = pos
+            val e = s + len
+            if (e > limit) throw IndexOutOfBoundsException("readUtf8 len=$len pos=$pos limit=$limit")
+            pos = e
+            return String(buf, s, len, Charsets.UTF_8)
         }
     }
-
     private object UuidCodec {
         fun looksLikeUuid(s: String): Boolean {
             if (s.length != 36) return false
@@ -785,5 +987,79 @@ class DrainCompressedDomainLineStore(
         }
 
         fun get(i: Int): Long = a[i]
+    }
+
+    enum class StorageKind { MAP, PACKED }
+
+    fun isSealed(): Boolean = sealed.get()
+
+    fun storageKind(): StorageKind =
+        when (storageRef.get()) {
+            is PackedStorage -> StorageKind.PACKED
+            else -> StorageKind.MAP
+        }
+
+    fun packedByteSizeOrZero(): Int =
+        (storageRef.get() as? PackedStorage)?.packedByteSize() ?: 0
+
+    data class MemoryEstimate(
+        val storageKind: StorageKind,
+        val entries: Int,
+        val payloadBytesSampled: Long,
+        val estimatedPayloadBytesTotal: Long,
+        val estimatedOverheadBytes: Long,
+        val estimatedTotalBytes: Long,
+        val sampleN: Int,
+    ) {
+        override fun toString(): String {
+            return "storage=$storageKind entries=$entries sampleN=$sampleN estPayload=$estimatedPayloadBytesTotal estOverhead=$estimatedOverheadBytes estTotal=$estimatedTotalBytes"
+        }
+    }
+
+    fun estimateMemoryUsage(sampleMaxEntries: Int = 50_000): MemoryEstimate {
+        val s = storageRef.get()
+        return when (s) {
+            is PackedStorage -> {
+                val entries = s.size()
+                val payload = s.packedByteSize().toLong()
+                val idsBytes = entries.toLong() * 8L
+                val offsetsBytes = (entries.toLong() + 1L) * 4L
+                val overhead = idsBytes + offsetsBytes
+                MemoryEstimate(
+                    storageKind = StorageKind.PACKED,
+                    entries = entries,
+                    payloadBytesSampled = payload,
+                    estimatedPayloadBytesTotal = payload,
+                    estimatedOverheadBytes = overhead,
+                    estimatedTotalBytes = payload + overhead,
+                    sampleN = entries,
+                )
+            }
+
+            else -> {
+                val entries = s.size()
+                val sample = s.sampleEntries(sampleMaxEntries)
+                val sampleN = sample.size.coerceAtLeast(1)
+
+                var payloadSample = 0L
+                for (i in sample.indices) payloadSample += sample[i].second.size.toLong()
+
+                val avg = payloadSample.toDouble() / sampleN.toDouble()
+                val estPayloadTotal = (avg * entries.toDouble()).toLong()
+
+                val entryOverhead = 96L
+                val estimatedOverhead = entryOverhead * entries.toLong()
+
+                MemoryEstimate(
+                    storageKind = StorageKind.MAP,
+                    entries = entries,
+                    payloadBytesSampled = payloadSample,
+                    estimatedPayloadBytesTotal = estPayloadTotal,
+                    estimatedOverheadBytes = estimatedOverhead,
+                    estimatedTotalBytes = estPayloadTotal + estimatedOverhead,
+                    sampleN = sampleN,
+                )
+            }
+        }
     }
 }
