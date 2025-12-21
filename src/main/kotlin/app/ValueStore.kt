@@ -3,26 +3,29 @@ package app
 import LogLevel
 import State
 import merge
+import util.DrainCompressedDomainLineStore
 import util.Index
 import java.util.concurrent.atomic.AtomicLong
 
 private const val INDEX_BLOCK_CAPACITY = 512 * 8
- val globalSeq = AtomicLong(0)
+val globalSeq = AtomicLong(0)
 
 data class IndexBlock(
-    val index: Index<DomainLine>,
+    val index: Index<Long>,
     var minSeq: Long = 0,
     var maxSeq: Long = Long.MAX_VALUE,
     var maxTimestamp: Long = 0,
 )
 
-class ValueStore {
+class ValueStore(
+    private val drainStore: DrainCompressedDomainLineStore,
+) {
     private val levelIndexes: MutableMap<LogLevel, MutableList<IndexBlock>> = mutableMapOf()
 
     var size: Int = 0
         private set
 
-    fun put(domainLine: DomainLine) {
+    suspend fun put(domainLine: DomainLine) {
         val blocksForLevel = levelIndexes.getOrPut(domainLine.level) {
             mutableListOf(IndexBlock(Index()))
         }
@@ -42,7 +45,9 @@ class ValueStore {
             block.minSeq = domainLine.seq
         }
 
-        block.index.add(domainLine, domainLine.toString())
+        val id = drainStore.put(domainLine)
+
+        block.index.add(id, domainLine.toString())
         block.maxSeq = globalSeq.get()
         block.maxTimestamp = domainLine.timestamp
 
@@ -52,7 +57,6 @@ class ValueStore {
 
     fun search(query: String, offsetLock: Long): Sequence<DomainLine> {
         val parsed = Query.parse(query)
-
         val lockedOffset = offsetLock - State.lock.get()
 
         return State.levels.get()
@@ -64,10 +68,15 @@ class ValueStore {
                     .asSequence()
                     .filter { it.minSeq < lockedOffset && it.minSeq < offsetLock }
                     .map { block ->
-                        block.index.searchMustInclude(parsed.mustIncludeGroups) { line ->
-                            line.seq <= lockedOffset &&
-                                    line.seq <= offsetLock &&
-                                    line.contains(parsed.mustInclude, parsed.mustNotInclude)
+                        val ids: Sequence<Long> =
+                            block.index.searchMustInclude(parsed.mustIncludeGroups) { true }
+
+                        ids.mapNotNull { id ->
+                            val line = drainStore.getLineBlocking(id) ?: return@mapNotNull null
+                            if (line.seq <= lockedOffset &&
+                                line.seq <= offsetLock &&
+                                line.contains(parsed.mustInclude, parsed.mustNotInclude)
+                            ) line else null
                         }
                     }
                     .reduceOrNull { acc, seq -> acc + seq }

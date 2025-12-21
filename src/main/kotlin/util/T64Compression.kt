@@ -1,4 +1,7 @@
 package util
+
+import java.util.LinkedHashMap
+
 class T64Compression(capacity: Int = 128) {
     private var lastValue: Long = 0L
     private var count = 0
@@ -10,9 +13,19 @@ class T64Compression(capacity: Int = 128) {
     private var prefixSumForNextBlock = 0L
     private var blockStarts = mutableListOf<Int>()
 
-    // Cache for the last decoded block
-    private var lastBlockIndex: Int? = null
-    private var lastBlockEntry: BlockCacheEntry? = null
+    // Cache for previously decoded blocks (LRU)
+    private class LruCache<K, V>(private val maxEntries: Int) {
+        private val map = object : LinkedHashMap<K, V>(maxEntries, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?): Boolean = size > maxEntries
+        }
+
+        fun get(key: K): V? = map[key]
+        fun put(key: K, value: V) {
+            map[key] = value
+        }
+    }
+
+    private val decodedBlocksCache = LruCache<Int, BlockCacheEntry>(maxEntries = 256)
 
     fun add(value: Long): Int {
         val delta = if (count == 0) value else value - lastValue
@@ -64,6 +77,9 @@ class T64Compression(capacity: Int = 128) {
         prefixSumForNextBlock = currentSum
         // Reset
         blockSize = 0
+
+        // Keep cache: existing decoded blocks are still valid; for the newly encoded block
+        // we will "replace on update" when/if it gets decoded via get().
     }
 
     private fun bitLength(): Int {
@@ -95,8 +111,8 @@ class T64Compression(capacity: Int = 128) {
         val C = index / 64
         val k = index % 64
 
-        if (lastBlockIndex == C && lastBlockEntry != null) {
-            return lastBlockEntry!!.prefixSum + lastBlockEntry!!.cumulative[k]
+        decodedBlocksCache.get(C)?.let { entry ->
+            return entry.prefixSum + entry.cumulative[k]
         }
 
         val startPos = blockStarts[C]
@@ -118,7 +134,8 @@ class T64Compression(capacity: Int = 128) {
             planes[j] = plane
         }
 
-        val deltas = LongArray(readBlockSize)
+        val cumulative = LongArray(readBlockSize)
+        var sum = 0L
         for (p in 0 until readBlockSize) {
             var unsignedDelta = 0L
             for (j in 0 until bitLength) {
@@ -127,21 +144,15 @@ class T64Compression(capacity: Int = 128) {
                 }
             }
             val delta = (unsignedDelta ushr 1) xor -(unsignedDelta and 1L)
-            deltas[p] = delta
+            sum += delta
+            cumulative[p] = sum
         }
 
-        val cumulative = LongArray(readBlockSize)
-        var sum = 0L
-        for (j in 0 until readBlockSize) {
-            sum += deltas[j]
-            cumulative[j] = sum
-        }
+        // Replace-on-update: if the block already exists in cache, overwrite it.
+        decodedBlocksCache.put(C, BlockCacheEntry(prefixSum, cumulative))
 
-        lastBlockIndex = C
-        lastBlockEntry = BlockCacheEntry(prefixSum, cumulative)
         return prefixSum + cumulative[k]
     }
-
 
     fun getCompressedData(): CompressedData {
         if (blockSize > 0) encodeBlock()

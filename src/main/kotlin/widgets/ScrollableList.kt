@@ -395,6 +395,8 @@ class ScrollableList(
                 }
             }
             lastUpdate = System.nanoTime()
+
+            panel.repaint()
         }
     }
 

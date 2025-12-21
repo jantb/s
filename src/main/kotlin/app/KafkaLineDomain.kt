@@ -19,7 +19,8 @@ data class KafkaLineDomain(
     val requestId: String? = null,
     val compositeEventId: String,
 ) : DomainLine {
-    private val cachedString: String = buildString {
+
+    override fun toString(): String = buildString {
         append(seq).append(" ")
         append(level).append(" ")
         append(timestamp).append(" ")
@@ -34,8 +35,6 @@ data class KafkaLineDomain(
         append(requestId).append(" ")
         append(compositeEventId)
     }.lowercase()
-
-    override fun toString(): String = cachedString
     override fun compareTo(other: DomainLine): Int {
         return timestamp.compareTo(other.timestamp)
     }
@@ -43,11 +42,13 @@ data class KafkaLineDomain(
         queryList: List<String>,
         queryListNot: List<String>,
     ): Boolean {
+        val cachedString = toString()
         return when {
             queryList.isEmpty() && queryListNot.isEmpty() -> true
             queryList.isEmpty() -> queryListNot.none { cachedString.contains(it, ignoreCase = true) }
             queryListNot.isNotEmpty() -> queryList.all { cachedString.contains(it, ignoreCase = true) } &&
                     queryListNot.none { cachedString.contains(it, ignoreCase = true) }
+
             else -> queryList.all { cachedString.contains(it, ignoreCase = true) }
         }
     }
