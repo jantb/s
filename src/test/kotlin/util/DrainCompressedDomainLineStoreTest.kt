@@ -28,6 +28,7 @@ class DrainCompressedDomainLineStoreCompressionTest {
         }
         return sum
     }
+
     data class SizeReport(
         val label: String,
         val n: Int,
@@ -36,6 +37,7 @@ class DrainCompressedDomainLineStoreCompressionTest {
         val bytesPerLine: Double,
         val ratio: Double,
     )
+
     private fun printRatio(label: String, baselineBytes: Long, storedBytes: Long, n: Int) {
         val ratio = baselineBytes.toDouble() / storedBytes.toDouble()
         val bpl = storedBytes.toDouble() / n.toDouble()
@@ -50,6 +52,7 @@ class DrainCompressedDomainLineStoreCompressionTest {
             }
         )
     }
+
     private fun report(label: String, n: Int, baselineBytes: Long, storedBytes: Long): SizeReport {
         val bytesPerLine = storedBytes.toDouble() / n.toDouble()
         val ratio = baselineBytes.toDouble() / storedBytes.toDouble()
@@ -126,6 +129,36 @@ class DrainCompressedDomainLineStoreCompressionTest {
         }
         return total
     }
+
+    @Test
+    fun `check log template production`(): Unit = runBlocking {
+        val drainCompressedDomainLineStore = DrainCompressedDomainLineStore(this)
+
+        val longs = mutableListOf<Long>()
+        for (i in 0..1000){
+            longs.add(
+                drainCompressedDomainLineStore.put(
+                    LogLineDomain(
+                        seq = i.toLong(),
+                        level = LogLevel.INFO,
+                        timestamp = 1_700_000_000_000L,
+                        message = "GET /api/orders id=1000000 status=200 timeMs=100${i}",
+                        indexIdentifier = "pod-A",
+                        threadName = "http-nio-8080-exec-1",
+                        serviceName = "orders",
+                        serviceVersion = "1.2.3",
+                        logger = "com.example.OrderController",
+                    )
+                )
+            )
+        }
+
+        drainCompressedDomainLineStore.getLineBlocking(longs[0])?.let { println(it.message) }
+        println(drainCompressedDomainLineStore.getMessageTemplate(longs[0]))
+        drainCompressedDomainLineStore.seal().await()
+        println("Done")
+    }
+
     @Test
     fun `loglike tokenizer improves template reuse for URL query heavy messages`() = runBlocking {
         val n = 50_000
@@ -187,9 +220,8 @@ class DrainCompressedDomainLineStoreCompressionTest {
 
         val storedLogLike = runStore()
         printRatio("Tokenizer=LogLike (split '/', '?', '&', '=', ':')", baselineBytes, storedLogLike, n)
-
-
     }
+
     @Test
     fun `compresses when message has repeated pattern with small variables (LogLine)`(): Unit = runBlocking {
         val n = 500_000
@@ -231,6 +263,7 @@ class DrainCompressedDomainLineStoreCompressionTest {
         report("LogLine: single stable template + numeric vars", n, baselineBytes, storedBytes)
 
     }
+
     @Test
     fun `seal triggers packed compaction and preserves reads`() = runBlocking {
         val n = 20_000
@@ -261,13 +294,8 @@ class DrainCompressedDomainLineStoreCompressionTest {
         }
 
         val beforeKind = store.storageKind()
-        store.seal()
+        store.seal().await()
         assertTrue(store.isSealed())
-
-        repeat(200) {
-            if (store.storageKind() == DrainCompressedDomainLineStore.StorageKind.PACKED) return@repeat
-            delay(10)
-        }
 
         assertEquals(DrainCompressedDomainLineStore.StorageKind.PACKED, store.storageKind())
         assertTrue(store.packedByteSizeOrZero() > 0)
@@ -281,6 +309,7 @@ class DrainCompressedDomainLineStoreCompressionTest {
 
         assertTrue(beforeKind == DrainCompressedDomainLineStore.StorageKind.MAP)
     }
+
     @Test
     fun `does NOT compress well when every message is unique text (LogLine)`(): Unit = runBlocking {
         val n = 30_000
@@ -327,71 +356,72 @@ class DrainCompressedDomainLineStoreCompressionTest {
     }
 
     @Test
-    fun `template text reuse suspicion - constant prefix but variable tokenization can still defeat reuse`(): Unit = runBlocking {
-        val n = 50_000
-        val scope = CoroutineScope(Dispatchers.Default)
-        val store = DrainCompressedDomainLineStore(scope = scope)
+    fun `template text reuse suspicion - constant prefix but variable tokenization can still defeat reuse`(): Unit =
+        runBlocking {
+            val n = 50_000
+            val scope = CoroutineScope(Dispatchers.Default)
+            val store = DrainCompressedDomainLineStore(scope = scope)
 
-        val baseTs = 1_700_000_000_000L
+            val baseTs = 1_700_000_000_000L
 
-        // Two variants:
-        // A) token boundaries stable => should cluster well
-        // B) token boundaries unstable (e.g., embed punctuation) => can cause template churn
-        val stable = ArrayList<LogLineDomain>(n)
-        val unstable = ArrayList<LogLineDomain>(n)
+            // Two variants:
+            // A) token boundaries stable => should cluster well
+            // B) token boundaries unstable (e.g., embed punctuation) => can cause template churn
+            val stable = ArrayList<LogLineDomain>(n)
+            val unstable = ArrayList<LogLineDomain>(n)
 
-        for (i in 0 until n) {
-            val id = 1_000_000 + i
-            val stableMsg = "userId $id action LOGIN result OK"
-            val unstableMsg = "userId=$id action=LOGIN result=OK" // different tokenization (punctuation glued)
+            for (i in 0 until n) {
+                val id = 1_000_000 + i
+                val stableMsg = "userId $id action LOGIN result OK"
+                val unstableMsg = "userId=$id action=LOGIN result=OK" // different tokenization (punctuation glued)
 
-            stable += LogLineDomain(
-                seq = i.toLong(),
-                level = LogLevel.INFO,
-                timestamp = baseTs + i,
-                message = stableMsg,
-                indexIdentifier = "pod-A",
-                threadName = "auth-1",
-                serviceName = "auth",
-                serviceVersion = "9.9.9",
-                logger = "Auth",
-                correlationId = null,
-                requestId = null,
-                errorMessage = null,
-                stacktrace = null,
-            )
+                stable += LogLineDomain(
+                    seq = i.toLong(),
+                    level = LogLevel.INFO,
+                    timestamp = baseTs + i,
+                    message = stableMsg,
+                    indexIdentifier = "pod-A",
+                    threadName = "auth-1",
+                    serviceName = "auth",
+                    serviceVersion = "9.9.9",
+                    logger = "Auth",
+                    correlationId = null,
+                    requestId = null,
+                    errorMessage = null,
+                    stacktrace = null,
+                )
 
-            unstable += LogLineDomain(
-                seq = (i + n).toLong(),
-                level = LogLevel.INFO,
-                timestamp = baseTs + i + n,
-                message = unstableMsg,
-                indexIdentifier = "pod-A",
-                threadName = "auth-1",
-                serviceName = "auth",
-                serviceVersion = "9.9.9",
-                logger = "Auth",
-                correlationId = null,
-                requestId = null,
-                errorMessage = null,
-                stacktrace = null,
-            )
+                unstable += LogLineDomain(
+                    seq = (i + n).toLong(),
+                    level = LogLevel.INFO,
+                    timestamp = baseTs + i + n,
+                    message = unstableMsg,
+                    indexIdentifier = "pod-A",
+                    threadName = "auth-1",
+                    serviceName = "auth",
+                    serviceVersion = "9.9.9",
+                    logger = "Auth",
+                    correlationId = null,
+                    requestId = null,
+                    errorMessage = null,
+                    stacktrace = null,
+                )
+            }
+
+            // Store stable batch
+            val stableIds = LongArray(n)
+            for (i in 0 until n) stableIds[i] = store.put(stable[i])
+            val stableStored = storeAllAndMeasureBytes(store, stableIds)
+            val stableBaseline = baselineApproxBytesForLogLines(stable)
+            report("Pattern reuse A: stable token boundaries", n, stableBaseline, stableStored)
+
+            // Store unstable batch (same store to keep dictionary warm)
+            val unstableIds = LongArray(n)
+            for (i in 0 until n) unstableIds[i] = store.put(unstable[i])
+            val unstableStored = storeAllAndMeasureBytes(store, unstableIds)
+            val unstableBaseline = baselineApproxBytesForLogLines(unstable)
+            report("Pattern reuse B: unstable token boundaries", n, unstableBaseline, unstableStored)
         }
-
-        // Store stable batch
-        val stableIds = LongArray(n)
-        for (i in 0 until n) stableIds[i] = store.put(stable[i])
-        val stableStored = storeAllAndMeasureBytes(store, stableIds)
-        val stableBaseline = baselineApproxBytesForLogLines(stable)
-        report("Pattern reuse A: stable token boundaries", n, stableBaseline, stableStored)
-
-        // Store unstable batch (same store to keep dictionary warm)
-        val unstableIds = LongArray(n)
-        for (i in 0 until n) unstableIds[i] = store.put(unstable[i])
-        val unstableStored = storeAllAndMeasureBytes(store, unstableIds)
-        val unstableBaseline = baselineApproxBytesForLogLines(unstable)
-        report("Pattern reuse B: unstable token boundaries", n, unstableBaseline, unstableStored)
-    }
 
     @Test
     fun `string dictionary reuse - repeated fields vs unique fields (KafkaLine)`(): Unit = runBlocking {
