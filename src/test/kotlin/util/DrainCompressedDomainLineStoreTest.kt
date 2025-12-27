@@ -128,6 +128,35 @@ class DrainCompressedDomainLineStoreCompressionTest {
         }
         return total
     }
+
+    @Test
+    fun `looksLikeUuid recognizes standard UUID`() {
+        val uuidStr = "075bc1a4-0105-4c83-9bc1-a40105fc8380"
+        assertTrue(DrainCompressedDomainLineStore.UuidCodec.looksLikeUuid(uuidStr))
+    }
+    @Test
+    fun `looksLikeUuid recognizes standard UUID2`() {
+        val uuidStr = "6ECD54A1-BE87-4A2B-BDC1-8EE2909B4CEF"
+        assertTrue(DrainCompressedDomainLineStore.UuidCodec.looksLikeUuid(uuidStr))
+    }
+
+    @Test
+    fun `UuidDictionary stores and retrieves UUID correctly`() = runBlocking {
+        val store = DrainCompressedDomainLineStore(scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default))
+        val uuidDict = store::class.java.getDeclaredField("uuidDict").apply { isAccessible = true }
+            .get(store) as DrainCompressedDomainLineStore.UuidDictionary
+
+        val uuidStr = "075bc1a4-0105-4c83-9bc1-a40105fc8380"
+        val id = uuidDict.idOf(uuidStr)
+
+        // Freeze dictionary
+        uuidDict.freeze()
+
+        val retrieved = uuidDict.get(id)
+        assertEquals(uuidStr, retrieved)
+    }
+
+
     @Test
     fun `message roundtrip preserves variables before and after seal`() = runBlocking {
         val store = DrainCompressedDomainLineStore(this)

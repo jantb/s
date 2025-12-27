@@ -54,6 +54,7 @@ class DrainCompressedDomainLineStore(
     }
 
     private class PackedStorage(
+        val header: SegmentHeader,
         private val baseId: Long,
         private val checkpointStride: Int,
         private val checkpointIds: LongArray,
@@ -62,6 +63,11 @@ class DrainCompressedDomainLineStore(
         private val offsets: IntArray,
         private val blob: ByteArray,
     ) : Storage {
+        data class SegmentHeader(
+            val domainType: DomainType,
+            val level: LogLevel,
+            val indexIdentifierId: Int
+        )
 
         data class ByteSlice(val buf: ByteArray, val start: Int, val end: Int)
 
@@ -209,20 +215,21 @@ class DrainCompressedDomainLineStore(
     private val baseTimestamp = AtomicLong(0L)
 
     private val templatesById = ConcurrentHashMap<Int, Array<String>>(4096)
-    private val miner = DrainMiner(
+    private var miner: DrainMiner? = DrainMiner(
         maxDepth = maxDepth,
         maxClustersPerLeaf = maxClustersPerLeaf,
         maxChildrenPerNode = maxChildrenPerNode,
     )
-    private val writeCh = Channel<PutReq>(capacity = Channel.BUFFERED)
+    private var writeCh: Channel<PutReq>? = Channel<PutReq>(capacity = Channel.BUFFERED)
     private val stringDict = StringDictionary(initialCapacity = 1 shl 14)
-
-    private val writerJob: Job
-
+    private val uuidDict = UuidDictionary(initialCapacity = 1 shl 14)
+    private var writerJob: Job?
+    private val acceptWrites = AtomicBoolean(true)
+    @Volatile private var useFrozenDecode = false
     init {
         writerJob = scope.launch(Dispatchers.Default + CoroutineName("DrainCompressedDomainLineStore-writer")) {
-            for (req in writeCh) {
-                if (sealed.get()) {
+            for (req in writeCh!!) {
+                if (!acceptWrites.get()) {
                     req.result.completeExceptionally(IllegalStateException("sealed"))
                     continue
                 }
@@ -265,10 +272,7 @@ class DrainCompressedDomainLineStore(
         templateId: Int,
         varValues: List<String>
     ): ByteArray {
-        val domainType = DomainType.of(line)
         val out = FastByteWriter(initialCapacity = 64 + line.message.length / 2)
-
-        out.writeUVarInt(domainType.id)
 
         val bts = baseTimestamp.get()
         val relTs = if (bts == 0L) line.timestamp else line.timestamp - bts
@@ -281,9 +285,6 @@ class DrainCompressedDomainLineStore(
             out.writeUVarInt(1)
         }
 
-        out.writeUVarInt(line.level.ordinal)
-        out.writeUVarInt(stringDict.idOf(line.indexIdentifier))
-
         when (line) {
             is LogLineDomain -> {
                 out.writeUVarInt(1)
@@ -292,10 +293,10 @@ class DrainCompressedDomainLineStore(
                 out.writeUVarInt(stringDict.idOf(line.serviceName))
                 out.writeUVarInt(stringDict.idOf(line.serviceVersion))
                 out.writeUVarInt(stringDict.idOf(line.logger))
-                out.writeNullableStringId(stringDict, line.correlationId)
-                out.writeNullableStringId(stringDict, line.requestId)
-                out.writeNullableStringId(stringDict, line.errorMessage)
-                out.writeNullableStringId(stringDict, line.stacktrace)
+                out.writeNullableStringOrUuidId(line.correlationId)
+                out.writeNullableStringOrUuidId(line.requestId)
+                out.writeNullableStringOrUuidId(line.errorMessage)
+                out.writeNullableStringOrUuidId(line.stacktrace)
             }
 
             is KafkaLineDomain -> {
@@ -306,8 +307,8 @@ class DrainCompressedDomainLineStore(
                 out.writeZigZagVarLong(line.offset)
                 out.writeZigZagVarLong(line.partition.toLong())
                 out.writeUVarInt(stringDict.idOf(line.headers))
-                out.writeNullableStringId(stringDict, line.correlationId)
-                out.writeNullableStringId(stringDict, line.requestId)
+                out.writeNullableStringOrUuidId(line.correlationId)
+                out.writeNullableStringOrUuidId(line.requestId)
                 out.writeUVarInt(stringDict.idOf(line.compositeEventId))
             }
         }
@@ -319,7 +320,11 @@ class DrainCompressedDomainLineStore(
 
     fun seal(): CountDownLatch {
         val cdl = CountDownLatch(1)
-
+        if (!acceptWrites.compareAndSet(true, false)) {
+            cdl.countDown()
+            return cdl
+        }
+        writeCh!!.close()
         if (!sealed.compareAndSet(false, true)) {
             cdl.countDown()
             return cdl
@@ -329,11 +334,9 @@ class DrainCompressedDomainLineStore(
             return cdl
         }
 
-        writeCh.close()
-
         scope.launch(Dispatchers.Default + CoroutineName("DrainCompressedDomainLineStore-seal")) {
             try {
-                writerJob.join()
+                writerJob!!.join()
 
                 val before = storageRef.get()
                 val entries = before.snapshotEntries().sortedBy { it.first }
@@ -347,7 +350,12 @@ class DrainCompressedDomainLineStore(
                             checkpointDeltaOffsets = IntArray(0),
                             deltaBytes = ByteArray(0),
                             offsets = IntArray(1),
-                            blob = ByteArray(0)
+                            blob = ByteArray(0),
+                            header = PackedStorage.SegmentHeader(
+                                domainType = DomainType.LOG,
+                                level = LogLevel.INFO,
+                                indexIdentifierId = stringDict.idOf("default")
+                            )
                         )
                     )
                     frozenTemplates = emptyArray()
@@ -359,7 +367,7 @@ class DrainCompressedDomainLineStore(
                 val decodedIds = ArrayList<Long>(entries.size)
 
                 for ((id, bytes) in entries) {
-                    val line = decodeFull(bytes, 0, bytes.size, id)
+                    val line = decodeFull(bytes, bytes.size, id)
                     if (line != null) {
                         decoded.add(line)
                         decodedIds.add(id)
@@ -375,7 +383,12 @@ class DrainCompressedDomainLineStore(
                             checkpointDeltaOffsets = IntArray(0),
                             deltaBytes = ByteArray(0),
                             offsets = IntArray(1),
-                            blob = ByteArray(0)
+                            blob = ByteArray(0),
+                            header = PackedStorage.SegmentHeader(
+                                domainType = DomainType.LOG,
+                                level = LogLevel.INFO,
+                                indexIdentifierId = stringDict.idOf("default")
+                            )
                         )
                     )
                     frozenTemplates = emptyArray()
@@ -402,7 +415,6 @@ class DrainCompressedDomainLineStore(
 
                 val finalTemplateTokensById = HashMap<Int, Array<String>>()
                 for (i in decoded.indices) {
-                    // Overwrite: later learned template is typically more generalized (more VARs)
                     finalTemplateTokensById[templateIdsByLine[i]] = templateTokensByLine[i]
                 }
 
@@ -415,10 +427,7 @@ class DrainCompressedDomainLineStore(
                     frozenSeg[tid] = buildSegmentedTemplate(toks)
                 }
 
-                frozenTemplates = frozenSeg
-                templatesById.clear()
-
-                val WILDCARD = "<*>" // adjust if your miner uses a different token for VAR
+                val WILDCARD = "<*>"
                 val varValuesByLine = ArrayList<List<String>>(decoded.size)
 
                 for (i in decoded.indices) {
@@ -486,6 +495,7 @@ class DrainCompressedDomainLineStore(
                         deltaWriter.writeUVarLong(rewritten[i].first - rewritten[i - 1].first)
                     }
                 }
+                frozenTemplates = frozenSeg
 
                 storageRef.set(
                     PackedStorage(
@@ -495,10 +505,22 @@ class DrainCompressedDomainLineStore(
                         checkpointDeltaOffsets = checkpointDeltaOffsets,
                         deltaBytes = deltaWriter.toByteArray(),
                         offsets = offsets,
-                        blob = blob
+                        blob = blob,
+                        header = PackedStorage.SegmentHeader(
+                            domainType = DomainType.of(decoded.first()),
+                            level = decoded.first().level,
+                            indexIdentifierId = stringDict.idOf(decoded.first().indexIdentifier)
+                        )
                     )
                 )
+                useFrozenDecode = true
+                templatesById.clear()
+                uuidDict.freeze()
+                stringDict.freeze()
             } finally {
+                miner = null
+                writeCh = null
+                writerJob = null
                 cdl.countDown()
             }
         }
@@ -506,10 +528,86 @@ class DrainCompressedDomainLineStore(
         return cdl
     }
 
+    class UuidDictionary(initialCapacity: Int = 16) {
+        private val lock = Any()
+        private val toId = HashMap<String, Int>(initialCapacity)
+        val fromId = ArrayList<ByteArray>(initialCapacity) // store as 16-byte UUID
+
+        fun idOf(s: String): Int {
+            val existing = toId[s]
+            if (existing != null) return existing
+            synchronized(lock) {
+                val existing2 = toId[s]
+                if (existing2 != null) return existing2
+                val id = fromId.size
+                fromId.add(uuidToBytes(s))
+                toId[s] = id
+                return id
+            }
+        }
+
+        private fun uuidToBytes(s: String): ByteArray {
+            val b = ByteArray(16)
+            var bi = 0
+            var i = 0
+            while (i < s.length) {
+                if (s[i] == '-') {
+                    i++; continue
+                }
+                val hi = hexVal(s[i])
+                val lo = hexVal(s[i + 1])
+                b[bi++] = ((hi shl 4) or lo).toByte()
+                i += 2
+            }
+            return b
+        }
+
+        private fun hexVal(c: Char): Int = when (c) {
+            in '0'..'9' -> c - '0'
+            in 'a'..'f' -> c - 'a' + 10
+            in 'A'..'F' -> c - 'A' + 10
+            else -> 0
+        }
+
+        private lateinit var frozenFromId: Array<ByteArray>
+
+        fun freeze() {
+            synchronized(lock) {
+                frozenFromId = fromId.toTypedArray()
+                toId.clear()
+                fromId.clear()
+                fromId.trimToSize()
+            }
+        }
+
+        fun get(id: Int): String {
+            val bytes =  if (::frozenFromId.isInitialized) {
+                 frozenFromId[id]
+            } else {
+                fromId[id]
+            }
+
+            return buildString(36) {
+                for (i in 0 until 16) {
+                    val v = bytes[i].toInt() and 0xff
+                    append(HEX[v ushr 4])
+                    append(HEX[v and 0x0f])
+                    when (i) {
+                        3, 5, 7, 9 -> append('-')
+                    }
+                }
+            }
+        }
+
+        companion object {
+            private val HEX = "0123456789abcdef".toCharArray()
+        }
+    }
+
     suspend fun put(line: DomainLine): Long {
-        if (sealed.get()) throw IllegalStateException("sealed")
+        if (!acceptWrites.get()) throw IllegalStateException("sealed")
         val d = CompletableDeferred<Long>()
-        writeCh.send(PutReq(line, d))
+        writeCh!!.send(PutReq(line, d))
         return d.await()
     }
 
@@ -517,41 +615,24 @@ class DrainCompressedDomainLineStore(
 
     fun getLineBlocking(id: Long): DomainLine? {
         val s = storageRef.get()
-        if (s is PackedStorage) {
-            val slice = s.getByteSlice(id) ?: return null
-            val line = decodeFull(slice.buf, slice.start, slice.end, id) ?: return null
-            return line
-        }
-        val bytes = s.getBytes(id) ?: return null
-        val line = decodeFull(bytes, 0, bytes.size, id) ?: return null
-        return line
-    }
+        return when (s) {
+            is PackedStorage -> {
+                val slice = s.getByteSlice(id) ?: return null
+                decodeFullSealed(s, slice.buf, slice.start, slice.end, id)
+            }
 
-    fun getMessageTemplate(id: Long): String {
-        val storage = storageRef.get()
-        val bytes = storage.getBytes(id)!!
-        val templateId = getTemplateId(bytes, 0, bytes.size)
-        return templatesById[templateId]!!.joinToString("|||")
-    }
-
-    fun getMessageTemplateSealed(id: Long): String {
-        val storage = storageRef.get()
-        val bytes = storage.getBytes(id)!!
-        val templateId = getTemplateId(bytes, 0, bytes.size)
-        return frozenTemplates?.get(templateId)!!.segments.joinToString("|||")
-    }
-
-    suspend fun close() {
-        if (sealed.compareAndSet(false, true)) {
-            writeCh.close()
-            writerJob.join()
+            else -> {
+                val bytes = s.getBytes(id) ?: return null
+                decodeFullMutable(bytes, bytes.size, id)
+            }
         }
     }
+
 
     private fun encodeToBytes(line: DomainLine): ByteArray {
         val domainType = DomainType.of(line)
         val msgTokens = MessageTokenizer.tokenize(line.message, MessageTokenizer.Mode.LogLike)
-        val cluster = miner.learn(msgTokens)
+        val cluster = miner!!.learn(msgTokens)
         val templateId = cluster.id
         templatesById.putIfAbsent(templateId, cluster.templateTokens.copyOf())
         val tmpl = cluster.templateTokens
@@ -589,10 +670,10 @@ class DrainCompressedDomainLineStore(
                 out.writeUVarInt(stringDict.idOf(line.serviceName))
                 out.writeUVarInt(stringDict.idOf(line.serviceVersion))
                 out.writeUVarInt(stringDict.idOf(line.logger))
-                out.writeNullableStringId(stringDict, line.correlationId)
-                out.writeNullableStringId(stringDict, line.requestId)
-                out.writeNullableStringId(stringDict, line.errorMessage)
-                out.writeNullableStringId(stringDict, line.stacktrace)
+                out.writeNullableStringOrUuidId( line.correlationId)
+                out.writeNullableStringOrUuidId( line.requestId)
+                out.writeNullableStringOrUuidId( line.errorMessage)
+                out.writeNullableStringOrUuidId( line.stacktrace)
             }
 
             is KafkaLineDomain -> {
@@ -603,8 +684,8 @@ class DrainCompressedDomainLineStore(
                 out.writeZigZagVarLong(line.offset)
                 out.writeZigZagVarLong(line.partition.toLong())
                 out.writeUVarInt(stringDict.idOf(line.headers))
-                out.writeNullableStringId(stringDict, line.correlationId)
-                out.writeNullableStringId(stringDict, line.requestId)
+                out.writeNullableStringOrUuidId( line.correlationId)
+                out.writeNullableStringOrUuidId( line.requestId)
                 out.writeUVarInt(stringDict.idOf(line.compositeEventId))
             }
         }
@@ -612,20 +693,152 @@ class DrainCompressedDomainLineStore(
         return out.toByteArray()
     }
 
-    private fun getTemplateId(bytes: ByteArray, start: Int, end: Int): Int {
-        val inp = FastByteReader(bytes, start, end)
-        inp.readUVarInt()
-        inp.readUVarLong()
-        return inp.readUVarInt()
-    }
-
     private class SegmentedTemplate(
         val segments: Array<String>,
         val estimatedLength: Int
     )
 
-    private fun decodeFull(bytes: ByteArray, start: Int, end: Int, id: Long): DomainLine? {
+    private data class DecodedPrefix(
+        val domainType: DomainType,
+        val timestamp: Long,
+        val templateId: Int,
+        val varPositions: IntArray,
+        val inp: FastByteReader
+    )
+
+    private data class DecodedPrefixSealed(
+        val timestamp: Long,
+        val templateId: Int,
+        val varPositions: IntArray,
+        val inp: FastByteReader
+    )
+
+    private fun decodePrefix(
+        bytes: ByteArray,
+        start: Int,
+        end: Int
+    ): DecodedPrefix {
         val inp = FastByteReader(bytes, start, end)
+
+        val domainType = DomainType.fromId(inp.readUVarInt())
+        val relTs = inp.readUVarLong()
+        val bts = baseTimestamp.get()
+        val timestamp = if (bts == 0L) relTs else bts + relTs
+
+        val templateId = inp.readUVarInt()
+        val varCount = inp.readUVarInt()
+
+        val positions = IntArray(varCount)
+        var prev = 0
+        for (i in 0 until varCount) {
+            prev += inp.readUVarInt()
+            positions[i] = prev
+        }
+
+        return DecodedPrefix(domainType, timestamp, templateId, positions, inp)
+    }
+
+    private fun decodePrefixSealed(
+        bytes: ByteArray,
+        start: Int,
+        end: Int
+    ): DecodedPrefixSealed {
+        val inp = FastByteReader(bytes, start, end)
+
+        val relTs = inp.readUVarLong()
+        val bts = baseTimestamp.get()
+        val timestamp = if (bts == 0L) relTs else bts + relTs
+
+        val templateId = inp.readUVarInt()
+        val varCount = inp.readUVarInt()
+
+        val positions = IntArray(varCount)
+        var prev = 0
+        for (i in 0 until varCount) {
+            prev += inp.readUVarInt()
+            positions[i] = prev
+        }
+
+        return DecodedPrefixSealed(timestamp, templateId, positions, inp)
+    }
+
+    private fun decodeFullMutable(
+        bytes: ByteArray,
+        end: Int,
+        id: Long
+    ): DomainLine {
+        val (domainType, timestamp, templateId, positions, inp) =
+            decodePrefix(bytes, 0, end)
+
+        val levelOrd = inp.readUVarInt()
+        val indexIdentifier = stringDict.get(inp.readUVarInt())
+        val extra = decodeExtra(inp)
+        val level = domainType.levelFromOrdinal(levelOrd)
+
+        val message = decodeMessage(templateId, positions, inp)
+
+        return domainType.build(
+            seq = id,
+            level = level,
+            timestamp = timestamp,
+            message = message,
+            indexIdentifier = indexIdentifier,
+            extra = extra
+        )
+    }
+
+    private fun decodeFullSealed(
+        packed: PackedStorage,
+        bytes: ByteArray,
+        start: Int,
+        end: Int,
+        id: Long
+    ): DomainLine {
+        val (timestamp, templateId, positions, inp) =
+            decodePrefixSealed(bytes, start, end)
+
+        val header = packed.header
+        val level = header.level
+        val indexIdentifier = stringDict.get(header.indexIdentifierId)
+
+        val extra = decodeExtra(inp)
+        val message = decodeMessage(templateId, positions, inp)
+
+        return header.domainType.build(
+            seq = id,
+            level = level,
+            timestamp = timestamp,
+            message = message,
+            indexIdentifier = indexIdentifier,
+            extra = extra
+        )
+    }
+
+    private fun decodeMessage(templateId: Int, positions: IntArray, inp: FastByteReader): String {
+        return if (useFrozenDecode && frozenTemplates != null) {
+            val tmpl = frozenTemplates!![templateId]!!
+            val segs = tmpl.segments
+            val sb = StringBuilder(tmpl.estimatedLength)
+            sb.append(segs[0])
+            for (i in 1 until segs.size) {
+                sb.append(decodeVariable(inp))
+                sb.append(segs[i])
+            }
+            sb.toString()
+        } else {
+            val templateTokens = templatesById[templateId]
+                ?: error("Missing templateId=$templateId")
+            val tokens = templateTokens.copyOf()
+            for (pos in positions) {
+                val value = decodeVariable(inp)
+                if (pos in tokens.indices) tokens[pos] = value
+            }
+            MessageTokenizer.join(tokens)
+        }
+    }
+
+    private fun decodeFull(bytes: ByteArray, end: Int, id: Long): DomainLine? {
+        val inp = FastByteReader(bytes, 0, end)
         val domainType = DomainType.fromId(inp.readUVarInt())
         val relTs = inp.readUVarLong()
         val bts = baseTimestamp.get()
@@ -682,8 +895,6 @@ class DrainCompressedDomainLineStore(
         )
     }
 
-    private fun decodeFull(bytes: ByteArray, id: Long): DomainLine? = decodeFull(bytes, 0, bytes.size, id)
-
     private fun decodeExtra(inp: FastByteReader): Any? {
         if (inp.readUVarInt() != 1) return null
         return when (ExtraType.fromId(inp.readUVarInt())) {
@@ -692,10 +903,10 @@ class DrainCompressedDomainLineStore(
                 serviceName = stringDict.get(inp.readUVarInt()),
                 serviceVersion = stringDict.get(inp.readUVarInt()),
                 logger = stringDict.get(inp.readUVarInt()),
-                correlationId = inp.readNullableStringId(stringDict),
-                requestId = inp.readNullableStringId(stringDict),
-                errorMessage = inp.readNullableStringId(stringDict),
-                stacktrace = inp.readNullableStringId(stringDict),
+                correlationId = inp.readNullableStringOrUuidId(),
+                requestId = inp.readNullableStringOrUuidId(),
+                errorMessage = inp.readNullableStringOrUuidId(),
+                stacktrace = inp.readNullableStringOrUuidId(),
             )
 
             ExtraType.KAFKA -> DomainExtra.KafkaExtra(
@@ -704,8 +915,8 @@ class DrainCompressedDomainLineStore(
                 offset = inp.readZigZagVarLong(),
                 partition = inp.readZigZagVarLong().toInt(),
                 headers = stringDict.get(inp.readUVarInt()),
-                correlationId = inp.readNullableStringId(stringDict),
-                requestId = inp.readNullableStringId(stringDict),
+                correlationId = inp.readNullableStringOrUuidId(),
+                requestId = inp.readNullableStringOrUuidId(),
                 compositeEventId = stringDict.get(inp.readUVarInt()),
             )
         }
@@ -717,9 +928,10 @@ class DrainCompressedDomainLineStore(
             out.writeZigZagVarLong(it)
             return
         }
-        if (UuidCodec.looksLikeUuid(raw)) {
+        val u = normalizeUuidCandidate(raw)
+        if (u != null) {
             out.writeUVarInt(VarTag.UUID.id)
-            UuidCodec.writeUuid(out, raw)
+            out.writeUVarInt(uuidDict.idOf(u))
             return
         }
         out.writeUVarInt(VarTag.STRING.id)
@@ -729,7 +941,10 @@ class DrainCompressedDomainLineStore(
     private fun decodeVariable(inp: FastByteReader): String {
         return when (VarTag.fromId(inp.readUVarInt())) {
             VarTag.LONG -> inp.readZigZagVarLong().toString()
-            VarTag.UUID -> UuidCodec.readUuid(inp)
+            VarTag.UUID -> {
+                uuidDict.get(inp.readUVarInt())
+            }
+
             VarTag.STRING -> inp.readUtf8()
         }
     }
@@ -864,13 +1079,9 @@ class DrainCompressedDomainLineStore(
 
     private class StringDictionary(initialCapacity: Int = 16) {
         private val lock = Any()
-        private val toId = ConcurrentHashMap<String, Int>(initialCapacity)
+        private val toId = HashMap<String, Int>(initialCapacity)
         private val fromId = ArrayList<String>(initialCapacity)
 
-        init {
-            fromId.add("")
-            toId[""] = 0
-        }
 
         fun idOf(s: String): Int {
             val existing = toId[s]
@@ -885,10 +1096,52 @@ class DrainCompressedDomainLineStore(
             }
         }
 
-        fun get(id: Int): String {
+        private lateinit var frozenFromId: Array<String>
+
+        fun freeze() {
             synchronized(lock) {
-                return fromId[id]
+                fromId.trimToSize()
+                frozenFromId = fromId.toTypedArray()
+                toId.clear()
+                fromId.clear()
             }
+        }
+
+        fun get(id: Int): String {
+            return if (::frozenFromId.isInitialized) {
+                frozenFromId[id]
+            } else {
+                fromId[id]
+            }
+        }
+    }
+    private fun normalizeUuidCandidate(s: String): String? {
+        val t = s.trim().trim('"', '\'', ',', '.', ';', ':', ')', '(', ']', '[', '}', '{', '>')
+        return if (UuidCodec.looksLikeUuid(t)) t else null
+    }
+
+    /** Encodes: 0 = null, 1 = uuidDict id, 2 = stringDict id */
+    private fun FastByteWriter.writeNullableStringOrUuidId(s: String?) {
+        if (s == null) {
+            writeUVarInt(0)
+            return
+        }
+        val u = normalizeUuidCandidate(s)
+        if (u != null) {
+            writeUVarInt(1)
+            writeUVarInt(uuidDict.idOf(u))
+        } else {
+            writeUVarInt(2)
+            writeUVarInt(stringDict.idOf(s))
+        }
+    }
+
+    private fun FastByteReader.readNullableStringOrUuidId(): String? {
+        return when (val tag = readUVarInt()) {
+            0 -> null
+            1 -> uuidDict.get(readUVarInt())
+            2 -> stringDict.get(readUVarInt())
+            else -> error("Bad nullableStringOrUuid tag=$tag")
         }
     }
 
@@ -1059,7 +1312,7 @@ class DrainCompressedDomainLineStore(
         }
     }
 
-    private class FastByteWriter(initialCapacity: Int) {
+    class FastByteWriter(initialCapacity: Int) {
         private var buf = ByteArray(maxOf(16, initialCapacity))
         private var pos = 0
         fun writeByte(b: Int) {
@@ -1114,7 +1367,7 @@ class DrainCompressedDomainLineStore(
         }
     }
 
-    private class FastByteReader(private val buf: ByteArray, start: Int, end: Int) {
+    class FastByteReader(private val buf: ByteArray, start: Int, end: Int) {
         private var pos = start
         private val limit = end
 
@@ -1161,10 +1414,10 @@ class DrainCompressedDomainLineStore(
         }
     }
 
-    private object UuidCodec {
+    object UuidCodec {
         fun looksLikeUuid(s: String): Boolean {
-            if (s.length != 36) return false
-            return s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
+            val clean = s.replace("-", "")
+            return clean.length == 32 && clean.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
         }
 
         fun writeUuid(out: FastByteWriter, s: String) {
