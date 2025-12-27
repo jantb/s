@@ -5,7 +5,6 @@ import app.KafkaLineDomain
 import app.LogLineDomain
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -129,7 +128,48 @@ class DrainCompressedDomainLineStoreCompressionTest {
         }
         return total
     }
+    @Test
+    fun `message roundtrip preserves variables before and after seal`() = runBlocking {
+        val store = DrainCompressedDomainLineStore(this)
 
+        val ids = (0 until 100).map { i ->
+            store.put(
+                LogLineDomain(
+                    seq = i.toLong(),
+                    level = LogLevel.INFO,
+                    timestamp = 1_700_000_000_000L,
+                    message = "GET /api/orders id=42 timeMs=${1000 + i}",
+                    indexIdentifier = "pod-A",
+                    threadName = "t",
+                    serviceName = "svc",
+                    serviceVersion = "1",
+                    logger = "log",
+                )
+            )
+        }
+
+        // Invariant 1: before seal
+        ids.forEachIndexed { i, id ->
+            val msg = store.getLineBlocking(id)!!.message
+            assertEquals(
+                "GET /api/orders id=42 timeMs=${1000 + i}",
+                msg,
+                "pre-seal corruption at index $i"
+            )
+        }
+
+        store.seal().await()
+
+        // Invariant 2: after seal
+        ids.forEachIndexed { i, id ->
+            val msg = store.getLineBlocking(id)!!.message
+            assertEquals(
+                "GET /api/orders id=42 timeMs=${1000 + i}",
+                msg,
+                "post-seal corruption at index $i"
+            )
+        }
+    }
     @Test
     fun `check log template production`(): Unit = runBlocking {
         val drainCompressedDomainLineStore = DrainCompressedDomainLineStore(this)
@@ -153,9 +193,13 @@ class DrainCompressedDomainLineStoreCompressionTest {
             )
         }
 
-        drainCompressedDomainLineStore.getLineBlocking(longs[0])?.let { println(it.message) }
-        println(drainCompressedDomainLineStore.getMessageTemplate(longs[0]))
+     //  println("line: " + drainCompressedDomainLineStore.getMessageTemplate(longs[0]))
+        drainCompressedDomainLineStore.getLineBlocking(longs[0])?.let { println("message: " + it.message) }
+
+
         drainCompressedDomainLineStore.seal().await()
+        //println("line: " +drainCompressedDomainLineStore.getMessageTemplateSealed(longs[0]))
+        drainCompressedDomainLineStore.getLineBlocking(longs[0])?.let {  println("message: " + it.message)  }
         println("Done")
     }
 

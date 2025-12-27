@@ -235,6 +235,7 @@ class DrainCompressedDomainLineStore(
             }
         }
     }
+
     private fun buildSegmentedTemplate(tokens: Array<String>): SegmentedTemplate {
         val segments = ArrayList<String>()
         val sb = StringBuilder()
@@ -262,7 +263,6 @@ class DrainCompressedDomainLineStore(
     private fun encodeToBytesFrozen(
         line: DomainLine,
         templateId: Int,
-        segments: Array<String>,
         varValues: List<String>
     ): ByteArray {
         val domainType = DomainType.of(line)
@@ -277,7 +277,6 @@ class DrainCompressedDomainLineStore(
         out.writeUVarInt(templateId)
         out.writeUVarInt(varValues.size)
 
-        // variable positions are implicit: 0,1,2,...
         for (i in 0 until varValues.size) {
             out.writeUVarInt(1)
         }
@@ -317,8 +316,10 @@ class DrainCompressedDomainLineStore(
 
         return out.toByteArray()
     }
+
     fun seal(): CountDownLatch {
         val cdl = CountDownLatch(1)
+
         if (!sealed.compareAndSet(false, true)) {
             cdl.countDown()
             return cdl
@@ -354,51 +355,104 @@ class DrainCompressedDomainLineStore(
                     return@launch
                 }
 
-                // 1️Decode all entries
                 val decoded = ArrayList<DomainLine>(entries.size)
+                val decodedIds = ArrayList<Long>(entries.size)
+
                 for ((id, bytes) in entries) {
-                    decodeFull(bytes, 0, bytes.size, id)?.let(decoded::add)
+                    val line = decodeFull(bytes, 0, bytes.size, id)
+                    if (line != null) {
+                        decoded.add(line)
+                        decodedIds.add(id)
+                    }
                 }
 
-                // 2 Re-learn templates (stable)
-                val newMiner = DrainMiner(maxDepth, maxClustersPerLeaf, maxChildrenPerNode)
-                val templates = HashMap<Int, SegmentedTemplate>()
-                val varValuesByLine = ArrayList<List<String>>(decoded.size)
+                if (decoded.isEmpty()) {
+                    storageRef.set(
+                        PackedStorage(
+                            baseId = 0L,
+                            checkpointStride = 128,
+                            checkpointIds = LongArray(0),
+                            checkpointDeltaOffsets = IntArray(0),
+                            deltaBytes = ByteArray(0),
+                            offsets = IntArray(1),
+                            blob = ByteArray(0)
+                        )
+                    )
+                    frozenTemplates = emptyArray()
+                    templatesById.clear()
+                    return@launch
+                }
+
+                val miner = DrainMiner(maxDepth, maxClustersPerLeaf, maxChildrenPerNode)
+
+                val tokensByLine = ArrayList<Array<String>>(decoded.size)
+                val templateIdsByLine = ArrayList<Int>(decoded.size)
+                val templateTokensByLine = ArrayList<Array<String>>(decoded.size)
 
                 for (line in decoded) {
                     val tokens = MessageTokenizer.tokenize(line.message, MessageTokenizer.Mode.LogLike)
-                    val cluster = newMiner.learn(tokens)
-                    templates.computeIfAbsent(cluster.id) {
-                        buildSegmentedTemplate(cluster.templateTokens)
-                    }
+                    val cluster = miner.learn(tokens)
+
+                    val templateSnapshotTokens = cluster.templateTokens.copyOf()
+
+                    tokensByLine.add(tokens)
+                    templateIdsByLine.add(cluster.id)
+                    templateTokensByLine.add(templateSnapshotTokens)
+                }
+
+                val finalTemplateTokensById = HashMap<Int, Array<String>>()
+                for (i in decoded.indices) {
+                    // Overwrite: later learned template is typically more generalized (more VARs)
+                    finalTemplateTokensById[templateIdsByLine[i]] = templateTokensByLine[i]
+                }
+
+                val maxTid = finalTemplateTokensById.keys.maxOrNull() ?: 0
+                val frozenSeg = arrayOfNulls<SegmentedTemplate>(maxTid + 1)
+                val frozenTok = arrayOfNulls<Array<String>>(maxTid + 1)
+
+                for ((tid, toks) in finalTemplateTokensById) {
+                    frozenTok[tid] = toks
+                    frozenSeg[tid] = buildSegmentedTemplate(toks)
+                }
+
+                frozenTemplates = frozenSeg
+                templatesById.clear()
+
+                val WILDCARD = "<*>" // adjust if your miner uses a different token for VAR
+                val varValuesByLine = ArrayList<List<String>>(decoded.size)
+
+                for (i in decoded.indices) {
+                    val lineTokens = tokensByLine[i]
+                    val tid = templateIdsByLine[i]
+                    val tmplTokens = frozenTok[tid]
+                        ?: error("Missing frozen template tokens for tid=$tid")
 
                     val vars = ArrayList<String>()
-                    for (t in tokens) {
-                        if (t !== DrainMiner.VAR && UuidCodec.looksLikeUuid(t).not() && t.any { it.isDigit() }) continue
-                        if (t !== DrainMiner.VAR) continue
-                        vars.add(t)
+                    val m = minOf(lineTokens.size, tmplTokens.size)
+                    for (j in 0 until m) {
+                        if (tmplTokens[j] == WILDCARD) {
+                            vars.add(lineTokens[j])
+                        }
                     }
                     varValuesByLine.add(vars)
                 }
 
-                val maxTid = templates.keys.maxOrNull() ?: 0
-                val frozen = arrayOfNulls<SegmentedTemplate>(maxTid + 1)
-                for ((id, tmpl) in templates) frozen[id] = tmpl
-                frozenTemplates = frozen
-                templatesById.clear()
-
                 val rewritten = ArrayList<Pair<Long, ByteArray>>(decoded.size)
+
                 for (i in decoded.indices) {
                     val line = decoded[i]
-                    val tmplId = newMiner.learn(
-                        MessageTokenizer.tokenize(line.message, MessageTokenizer.Mode.LogLike)
-                    ).id
-                    val tmpl = frozen[tmplId]!!
-                    val bytes = encodeToBytesFrozen(line, tmplId, tmpl.segments, varValuesByLine[i])
-                    rewritten.add(line.seq to bytes)
+                    val tid = templateIdsByLine[i]
+                    val bytes = encodeToBytesFrozen(
+                        line = line,
+                        templateId = tid,
+                        varValues = varValuesByLine[i]
+                    )
+
+                    rewritten.add(decodedIds[i] to bytes)
                 }
 
                 rewritten.sortBy { it.first }
+
                 val n = rewritten.size
                 val checkpointStride = 128
                 val checkpointCount = (n + checkpointStride - 1) / checkpointStride
@@ -499,7 +553,7 @@ class DrainCompressedDomainLineStore(
         val msgTokens = MessageTokenizer.tokenize(line.message, MessageTokenizer.Mode.LogLike)
         val cluster = miner.learn(msgTokens)
         val templateId = cluster.id
-        templatesById[templateId] = cluster.templateTokens
+        templatesById.putIfAbsent(templateId, cluster.templateTokens.copyOf())
         val tmpl = cluster.templateTokens
         val tokenCount = msgTokens.size
         val varPositions = IntArray(tokenCount)
@@ -855,7 +909,7 @@ class DrainCompressedDomainLineStore(
     ) {
         private val root = Node(depth = 0)
         private val idGen = AtomicLong(0)
-        private val clustersById = HashMap<Int, Cluster>(4096)
+        val clustersById = HashMap<Int, Cluster>(4096)
         fun learn(tokens: Array<String>): Cluster {
             val tokenCount = tokens.size
             val first = root.childrenByKey.getOrPut(tokenCount.toString()) { Node(1) }
@@ -1198,8 +1252,7 @@ class DrainCompressedDomainLineStore(
     }
 
     fun estimateMemoryUsage(sampleMaxEntries: Int = 50_000): MemoryEstimate {
-        val s = storageRef.get()
-        return when (s) {
+        return when (val s = storageRef.get()) {
             is PackedStorage -> {
                 val entries = s.size()
                 val payload = s.packedByteSize().toLong()

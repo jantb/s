@@ -10,7 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
-private const val INDEX_BLOCK_CAPACITY = 512 * 32
+private const val INDEX_BLOCK_CAPACITY = 512 * 16
 val globalSeq = AtomicLong(0)
 
 data class IndexBlock(
