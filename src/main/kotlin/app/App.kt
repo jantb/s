@@ -15,7 +15,6 @@ import kotlinx.coroutines.channels.Channel.Factory.CONFLATED
 import kotlinx.coroutines.selects.select
 import kube.PodUnit
 import merge
-import util.DrainCompressedDomainLineStore
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingDeque
 import kotlin.concurrent.atomics.AtomicLong
@@ -57,7 +56,6 @@ class App : CoroutineScope {
     fun start() {
         launch(CoroutineName("indexUpdaterScheduler")) {
             val valueStores = mutableMapOf<String, ValueStore>()
-
             var offsetLock = 0L
 
             var bufferVersion = 0L
@@ -73,7 +71,6 @@ class App : CoroutineScope {
                     is AddToIndexDomainLine -> {
                         valueStores.computeIfAbsent(msg.domainLine.indexIdentifier) { ValueStore() }
                             .put(msg.domainLine)
-
                         changedAt.set(System.nanoTime())
                     }
 
@@ -201,3 +198,4 @@ class AddToIndexDomainLine(val domainLine: DomainLine) : CmdMessage()
 sealed class CmdGuiMessage
 class ResultChanged(val result: List<DomainLine>, val chartResult: List<DomainLine> = emptyList()) : CmdGuiMessage()
 class KafkaLagInfo(val lagInfo: List<kafka.Kafka.LagInfo>) : CmdGuiMessage()
+

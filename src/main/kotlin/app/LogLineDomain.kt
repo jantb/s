@@ -59,30 +59,32 @@ data class LogLineDomain(
             indexIdentifier = indexIdentifier,
         )
     }
+    private val cachedString by lazy {
+        listOfNotNull(
+            seq.toString(),
+            level.name,
+            timestamp.toString(),
+            message,
+            indexIdentifier,
+            threadName,
+            serviceName,
+            serviceVersion,
+            logger,
+            correlationId,
+            requestId,
+            errorMessage,
+            stacktrace
+        ).joinToString(" ").lowercase()
+    }
 
-
-    override fun toString(): String =    listOfNotNull(
-        seq.toString(),
-        level.name,
-        timestamp.toString(),
-        message,
-        indexIdentifier,
-        threadName,
-        serviceName,
-        serviceVersion,
-        logger,
-        correlationId,
-        requestId,
-        errorMessage,
-        stacktrace
-    ).joinToString(" ").lowercase()
+    override fun toString(): String = cachedString
 
     override fun contains(
         queryList: List<String>,
         queryListNot: List<String>,
     ): Boolean {
         if (queryList.isEmpty() && queryListNot.isEmpty()) return true
-        val target =    toString()
+        val target = cachedString
         if (queryList.isEmpty()) {
             return queryListNot.none { target.contains(it.lowercase()) }
         }
