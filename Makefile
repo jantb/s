@@ -7,7 +7,7 @@ DEST_DIR := $(HOME)/bin
 DEST_BINARY := $(DEST_DIR)/$(NAME).jar
 
 build:
-	./gradlew fatJar
+	gradle fatJar
 
 install: build
 	@mkdir -p "$(DEST_DIR)"
@@ -21,10 +21,10 @@ uninstall:
 	@echo "Uninstalled $(DEST_BINARY)"
 
 clean:
-	./gradlew clean
+	gradle clean
 
 run:
 	java --add-exports=java.desktop/com.apple.eawt=ALL-UNNAMED -jar $(DEST_BINARY)
 
 test:
-	./gradlew test
+	gradle test
